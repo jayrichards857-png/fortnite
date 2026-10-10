@@ -36,6 +36,7 @@ function purchasable(listing) {
   if (!listing || listing.status !== 'active') return { ok: false, reason: 'This item is no longer available.' };
   const seller = q.get('SELECT * FROM users WHERE id = ?', listing.seller_id);
   if (!seller || seller.banned || !seller.is_seller) return { ok: false, reason: 'This seller is unavailable.' };
+  if (!seller.email_verified_at) return { ok: false, reason: "This seller hasn't verified their email yet, so online checkout is paused. You can still message them." };
   if (!resolveLink(listing, seller)) return { ok: false, reason: "This seller hasn't finished setting up checkout for this item yet." };
   return { ok: true, seller };
 }

@@ -119,3 +119,7 @@ td.nowrap{white-space:nowrap}td.num,th.num{text-align:right;font-variant-numeric
 /* direct checkout */
 .notice{background:#f4f8f5;border-color:#cfe0d5}.notice.strong{border-color:var(--accent);background:#eef5f0}.plain{margin:6px 0 0;padding-left:18px}.plain li{margin:4px 0}
 .steps{display:flex;gap:6px;list-style:none;margin:10px 0 16px;padding:0;flex-wrap:wrap}.steps li{flex:1;min-width:120px;padding:6px 10px;border-top:3px solid var(--line);font-size:13px;color:var(--muted)}.steps li.done{border-color:var(--accent);color:var(--text);font-weight:600}
+
+/* beta finalization */
+.soon-card{max-width:560px;margin:48px auto;text-align:center;padding:32px 20px}.soon-card h1{font-size:34px;margin:12px 0 4px}.soon-card .lead{font-size:18px;margin:6px 0 14px}
+.soon-pill{border-style:dashed}.warn-banner{background:#fdf1d8;color:#6b4a06;border-bottom-color:#efd9a2}.warn-banner a{color:inherit;font-weight:600}

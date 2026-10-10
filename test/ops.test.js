@@ -64,14 +64,15 @@ test('backup: consistent snapshot, integrity-checked, incremental photos, retent
 });
 
 test('production config guard refuses unsafe settings', () => {
-  const keep = { publicUrl: config.publicUrl, paymentsMode: config.paymentsMode, rateLimitScale: config.rateLimitScale, checkoutMode: config.checkoutMode };
+  const keep = { publicUrl: config.publicUrl, paymentsMode: config.paymentsMode, rateLimitScale: config.rateLimitScale, checkoutMode: config.checkoutMode, sellerOnboarding: config.sellerOnboarding };
   try {
-    Object.assign(config, { publicUrl: 'https://beta.example.com', paymentsMode: '', rateLimitScale: 1, checkoutMode: 'external' });
+    Object.assign(config, { publicUrl: 'https://beta.example.com', paymentsMode: '', rateLimitScale: 1, checkoutMode: 'external', sellerOnboarding: 'invite' });
     assert.deepEqual(assertProductionConfig(), []);
     config.publicUrl = 'http://beta.example.com'; assert.match(assertProductionConfig().join(), /https/);
     config.publicUrl = 'https://beta.example.com'; config.paymentsMode = 'sandbox'; assert.match(assertProductionConfig().join(), /sandbox/);
     config.paymentsMode = ''; config.rateLimitScale = 100; assert.match(assertProductionConfig().join(), /RATE_LIMIT_SCALE/);
     config.rateLimitScale = 1; config.checkoutMode = 'platform'; assert.match(assertProductionConfig().join(), /CHECKOUT_MODE/);
+    config.checkoutMode = 'external'; config.sellerOnboarding = 'open'; assert.match(assertProductionConfig().join(), /SELLER_ONBOARDING must be "invite"/);
   } finally { Object.assign(config, keep); }
 });
 

@@ -34,6 +34,11 @@ function destroySession(req, res) {
   if (t) q.run('DELETE FROM sessions WHERE token_hash = ?', sha(t));
   res.clearCookie('pp_session', { path: '/' });
 }
+/** Sign out every session of a user except the one making this request (used after a password change). */
+function destroyOtherSessions(req, userId) {
+  const t = readCookie(req, 'pp_session');
+  q.run('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', userId, t ? sha(t) : '');
+}
 function readCookie(req, name) {
   const m = String(req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(name + '='));
   return m ? decodeURIComponent(m.slice(name.length + 1)) : null;
@@ -46,7 +51,22 @@ function userFromRequest(req) {
   return q.get(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
                 WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned = 0`, sha(t), now()) || null;
 }
-function loadUser(req, res, next) { req.user = userFromRequest(req); next(); }
+/**
+ * Attach req.user (or null) to every request. Sessions are sliding: when less than half of the lifetime remains, the session and
+ * cookie are renewed, so active people stay signed in and idle sessions expire after SESSION_TTL.
+ */
+function loadUser(req, res, next) {
+  req.user = userFromRequest(req);
+  if (req.user) {
+    const t = readCookie(req, 'pp_session');
+    const s = q.get('SELECT expires_at FROM sessions WHERE token_hash = ?', sha(t));
+    if (s && s.expires_at - now() < SESSION_TTL / 2) {
+      q.run('UPDATE sessions SET expires_at = ? WHERE token_hash = ?', now() + SESSION_TTL, sha(t));
+      res.cookie('pp_session', t, { httpOnly: true, sameSite: 'lax', secure: config.isProd, maxAge: SESSION_TTL * 1000, path: '/' });
+    }
+  }
+  next();
+}
 
 const wantsJson = (req) => req.path.startsWith('/api/') || (req.headers.accept || '').includes('application/json');
 function denied(req, res, status, msg, redirect) {
@@ -85,4 +105,4 @@ function rateLimit(key, max, windowSec) {
   arr.push(t); hits.set(key, arr);
 }
 
-module.exports = { userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, csrfGuard, rateLimit };
+module.exports = { destroyOtherSessions, userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, csrfGuard, rateLimit };

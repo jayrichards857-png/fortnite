@@ -16,6 +16,8 @@ const { png } = require('../scripts/png');
 const config = require('../src/config');
 config.rateLimitScale = 1000;
 const { createServer } = require('../src/server');
+// Test databases only: lift the beta seller cap (the cap itself is exercised in test/beta.test.js) so older suites can create many sellers.
+require('../src/db').q.run("UPDATE settings SET value = '1000' WHERE key = 'seller_cap'");
 
 let server, base;
 async function start() {
@@ -54,6 +56,7 @@ async function newSeller(name = 'Seller', plan) {
   c.handle = `h${n}${Date.now() % 100000}`;
   const r = await c.post('/api/sell/onboard', { store_name: `${name} store ${n}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true });
   if (r.status !== 200) throw new Error('onboard failed ' + r.text);
+  require('../src/db').q.run('UPDATE users SET email_verified_at = strftime(\'%s\',\'now\') WHERE handle = ?', c.handle);   // test sellers are pre-verified unless a test says otherwise
   if (plan) require('../src/db').q.run('UPDATE users SET plan = ? WHERE handle = ?', plan, c.handle);
   return c;
 }

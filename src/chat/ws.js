@@ -6,6 +6,7 @@ const { WebSocketServer } = require('ws');
 const { userFromRequest } = require('../auth');
 const { getHub } = require('./hub');
 const service = require('./service');
+const { hostAllowed } = require('../host');
 
 const HEARTBEAT_MS = 25000;
 
@@ -19,6 +20,7 @@ function attachWebSocket(httpServer, { heartbeatMs = HEARTBEAT_MS } = {}) {
 
   httpServer.on('upgrade', (req, socket, head) => {
     if (!req.url.split('?')[0].startsWith('/api/chat/ws')) return reject(socket, 404, 'Not Found');
+    if (!hostAllowed(req)) return reject(socket, 421, 'Misdirected Request');
     // Cross-site WebSocket hijacking guard: browsers always send Origin; it must be this site.
     const origin = req.headers.origin;
     if (origin) { let host; try { host = new URL(origin).host; } catch { host = ''; } if (host !== req.headers.host) return reject(socket, 403, 'Forbidden'); }

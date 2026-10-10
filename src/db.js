@@ -308,6 +308,149 @@ CREATE TRIGGER order_items_immutable BEFORE UPDATE OF listing_id, title, price_c
 CREATE TRIGGER ledger_no_update BEFORE UPDATE ON ledger BEGIN SELECT RAISE(ABORT, 'ledger rows are append-only'); END;
 CREATE TRIGGER ledger_no_delete BEFORE DELETE ON ledger BEGIN SELECT RAISE(ABORT, 'ledger rows are append-only'); END;
 `,
+// 4: beta finalization — invitations, hard seller cap, email verification, storefront customisation, support cases, refund requests, audit log.
+// Additive only: no existing row is rewritten (every existing user simply has email_verified_at = NULL until they verify).
+`
+ALTER TABLE users ADD COLUMN email_verified_at INTEGER;
+ALTER TABLE listings ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency IN ('USD'));
+ALTER TABLE orders ADD COLUMN ship_note TEXT;
+
+-- Invitations: the raw token is never stored (only its SHA-256), single use, expiring, revocable.
+CREATE TABLE invitations (
+  id INTEGER PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('buyer','seller')),
+  email TEXT NOT NULL COLLATE NOCASE,
+  note TEXT,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  used_by INTEGER REFERENCES users(id),
+  revoked_at INTEGER
+);
+CREATE UNIQUE INDEX idx_invitations_live ON invitations(email, kind) WHERE used_at IS NULL AND revoked_at IS NULL;
+
+-- Email verification / email change / password reset tokens (hashed, single use, expiring).
+CREATE TABLE email_tokens (
+  id INTEGER PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK (purpose IN ('verify_email','change_email','reset_password')),
+  email TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_email_tokens_user ON email_tokens(user_id, purpose, created_at DESC);
+
+-- Every outgoing email is recorded. With no provider configured, rows stay 'not_configured' and nothing is claimed as sent.
+CREATE TABLE email_outbox (
+  id INTEGER PRIMARY KEY,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  dedupe_key TEXT UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('not_configured','sent','failed')),
+  provider TEXT, provider_ref TEXT, error TEXT,
+  created_at INTEGER NOT NULL,
+  sent_at INTEGER
+);
+
+-- Storefront customisation: a private draft and the published copy. Only whitelisted, validated values are ever stored.
+CREATE TABLE storefronts (
+  seller_id INTEGER PRIMARY KEY REFERENCES users(id),
+  draft_json TEXT,
+  published_json TEXT,
+  draft_updated_at INTEGER,
+  published_at INTEGER
+);
+
+-- Support cases (order issues, seller issues, reported messages). Events are append-only; internal notes are admin-only.
+CREATE TABLE cases (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('order_issue','seller_issue','message_report')),
+  order_id INTEGER REFERENCES orders(id),
+  conversation_id INTEGER REFERENCES conversations(id),
+  message_id INTEGER REFERENCES messages(id),
+  reporter_id INTEGER NOT NULL REFERENCES users(id),
+  subject_user_id INTEGER REFERENCES users(id),
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','awaiting_seller','under_review','resolved','dismissed')),
+  resolution TEXT,
+  resolved_by INTEGER REFERENCES users(id),
+  resolved_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_cases_status ON cases(status, created_at DESC);
+CREATE INDEX idx_cases_order ON cases(order_id);
+CREATE UNIQUE INDEX idx_cases_one_open_order ON cases(order_id, reporter_id) WHERE kind = 'order_issue' AND status IN ('open','awaiting_seller','under_review');
+CREATE TABLE case_events (
+  id INTEGER PRIMARY KEY,
+  case_id INTEGER NOT NULL REFERENCES cases(id),
+  actor_id INTEGER NOT NULL REFERENCES users(id),
+  actor_role TEXT NOT NULL CHECK (actor_role IN ('buyer','seller','admin')),
+  kind TEXT NOT NULL CHECK (kind IN ('report','response','evidence','internal_note','status','decision','action')),
+  body TEXT,
+  image TEXT,
+  internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0,1)),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_case_events ON case_events(case_id, id);
+
+-- Refund / cancellation requests. PairPlug moves no money: each status records who SAID what; only the other party's
+-- confirmation (or an admin decision) completes it.
+CREATE TABLE refund_requests (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  kind TEXT NOT NULL CHECK (kind IN ('refund','cancellation')),
+  requested_by INTEGER NOT NULL REFERENCES users(id),
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','seller_reported_refunded','seller_declined','buyer_confirmed_refund','buyer_disputes_refund','admin_closed')),
+  seller_note TEXT,
+  refund_reference TEXT,
+  case_id INTEGER REFERENCES cases(id),
+  requested_at INTEGER NOT NULL,
+  seller_responded_at INTEGER,
+  resolved_at INTEGER,
+  resolved_by INTEGER REFERENCES users(id),
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_refund_order ON refund_requests(order_id);
+CREATE UNIQUE INDEX idx_refund_one_open ON refund_requests(order_id) WHERE status IN ('requested','seller_reported_refunded','buyer_disputes_refund');
+
+CREATE TABLE audit_log (
+  id INTEGER PRIMARY KEY,
+  actor_id INTEGER REFERENCES users(id),
+  actor_label TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT,
+  target_id TEXT,
+  detail TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
+
+CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
+CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
+CREATE TRIGGER case_events_no_update BEFORE UPDATE ON case_events BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
+CREATE TRIGGER case_events_no_delete BEFORE DELETE ON case_events BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
+CREATE TRIGGER case_events_internal_admin_only BEFORE INSERT ON case_events WHEN NEW.internal = 1 AND NEW.actor_role <> 'admin'
+  BEGIN SELECT RAISE(ABORT, 'internal notes are admin-only'); END;
+CREATE TRIGGER invitations_token_immutable BEFORE UPDATE OF token_hash, email, kind ON invitations BEGIN SELECT RAISE(ABORT, 'invitation identity is immutable'); END;
+
+-- HARD SELLER CAP, enforced by the database so no code path or race can exceed it. The cap lives in settings (default 3).
+-- It only blocks NEW sellers; existing rows are never touched, so a database that somehow already has more is preserved.
+INSERT OR IGNORE INTO settings(key, value) VALUES ('seller_cap', '3');
+CREATE TRIGGER sellers_cap_insert BEFORE INSERT ON users
+  WHEN NEW.is_seller = 1 AND (SELECT COUNT(*) FROM users WHERE is_seller = 1) >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'seller_cap'), 3)
+  BEGIN SELECT RAISE(ABORT, 'seller cap reached'); END;
+CREATE TRIGGER sellers_cap_update BEFORE UPDATE OF is_seller ON users
+  WHEN NEW.is_seller = 1 AND OLD.is_seller = 0 AND (SELECT COUNT(*) FROM users WHERE is_seller = 1) >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'seller_cap'), 3)
+  BEGIN SELECT RAISE(ABORT, 'seller cap reached'); END;
+`,
 ];
 
 function migrate() {

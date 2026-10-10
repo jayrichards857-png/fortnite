@@ -17,7 +17,7 @@ const LINK = 'https://buy.stripe.com/test_5kA3cs0abc123';
 const parseEnvFile = (file) => Object.fromEntries(fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() && !/^\s*#/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
 const cfgIn = (env) => JSON.parse(execFileSync(process.execPath, ['-e', `
   const c=require('./src/config');const {assertProductionConfig}=require('./src/server');
-  console.log(JSON.stringify({onb:c.sellerOnboarding,mode:c.checkoutMode,host:c.host,prod:c.isProd,problems:assertProductionConfig(),emails:c.sellerAllowedEmails}))`],
+  console.log(JSON.stringify({onb:c.sellerOnboarding,signups:c.signups,mode:c.checkoutMode,host:c.host,prod:c.isProd,problems:assertProductionConfig(),release:c.releaseDate}))`],
   { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_DB: ':memory:', PAIRPLUG_UPLOADS: path.join(os.tmpdir(), 'pp-cfg-up'), ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
 
 test.before(() => H.start());
@@ -30,11 +30,11 @@ test('deploy env examples are valid for systemd (no inline comments) and pass th
     for (const [k, v] of Object.entries(kv)) assert.ok(!/\s#/.test(v) && !/^#/.test(v), `${f}: ${k} has an inline comment`);
   }
   const kv = parseEnvFile(path.join(ROOT, 'deploy/pairplug.env.example'));
-  for (const k of ['NODE_ENV', 'PUBLIC_URL', 'CHECKOUT_MODE', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS']) assert.ok(k in kv, 'missing ' + k);
+  for (const k of ['NODE_ENV', 'PUBLIC_URL', 'CHECKOUT_MODE', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SIGNUPS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER']) assert.ok(k in kv, 'missing ' + k);
   assert.ok(!('PAYMENTS_MODE' in kv) && !('RATE_LIMIT_SCALE' in kv));
   const c = cfgIn({ ...kv, PUBLIC_URL: 'https://beta.example.test' });
   assert.deepEqual(c.problems, []); assert.equal(c.prod, true); assert.equal(c.onb, 'invite'); assert.equal(c.mode, 'external'); assert.equal(c.host, '127.0.0.1');
-  assert.deepEqual(c.emails, ['partner@example.com']);
+  assert.equal(c.signups, 'closed'); assert.match(c.release, /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test('malformed settings can never widen access: inline comments, junk values, and production defaults', () => {
@@ -65,45 +65,71 @@ function startProd(env) {
 const stopProc = (p) => new Promise((r) => { p.removeAllListeners('exit'); p.on('exit', r); p.kill('SIGTERM'); });
 const free = () => new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => r(port)); }); });
 
-test('production process: DB, sessions and uploaded photos survive a restart; cookie flags; invite-only; loopback-only bind', async () => {
+// Run the real create-admin script, boot a production process, and return helpers to talk to it.
+function adminScript(env, extra) { return execFileSync(process.execPath, ['scripts/create-admin.js'], { cwd: ROOT, env: { PATH: process.env.PATH, ...env, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+const J = { 'x-requested-with': 'pairplug', 'content-type': 'application/json' };
+// A reverse proxy forwards the public hostname; production rejects any other Host header (see src/host.js).
+const http = require('node:http');
+// fetch() ignores a custom Host header, so use http.request and expose the small fetch-like surface the tests need.
+const pf = (u, o = {}) => new Promise((resolve, reject) => {
+  const url = new URL(u);
+  const req = http.request({ host: url.hostname, port: url.port, path: url.pathname + url.search, method: o.method || 'GET', headers: { host: 'beta.example.test', ...(o.headers || {}) } }, (res) => {
+    const chunks = []; res.on('data', (c) => chunks.push(c));
+    res.on('end', () => { const buf = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: { get: (k) => { const v = res.headers[k.toLowerCase()]; return Array.isArray(v) ? v.join(', ') : v ?? null; } }, text: async () => buf.toString(), json: async () => JSON.parse(buf.toString()), arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length) }); });
+  });
+  req.on('error', reject); if (o.body) req.write(o.body); req.end();
+});
+async function loginAdmin(base) { const l = await pf(base + '/api/login', { method: 'POST', headers: J, body: JSON.stringify({ email: 'boss@example.test', password: 'a-long-admin-password' }) }); assert.equal(l.status, 200); return l.headers.get('set-cookie').split(';')[0]; }
+async function inviteBuyer(base, adminCookie, email) {
+  const r = await pf(base + '/api/admin/invitations', { method: 'POST', headers: { ...J, cookie: adminCookie }, body: JSON.stringify({ kind: 'buyer', email }) });
+  assert.equal(r.status, 200); return (await r.json()).link.replace(/^https?:\/\/[^/]+/, '');
+}
+
+test('production process: DB, sessions and uploaded photos survive a restart; cookie flags; closed sign-ups; loopback-only bind', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-prod-')), port = await free();
   const env = { PORT: String(port), PAIRPLUG_DB: path.join(dir, 'p.db'), PAIRPLUG_UPLOADS: path.join(dir, 'up') };
-  const base = `http://127.0.0.1:${port}`, hdr = { 'x-requested-with': 'pairplug', 'content-type': 'application/json' };
+  adminScript({ ...env, PUBLIC_URL: 'https://beta.example.test' }, { ADMIN_EMAIL: 'boss@example.test', ADMIN_PASSWORD: 'a-long-admin-password' });
+  const base = `http://127.0.0.1:${port}`;
   let { p, out } = await startProd(env);
   try {
     assert.match(out, /bound to 127\.0\.0\.1:/);
-    // session cookie hardening
-    const reg = await fetch(base + '/api/register', { method: 'POST', headers: hdr, body: JSON.stringify({ email: 'persist@example.test', display_name: 'Persist', password: 'a-long-password-1' }) });
-    assert.equal(reg.status, 200);
-    const sc = reg.headers.get('set-cookie'); assert.match(sc, /HttpOnly/i); assert.match(sc, /Secure/i); assert.match(sc, /SameSite=Lax/i); assert.match(sc, /Path=\//);
-    assert.equal(reg.headers.get('strict-transport-security'), 'max-age=31536000');
+    // public sign-up is closed: the page says Coming soon, the API refuses, no account appears
+    assert.match(await (await pf(base + '/register')).text(), /Coming soon/);
+    const closed = await pf(base + '/api/register', { method: 'POST', headers: J, body: JSON.stringify({ email: 'walkin@example.test', display_name: 'Walk In', password: 'a-long-password-1' }) });
+    assert.equal(closed.status, 403);
+    // the admin invites a buyer; accepting the invitation is the only way in
+    const adminCookie = await loginAdmin(base);
+    const invitePath = await inviteBuyer(base, adminCookie, 'persist@example.test');
+    const acc = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: invitePath.split('/').pop(), display_name: 'Persist', password: 'a-long-password-1' }) });
+    assert.equal(acc.status, 200);
+    const sc = acc.headers.get('set-cookie'); assert.match(sc, /HttpOnly/i); assert.match(sc, /Secure/i); assert.match(sc, /SameSite=Lax/i); assert.match(sc, /Path=\//);
+    assert.equal(acc.headers.get('strict-transport-security'), 'max-age=31536000');
     const cookie = sc.split(';')[0];
-    // invite-only is the production default: a non-invited user cannot open a store, by API or page
-    const onboard = await fetch(base + '/api/sell/onboard', { method: 'POST', headers: { ...hdr, cookie }, body: JSON.stringify({ store_name: 'S', handle: 'sneaky', country: 'US', region: 'NY', city: 'B', agree: true }) });
+    // buyers cannot become sellers: invite-only onboarding
+    const onboard = await pf(base + '/api/sell/onboard', { method: 'POST', headers: { ...J, cookie }, body: JSON.stringify({ store_name: 'S', handle: 'sneaky', country: 'US', region: 'NY', city: 'B', agree: true }) });
     assert.equal(onboard.status, 403);
-    assert.match(await (await fetch(base + '/sell', { headers: { cookie } })).text(), /invite-only/i);
+    assert.match(await (await pf(base + '/sell', { headers: { cookie } })).text(), /Coming soon/i);
     // upload a photo
     const photo = png(8, 8, (x, y) => [x * 30, y * 30, 90]);
-    const up = await fetch(base + '/api/uploads', { method: 'POST', headers: { 'x-requested-with': 'pairplug', 'content-type': 'image/png', cookie }, body: photo });
+    const up = await pf(base + '/api/uploads', { method: 'POST', headers: { 'x-requested-with': 'pairplug', 'content-type': 'image/png', cookie }, body: photo });
     assert.equal(up.status, 200); const { file } = await up.json();
-    assert.equal(Buffer.compare(Buffer.from(await (await fetch(`${base}/uploads/${file}`)).arrayBuffer()), photo), 0);
-    // only the loopback interface is bound: the plain-HTTP app port is not reachable on any other address
+    assert.equal(Buffer.compare(Buffer.from(await (await pf(`${base}/uploads/${file}`)).arrayBuffer()), photo), 0);
+    // only the loopback interface is bound
     for (const addrs of Object.values(os.networkInterfaces())) for (const a of addrs) if (a.family === 'IPv4' && !a.internal) {
       const refused = await new Promise((r) => { const s = net.connect({ host: a.address, port, timeout: 1500 }); s.on('connect', () => { s.destroy(); r(false); }); s.on('error', () => r(true)); s.on('timeout', () => { s.destroy(); r(true); }); });
       assert.equal(refused, true, `port reachable on ${a.address}`);
     }
-    // graceful restart (SIGTERM), then boot again on the same files
+    // graceful restart, then boot again on the same files
     await stopProc(p);
     ({ p } = await startProd(env));
-    const acct = await fetch(base + '/account', { headers: { cookie }, redirect: 'manual' });
+    const acct = await pf(base + '/account', { headers: { cookie }, redirect: 'manual' });
     assert.equal(acct.status, 200, 'session survived the restart'); assert.match(await acct.text(), /persist@example\.test/);
-    assert.equal(Buffer.compare(Buffer.from(await (await fetch(`${base}/uploads/${file}`)).arrayBuffer()), photo), 0, 'uploaded photo survived the restart');
-    const login = await fetch(base + '/api/login', { method: 'POST', headers: hdr, body: JSON.stringify({ email: 'persist@example.test', password: 'a-long-password-1' }) });
+    assert.equal(Buffer.compare(Buffer.from(await (await pf(`${base}/uploads/${file}`)).arrayBuffer()), photo), 0, 'uploaded photo survived the restart');
+    const login = await pf(base + '/api/login', { method: 'POST', headers: J, body: JSON.stringify({ email: 'persist@example.test', password: 'a-long-password-1' }) });
     assert.equal(login.status, 200, 'account (DB row) survived the restart');
-    assert.deepEqual(await (await fetch(base + '/healthz')).json(), { ok: true, checkoutMode: 'external' });
-    // logout invalidates the session server-side
-    await fetch(base + '/api/logout', { method: 'POST', headers: { ...hdr, cookie } });
-    assert.equal((await fetch(base + '/account', { headers: { cookie }, redirect: 'manual' })).status, 302);
+    assert.deepEqual(await (await pf(base + '/healthz')).json(), { ok: true, checkoutMode: 'external' });
+    await pf(base + '/api/logout', { method: 'POST', headers: { ...J, cookie } });
+    assert.equal((await pf(base + '/account', { headers: { cookie }, redirect: 'manual' })).status, 302);
   } finally { await stopProc(p); }
 });
 
@@ -126,13 +152,14 @@ test('create-admin: creates a working admin, promotes an existing user, rejects 
   const { p } = await startProd({ ...env, PORT: String(port) });
   try {
     const base = `http://127.0.0.1:${port}`, hdr = { 'x-requested-with': 'pairplug', 'content-type': 'application/json' };
-    const login = await fetch(base + '/api/login', { method: 'POST', headers: hdr, body: JSON.stringify({ email: 'boss@example.test', password: 'a-long-admin-password' }) });
+    const login = await pf(base + '/api/login', { method: 'POST', headers: hdr, body: JSON.stringify({ email: 'boss@example.test', password: 'a-long-admin-password' }) });
     assert.equal(login.status, 200); const cookie = login.headers.get('set-cookie').split(';')[0];
-    assert.equal((await fetch(base + '/admin', { headers: { cookie } })).status, 200);
-    assert.equal((await fetch(base + '/api/admin/settings', { method: 'PUT', headers: { ...hdr, cookie }, body: '{}' })).status, 422, 'admin is authorised (validation, not 403)');
-    // a normal user is not an admin
-    const u = await fetch(base + '/api/register', { method: 'POST', headers: hdr, body: JSON.stringify({ email: 'normal@example.test', display_name: 'Normal', password: 'a-long-password-1' }) });
-    assert.equal((await fetch(base + '/admin', { headers: { cookie: u.headers.get('set-cookie').split(';')[0] } })).status, 403);
+    assert.equal((await pf(base + '/admin', { headers: { cookie } })).status, 200);
+    assert.equal((await pf(base + '/api/admin/settings', { method: 'PUT', headers: { ...hdr, cookie }, body: '{}' })).status, 422, 'admin is authorised (validation, not 403)');
+    // a normal user (created through an invitation) is not an admin
+    const path2 = await inviteBuyer(base, cookie, 'normal@example.test');
+    const u = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: path2.split('/').pop(), display_name: 'Normal', password: 'a-long-password-1' }) });
+    assert.equal((await pf(base + '/admin', { headers: { cookie: u.headers.get('set-cookie').split(';')[0] } })).status, 403);
   } finally { await stopProc(p); }
   // promoting an existing account
   await new Promise((r) => setTimeout(r, 100));

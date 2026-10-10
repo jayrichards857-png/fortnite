@@ -28,9 +28,6 @@ r.get('/sell', (req, res) => {
     ${X.isExternal() ? '<ul class="muted"><li>No PairPlug fees during the private beta</li><li>You confirm payments, ship, and handle refunds and chargebacks with your own payment provider</li><li>You need a Stripe account with Payment Links</li></ul>'
       : `<ul class="muted"><li>${(getSettings().fee_bps_standard / 100).toFixed(0)}% transaction fee on item price (${(getSettings().fee_bps_pro / 100).toFixed(0)}% on Pro)</li><li>Estimated card processing: ${(getSettings().processing_bps / 100).toFixed(1)}% + ${money(getSettings().processing_fixed_cents)}</li><li>No listing fees</li></ul>`}
     <a class="btn block" href="/register?next=/sell">Create an account to start</a><p class="small muted">Already have one? <a href="/login?next=/sell">Log in</a></p></div>` }));
-  if (config.sellerOnboarding === 'invite' && !config.sellerAllowedEmails.includes(String(req.user.email).toLowerCase())) {
-    return res.send(V.layout({ user: req.user, title: 'Invite only', path: '/sell', body: V.empty('Selling is invite-only right now', 'PairPlug is in a private beta with a small group of sellers. You can still browse, save items and buy.', ['/shop', 'Browse the shop']) }));
-  }
   const s = getSettings();
   res.send(V.layout({ user: req.user, title: 'Set up your store', path: '/sell', body: `<div class="narrow panel form-wide" style="max-width:560px"><h1>Set up your store</h1>
     <p class="muted small">${X.isExternal() ? 'Private beta: no PairPlug fees. Buyers pay you directly through your own checkout link (set it up next in Settings). You handle payment confirmation, refunds and chargebacks.' : `Fees: ${(s.fee_bps_standard / 100).toFixed(0)}% transaction fee + estimated processing ${(s.processing_bps / 100).toFixed(1)}% + ${money(s.processing_fixed_cents)} per order, deducted from your payout. Funds are released from escrow after delivery is confirmed.`}</p>
@@ -45,7 +42,6 @@ r.get('/sell', (req, res) => {
 });
 r.post('/api/sell/onboard', auth.requireUser, (req, res) => {
   if (req.user.is_seller) throw new HttpError(409, 'You already have a store.');
-  if (config.sellerOnboarding === 'invite' && !config.sellerAllowedEmails.includes(String(req.user.email).toLowerCase())) throw new HttpError(403, 'Seller accounts are invite-only during the private beta. Contact PairPlug to be added.');
   const f = {}, handle = String(req.body.handle || '').trim(), country = String(req.body.country || '');
   const storeName = cleanLine(req.body.store_name, 60), region = cleanLine(req.body.region, 60), city = cleanLine(req.body.city, 60);
   if (!storeName) f.store_name = 'Enter a store name.';

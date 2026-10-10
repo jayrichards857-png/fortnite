@@ -9,11 +9,17 @@ const root = path.resolve(__dirname, '..');
 // values fall back to the *restrictive* setting, and every problem is reported (production refuses to start; see server.js).
 const envProblems = [];
 const val = (k) => String(env[k] ?? '').trim();
-for (const k of ['NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
+for (const k of ['SIGNUPS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
   if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
 const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
 const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
 if (onboardingRaw && !['open', 'invite'].includes(onboardingRaw)) envProblems.push('SELLER_ONBOARDING must be exactly "open" or "invite"');
+const signupsRaw = val('SIGNUPS').toLowerCase();
+if (signupsRaw && !['open', 'closed'].includes(signupsRaw)) envProblems.push('SIGNUPS must be exactly "open" or "closed"');
+const releaseRaw = val('PUBLIC_RELEASE_DATE');
+if (releaseRaw && !(/^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) && !Number.isNaN(Date.parse(releaseRaw + 'T00:00:00Z')))) envProblems.push('PUBLIC_RELEASE_DATE must be a valid YYYY-MM-DD date');
+const emailProviderRaw = val('EMAIL_PROVIDER').toLowerCase();
+if (emailProviderRaw && !['none', 'resend'].includes(emailProviderRaw)) envProblems.push('EMAIL_PROVIDER must be "none" or "resend"');
 const modeRaw = val('CHECKOUT_MODE').toLowerCase();
 if (modeRaw && !['external', 'platform'].includes(modeRaw)) envProblems.push('CHECKOUT_MODE must be exactly "external" or "platform"');
 
@@ -49,7 +55,14 @@ module.exports = {
   paymentLinkHosts: String(env.PAYMENT_LINK_HOSTS || 'buy.stripe.com').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
   // 'open' = anyone can open a store; 'invite' = only emails in SELLER_ALLOWED_EMAILS (private beta).
   sellerOnboarding: onboardingRaw === 'open' ? 'open' : onboardingRaw === '' ? (isProd ? 'invite' : 'open') : 'invite',   // production default and any unrecognised value => invite-only
-  sellerAllowedEmails: val('SELLER_ALLOWED_EMAILS').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+  // Public account creation. 'closed' (production default) shows "Coming soon" and creates no accounts; people join only through an admin-issued
+  // invitation. 'open' (development/test default) allows self-registration. Anything unrecognised => closed.
+  signups: signupsRaw === 'open' ? 'open' : signupsRaw === '' ? (isProd ? 'closed' : 'open') : 'closed',
+  releaseDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) ? releaseRaw : '',
+  inviteTtlHours: 168,
+  // Transactional email. 'none' (default): messages are recorded in the outbox but NOT sent. 'resend': sent via the Resend HTTP API (unverified live).
+  email: { provider: emailProviderRaw === 'resend' ? 'resend' : 'none', apiKey: env.EMAIL_API_KEY || '', from: val('EMAIL_FROM') },
+  sellerAllowedEmails: [],   // retired: seller access is now by admin-issued invitation (see src/invitations.js)
   trustProxy: /^\d+$/.test(env.TRUST_PROXY || '') ? Number(env.TRUST_PROXY) : (env.TRUST_PROXY || 'loopback'),
   taxRateBps: Number(env.TAX_RATE_BPS || 0), // flat sales-tax estimate; 0 = not charged
   // Payments: 'stripe' when STRIPE_SECRET_KEY is set, 'sandbox' when PAYMENTS_MODE=sandbox, otherwise disabled.

@@ -19,6 +19,18 @@ const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill=
 
 const img = (file, cls = '', alt = '') => (file ? `<img class="${cls}" src="/uploads/${esc(file)}" alt="${esc(alt)}" loading="lazy">` : `<div class="${cls} noimg" aria-label="No photo"></div>`);
 
+/** "Selling available <date>" — the date comes from PUBLIC_RELEASE_DATE; without one we say "very soon" rather than invent a date. */
+function releaseText() {
+  if (!config.releaseDate) return 'very soon';
+  const [y, m, d] = config.releaseDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+function comingSoon() {
+  return `<div class="soon-card"><span class="pill s-pending_payment">Private beta</span><h1>Coming soon</h1>
+    <p class="lead">Selling available <strong>${esc(releaseText())}</strong>.</p>
+    <p class="muted">PairPlug is opening step by step. Right now accounts are created by invitation only, and sign-ups are closed to the public. Have an invitation? Open the link you were sent.</p>
+    <p><a class="btn" href="/">Browse the marketplace</a> <a class="btn ghost" href="/login">Log in</a></p></div>`;
+}
 function header(user, path, counts, wide) {
   const cats = config.categories.map(([s, n]) => `<a href="/shop?category=${s}">${esc(n)}</a>`).join('');
   const link = (href, label, match) => `<a href="${href}"${path === match || (match !== '/' && path.startsWith(match)) ? ' aria-current="page"' : ''}>${label}</a>`;
@@ -42,7 +54,7 @@ function header(user, path, counts, wide) {
         <span class="dd-title">${esc(user.display_name)}</span>
         <a href="/account">Account</a>${user.is_seller ? '<a href="/dashboard">Seller dashboard</a>' : ''}${user.is_admin ? '<a href="/admin">Admin</a>' : ''}
         <a href="/messages">Messages</a><a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
-      : `<a class="btn small ghost" href="/login">Log in</a><a class="btn small" href="/register">Sign up</a>`}
+      : `<a class="btn small ghost" href="/login">Log in</a>${config.signups === 'open' ? '<a class="btn small" href="/register">Sign up</a>' : '<a class="btn small ghost soon-pill" href="/register">Coming soon</a>'}`}
       ${config.checkoutMode === 'platform' ? `<a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>` : ''}
       <details class="dd right mobile-only"><summary class="iconlink" aria-label="Menu">${icon('menu')}</summary><div class="dd-menu">
         <a href="/">Home</a><a href="/shop">Shop</a>${user && user.is_seller ? '<a href="/dashboard">Sell</a>' : '<a href="/sell">Sell</a>'}${user ? '<a href="/orders">Orders</a>' : ''}
@@ -63,7 +75,7 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'Buy and sell secondhand clothing, sneakers and streetwear across North America.')}">
 <link rel="stylesheet" href="/app.css"></head><body>
-<a class="skip" href="#main">Skip to content</a>${sandbox}${header(user, path, counts, wide)}
+<a class="skip" href="#main">Skip to content</a>${sandbox}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
 <footer class="site-footer"><div class="wrap"><span>PairPlug · North American secondhand marketplace</span>
 <span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a></span></div></footer>
@@ -107,4 +119,4 @@ function dashNav(path) {
     <a class="btn small push" href="/dashboard/listings/new">${icon('plus')} New listing</a></nav>`;
 }
 
-module.exports = { layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };
+module.exports = { releaseText, comingSoon, layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };

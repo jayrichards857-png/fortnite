@@ -8,10 +8,12 @@ const auth = require('../auth');
 const escrow = require('../escrow');
 const { notify } = require('../notify');
 const { transition } = require('../orderMachine');
+const { audit } = require('../audit');
+const invitations = require('../invitations');
 
 const r = express.Router();
 const A = [auth.requireAdmin];
-const nav = (p) => `<nav class="subnav">${[['/admin', 'Overview'], ['/admin/disputes', 'Disputes'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/withdrawals', 'Withdrawals'], ['/admin/settings', 'Fees & settings']].map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+const nav = (p) => `<nav class="subnav">${[['/admin', 'Overview'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']].map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, path: '/admin', ...opts, body: nav(req.path) + opts.body }));
 const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ''}</div>`;
 
@@ -25,7 +27,8 @@ r.get('/admin', A, (req, res) => {
   const c = q.get(`SELECT (SELECT COUNT(*) FROM users) users, (SELECT COUNT(*) FROM users WHERE is_seller=1) sellers, (SELECT COUNT(*) FROM listings WHERE status='active') active,
     (SELECT COUNT(*) FROM disputes WHERE status='open') disputes, (SELECT COUNT(*) FROM withdrawals WHERE status='requested') wd`);
   const failedRefunds = q.get("SELECT COUNT(*) n FROM refunds WHERE status <> 'succeeded'").n;
-  page(req, res, { title: 'Admin', body: `<h1>Marketplace</h1><div class="stats">${stat('Users', c.users, `${c.sellers} sellers`)}${stat('Active listings', c.active)}${stat('Orders', o.orders)}${stat('Gross merchandise value', money(o.gmv), 'buyer totals incl. shipping & tax')}
+  const sl = invitations.slots(), openCases = q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')").n;
+  page(req, res, { title: 'Admin', body: `<h1>Marketplace</h1>${sl.over ? `<div class="form-err">There are ${sl.used} seller accounts but the beta cap is ${sl.cap}. Nothing was deleted; new sellers are blocked until this is resolved.</div>` : ''}<div class="stats">${stat('Seller slots', `${sl.used} / ${sl.cap}`, `${sl.liveInvites} pending invitation(s), ${sl.available} free`)}${stat('Open support cases', openCases)}${stat('Users', c.users, `${c.sellers} sellers`)}${stat('Active listings', c.active)}${stat('Orders', o.orders)}${stat('Gross merchandise value', money(o.gmv), 'buyer totals incl. shipping & tax')}
     ${stat('Platform fees', money(o.fees))}${stat('Processing fees (est.)', money(o.proc), 'paid to the processor')}${stat('Refunded', money(o.refunds))}${stat('Held in escrow', money(o.escrow), 'seller payouts pending')}
     ${stat('Open disputes', c.disputes)}${stat('Pending withdrawals', c.wd)}${stat('Refunds needing attention', failedRefunds)}</div>` });
 });
@@ -72,6 +75,7 @@ r.get('/admin/users', A, (req, res) => {
 r.post('/api/admin/users/:id(\\d+)/ban', A, (req, res) => {
   const id = Number(req.params.id); if (id === req.user.id) throw new HttpError(400, "You can't ban yourself.");
   const banned = req.body.banned ? 1 : 0;
+  audit(req.user, banned ? 'user_suspended' : 'user_reactivated', { type: 'user', id });
   tx(() => {
     q.run('UPDATE users SET banned = ? WHERE id = ?', banned, id);
     if (banned) {
@@ -84,7 +88,7 @@ r.post('/api/admin/users/:id(\\d+)/ban', A, (req, res) => {
 });
 r.post('/api/admin/users/:id(\\d+)/plan', A, (req, res) => {
   if (!['standard', 'pro'].includes(req.body.plan)) throw new HttpError(422, 'Invalid plan');
-  q.run('UPDATE users SET plan = ? WHERE id = ? AND is_seller = 1', req.body.plan, Number(req.params.id)); res.json({ ok: true });
+  q.run('UPDATE users SET plan = ? WHERE id = ? AND is_seller = 1', req.body.plan, Number(req.params.id)); audit(req.user, 'seller_plan_changed', { type: 'user', id: req.params.id, detail: { plan: req.body.plan } }); res.json({ ok: true });
 });
 
 r.get('/admin/listings', A, (req, res) => {
@@ -94,6 +98,7 @@ r.get('/admin/listings', A, (req, res) => {
 r.post('/api/admin/listings/:id(\\d+)/remove', A, (req, res) => {
   const l = q.get('SELECT * FROM listings WHERE id = ?', Number(req.params.id)); if (!l) throw new HttpError(404, 'Not found');
   q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active'", now(), l.id);
+  audit(req.user, 'listing_removed', { type: 'listing', id: l.id });
   notify(l.seller_id, `listing:${l.id}:removed`, 'Listing removed', `“${l.title}” was removed by a moderator.`, '/dashboard/inventory'); res.json({ ok: true });
 });
 
@@ -126,7 +131,8 @@ r.put('/api/admin/settings', A, (req, res) => {
   for (const [k, [lo, hi]] of Object.entries(lim)) { const v = Number(req.body[k]); if (!Number.isInteger(v) || v < lo || v > hi) fields[k] = `Enter a whole number from ${lo} to ${hi}.`; }
   if (Object.keys(fields).length) throw new HttpError(422, 'Please fix the highlighted fields.', fields);
   for (const k of Object.keys(lim)) setSetting(k, Number(req.body[k]));
+  audit(req.user, 'settings_changed', { type: 'settings', detail: Object.fromEntries(Object.keys(lim).map((k) => [k, Number(req.body[k])])) });
   res.json({ ok: true, message: 'Settings saved' });
 });
 
-module.exports = { router: r };
+module.exports = { router: r, page, nav, stat };

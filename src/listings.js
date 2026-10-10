@@ -90,6 +90,8 @@ function saveListing(user, id, body) {
   if (body.status && !SELLER_STATUSES.has(body.status)) throw new HttpError(422, 'Invalid status');
   const v = validateListing(body, { publish });
   const files = ownedUploads(user.id, v.images);
+  // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
+  if (publish && !q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
   if (publish && config.checkoutMode === 'external' && !resolveLink(v, user)) {
     throw new HttpError(422, 'Please fix the highlighted fields.', { payment_url: "Add this item's payment link, or set a default any-amount checkout link in Settings, before publishing." });
   }
@@ -158,6 +160,7 @@ function bulkAction(user, { ids, action, status, price, percent }) {
       if (action === 'status') {
         if (!SELLER_STATUSES.has(status)) throw new HttpError(422, 'Invalid status');
         if (status === 'active') {
+          if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) { result.skipped.push({ id, reason: 'verify your email first' }); continue; }
           const hasImg = q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
           if (config.checkoutMode === 'external' && !resolveLink(l, user)) { result.skipped.push({ id, reason: 'no payment link (add one in the editor or Settings)' }); continue; }

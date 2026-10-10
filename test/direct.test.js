@@ -370,14 +370,3 @@ test('error responses do not leak stack traces or internals', async () => {
   const nf = await c.get('/api/nope'); assert.equal(nf.status, 404); assert.doesNotMatch(nf.text, /at .*\.js/);
   const html = await c.get('/orders/999999'); assert.equal(html.status, 404); assert.doesNotMatch(html.text, /at .*\.js|SQLITE/);
 });
-
-test('seller onboarding can be restricted to invited emails for the private beta', async () => {
-  const u = await H.newUser('Invite'), body = { store_name: 'Inv', handle: 'inv' + Date.now() % 100000, country: 'US', region: 'NY', city: 'B', agree: true };
-  config.sellerOnboarding = 'invite'; config.sellerAllowedEmails = ['someone-else@example.test'];
-  try {
-    assert.equal((await u.post('/api/sell/onboard', body)).status, 403);
-    assert.match((await u.get('/sell')).text, /invite-only/i);
-    config.sellerAllowedEmails = [u.email.toLowerCase()];
-    assert.equal((await u.post('/api/sell/onboard', body)).status, 200);
-  } finally { config.sellerOnboarding = 'open'; config.sellerAllowedEmails = []; }
-});

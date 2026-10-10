@@ -9,6 +9,7 @@ const { HttpError } = require('./util');
 const payments = require('./payments');
 const escrow = require('./escrow');
 const { attachWebSocket } = require('./chat/ws');
+const { hostAllowed } = require('./host');
 
 const app = express();
 app.disable('x-powered-by');
@@ -16,6 +17,7 @@ app.disable('x-powered-by');
 // rate-limit bucket. TRUST_PROXY defaults to 'loopback' (proxy on the same machine); set a number of hops for other platforms.
 app.set('trust proxy', config.trustProxy);
 
+app.use((req, res, next) => { if (hostAllowed(req)) return next(); res.status(421).type('text/plain').send('Misdirected request'); });
 app.use((req, res, next) => {
   const wsOrigin = `ws://${req.headers.host} wss://${req.headers.host}`; // explicit for browsers that don't treat 'self' as ws(s)
   if (config.isProd) res.set('Strict-Transport-Security', 'max-age=31536000');
@@ -34,10 +36,12 @@ app.use(auth.loadUser);
 app.use((req, res, next) => (req.path.startsWith('/webhooks/') || req.path === '/api/uploads' ? next() : express.json({ limit: '2mb' })(req, res, next)));
 app.use(auth.csrfGuard);
 
+app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
 app.use(require('./routes/direct').router);   // direct (seller-owned) checkout; must precede the legacy routers
 app.use(require('./routes/buyer').router);
 app.use(require('./routes/seller').router);
 app.use(require('./routes/admin').router);
+app.use(require('./routes/adminBeta').router);
 app.use(require('./routes/chat').router);
 
 // Health check for uptime monitors / process managers: proves the process is up AND the database answers.
@@ -77,6 +81,8 @@ function assertProductionConfig() {
   const problems = [...config.envProblems];
   if (!/^https:\/\//.test(config.publicUrl)) problems.push('PUBLIC_URL must be the public https:// address of the site');
   if (config.paymentsMode === 'sandbox') problems.push('PAYMENTS_MODE=sandbox simulates payments and must never run in production');
+  if (config.sellerOnboarding !== 'invite') problems.push('SELLER_ONBOARDING must be "invite" in production (hard seller cap, invitation-only)');
+  if (config.email.provider === 'resend' && !(config.email.apiKey && config.email.from)) problems.push('EMAIL_PROVIDER=resend needs EMAIL_API_KEY and EMAIL_FROM');
   if (config.rateLimitScale !== 1) problems.push('RATE_LIMIT_SCALE must not be changed in production');
   if (config.checkoutMode === 'platform' && !config.stripe.secretKey) problems.push('CHECKOUT_MODE=platform needs a configured payment provider; use CHECKOUT_MODE=external for the beta');
   return problems;
