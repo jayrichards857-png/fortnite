@@ -33,7 +33,7 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 
 | Command | Purpose |
 |---|---|
-| `npm test` | 69 unit/HTTP/WebSocket tests (each file on a throwaway DB) |
+| `npm test` | 78 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB); `test/prelaunch.test.js` pins the pre-deployment checks |
 | `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
 | `npm run test:browser` | Three real-Chromium journeys on empty temp DBs: legacy platform checkout, chat, and the **beta direct-checkout journey incl. mobile viewport** (`node scripts/browser-beta.js --screenshots` refreshes `artifacts/screenshots/beta-*.png`) |
 | `npm run backup` | Consistent DB snapshot + incremental photo copy (see DEPLOYMENT.md) |

@@ -178,9 +178,12 @@ test('payment redirect: only the buyer of a pending order, destination from the 
   assert.equal(r.headers.get('cache-control'), 'no-store');
   assert.ok(row(o).pay_clicked_at, 'the click is recorded');
   assert.equal(row(o).status, 'pending_payment', 'clicking through never marks anything paid');
-  // if the seller later swaps the link for a non-allowlisted host, buyers are NOT sent there
-  q.run('UPDATE listings SET payment_url = ? WHERE id = ?', 'https://evil.example/pay', id);
-  assert.notEqual((await buyer.get(`/orders/${o}/pay`)).status, 302);
+  // the destination is frozen in the order snapshot: later edits to the seller's link can't redirect an open order...
+  q.run('UPDATE listings SET payment_url = ? WHERE id = ?', 'https://buy.stripe.com/test_CHANGED_999', id);
+  assert.equal(new URL((await buyer.get(`/orders/${o}/pay`)).headers.get('location')).pathname, '/test_5kA3cs0abc123');
+  // ...and if the host is no longer allowlisted, buyers are NOT sent anywhere
+  const hosts = config.paymentLinkHosts; config.paymentLinkHosts = ['other.example'];
+  try { const r2 = await buyer.get(`/orders/${o}/pay`); assert.notEqual(r2.status, 302); assert.match(r2.text, /no longer accepted/); } finally { config.paymentLinkHosts = hosts; }
 });
 
 test('buyer actions never confirm payment; the hold extends only so the seller can verify', async () => {

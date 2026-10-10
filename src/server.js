@@ -74,7 +74,7 @@ function createServer() {
 
 /** Refuse to start in production with settings that would be unsafe or misleading. */
 function assertProductionConfig() {
-  const problems = [];
+  const problems = [...config.envProblems];
   if (!/^https:\/\//.test(config.publicUrl)) problems.push('PUBLIC_URL must be the public https:// address of the site');
   if (config.paymentsMode === 'sandbox') problems.push('PAYMENTS_MODE=sandbox simulates payments and must never run in production');
   if (config.rateLimitScale !== 1) problems.push('RATE_LIMIT_SCALE must not be changed in production');
@@ -88,10 +88,10 @@ if (require.main === module) {
     if (problems.length) { console.error('Refusing to start:\n - ' + problems.join('\n - ')); process.exit(1); }
   }
   const server = createServer();
-  server.listen(config.port, () => {
+  server.listen(config.port, config.host, () => {
     startJobs();
     const p = payments.getProvider();
-    console.log(`PairPlug listening on ${config.publicUrl}  (checkout: ${config.checkoutMode}${config.checkoutMode === 'platform' ? `, payments: ${p ? p.name : 'DISABLED'}` : ', sellers are paid directly'})`);
+    console.log(`PairPlug listening on ${config.publicUrl} [bound to ${config.host}:${config.port}]  (checkout: ${config.checkoutMode}${config.checkoutMode === 'platform' ? `, payments: ${p ? p.name : 'DISABLED'}` : ', sellers are paid directly'})`);
   });
 }
 // Graceful shutdown (systemd stop / deploy): stop accepting connections, flush the SQLite WAL, exit.

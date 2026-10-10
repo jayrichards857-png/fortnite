@@ -47,7 +47,7 @@ function snapshotOf(listing, seller, link, t) {
     listing: { id: listing.id, title: listing.title, description: listing.description, category: listing.category, brand: listing.brand, size: listing.size, condition: listing.condition, images },
     terms: { itemCents: t.itemCents, shippingPayer: t.shippingPayer, shippingCents: t.shippingCents, totalCents: t.totalCents, currency: 'USD' },
     seller: { id: seller.id, store: seller.store_name, handle: seller.handle, country: seller.country, region: seller.region, city: seller.city },
-    paymentLink: { source: link.source, host: new URL(link.url).hostname },
+    paymentLink: { source: link.source, host: new URL(link.url).hostname, url: link.url },   // the exact link offered at checkout time
   });
 }
 
@@ -106,17 +106,18 @@ function sellerOrder(user, orderId) {
 }
 const releaseListing = (checkoutId) => q.run("UPDATE listings SET status='active', reserved_until=NULL, reserved_checkout_id=NULL WHERE reserved_checkout_id = ? AND status = 'reserved'", checkoutId);
 
-/** Where the buyer is sent to pay. Only for the buyer's own, still-pending order; destination comes from the DB only. */
+/**
+ * Where the buyer is sent to pay. Only for the buyer's own, still-pending direct order. The destination is the exact link
+ * recorded in the order snapshot at checkout time (so later edits to the seller's settings can't redirect an open order),
+ * and it is re-validated against the allowlist before every redirect.
+ */
 function payRedirect(user, orderId) {
   const o = buyerOrder(user, orderId);
   if (o.status !== 'pending_payment') throw new HttpError(409, 'This order is no longer waiting for payment.');
   const snap = JSON.parse(o.snapshot_json);
-  const item = q.get('SELECT listing_id FROM order_items WHERE order_id = ?', o.id);
-  const l = q.get('SELECT * FROM listings WHERE id = ?', item.listing_id), seller = q.get('SELECT * FROM users WHERE id = ?', o.seller_id);
-  // the link used at order time (listing link unless the seller changed it); re-validated before every redirect
-  const link = resolveLink(l, seller);
-  if (!link || new URL(link.url).hostname !== snap.paymentLink.host) throw new HttpError(409, 'The seller changed their checkout link. Please contact the seller.');
-  const url = buyerUrl(link.url, o.id);
+  let url;
+  try { url = buyerUrl(snap.paymentLink.url, o.id); }
+  catch { throw new HttpError(409, "This seller's checkout link is no longer accepted. Please contact the seller."); }
   q.run('UPDATE orders SET pay_clicked_at = COALESCE(pay_clicked_at, ?) WHERE id = ?', now(), o.id);
   return url;
 }

@@ -7,7 +7,7 @@ buyer/seller journey in a real browser. The systemd/Caddy files below are writte
 ## 1. What the app needs (verified from the code)
 | Requirement | Detail |
 |---|---|
-| Runtime | Node **≥ 22.13** (uses built-in `node:sqlite`). One long-running process. |
+| Runtime | Node **22.x, tested on 22.22.0** (needs ≥ 22.13 for unflagged `node:sqlite`; use 22.22 or newer to match what was tested). One long-running process. In production it listens on **127.0.0.1 only**; the reverse proxy is the public entry point. |
 | Database | One SQLite file (`PAIRPLUG_DB`), WAL mode. Needs a **persistent local disk**. Not safe on network filesystems. |
 | Photos | Files in `PAIRPLUG_UPLOADS` (random names, never overwritten). **Persistent disk required** — if lost, listings lose their photos. |
 | Sessions | Stored in the SQLite DB (survive restarts). |
@@ -40,17 +40,18 @@ sudo git clone <your repo URL> /opt/pairplug && cd /opt/pairplug && sudo git che
 sudo npm ci --omit=dev
 sudo chown -R pairplug:pairplug /opt/pairplug /var/lib/pairplug /var/backups/pairplug
 # 3. Config (no secrets in beta mode)
-sudo cp deploy/pairplug.env.example /etc/pairplug.env && sudo chmod 600 /etc/pairplug.env && sudo nano /etc/pairplug.env   # set PUBLIC_URL + SELLER_ALLOWED_EMAILS
+sudo cp deploy/pairplug.env.example /etc/pairplug.env && sudo chown root:pairplug /etc/pairplug.env && sudo chmod 640 /etc/pairplug.env
+sudo nano /etc/pairplug.env   # set PUBLIC_URL + SELLER_ALLOWED_EMAILS. No trailing '# comments' after values (the app refuses to start if it sees one)
 # 4. Service, proxy, backups
 sudo cp deploy/pairplug.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now pairplug
 sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo nano /etc/caddy/Caddyfile && sudo systemctl reload caddy      # set your hostname
 sudo cp deploy/pairplug-backup.cron /etc/cron.d/pairplug-backup
 # 5. Check
 curl -s https://YOUR-SITE-ADDRESS/healthz
-# 6. Create the admin account (run as the service user so file ownership stays correct)
-sudo -u pairplug env $(grep -v '^#' /etc/pairplug.env | xargs) ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' node scripts/create-admin.js
+# 6. Create the admin account (as the service user so DB file ownership stays correct; type the password, don't paste it into shared logs)
+sudo -u pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; cd /opt/pairplug; ADMIN_EMAIL=you@example.com ADMIN_PASSWORD="CHOOSE-A-LONG-PASSWORD" node scripts/create-admin.js'
 ```
-In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `PAYMENTS_MODE=sandbox` is set, or if `CHECKOUT_MODE=platform` has no payment provider.
+In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `PAYMENTS_MODE=sandbox` is set, if `CHECKOUT_MODE=platform` has no payment provider, if `SELLER_ONBOARDING`/`CHECKOUT_MODE` hold an unrecognised value, or if any setting contains an inline ` # comment`. Seller sign-up is **invite-only by default in production** (an empty allow-list means nobody can open a store).
 
 ## 4. Backups and recovery
 * Daily cron runs `scripts/backup.js`: a transactionally-consistent `VACUUM INTO` snapshot (integrity-checked), new photos copied incrementally, newest 14 snapshots kept, in `/var/backups/pairplug`.
@@ -60,7 +61,7 @@ In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `P
 
 ## 5. Updating
 ```bash
-cd /opt/pairplug && sudo -u pairplug env $(grep -v '^#' /etc/pairplug.env | xargs) node scripts/backup.js
+cd /opt/pairplug && sudo -u pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; BACKUP_DIR=/var/backups/pairplug node scripts/backup.js'
 sudo -u pairplug git pull && sudo -u pairplug npm ci --omit=dev && sudo systemctl restart pairplug && curl -s https://YOUR-SITE-ADDRESS/healthz
 ```
 Roll back = checkout the previous commit and restore the pre-update snapshot (a newer database must not be opened by older code).

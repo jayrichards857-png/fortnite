@@ -4,10 +4,26 @@ const path = require('node:path');
 const env = process.env;
 const root = path.resolve(__dirname, '..');
 
+// ---- Environment parsing is FAIL-CLOSED. systemd EnvironmentFile / docker env files do not support trailing "# comments", so a
+// value like `invite   # note` arrives verbatim. We never let a malformed value silently widen access: it is trimmed, unknown
+// values fall back to the *restrictive* setting, and every problem is reported (production refuses to start; see server.js).
+const envProblems = [];
+const val = (k) => String(env[k] ?? '').trim();
+for (const k of ['NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
+  if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
+const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
+const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
+if (onboardingRaw && !['open', 'invite'].includes(onboardingRaw)) envProblems.push('SELLER_ONBOARDING must be exactly "open" or "invite"');
+const modeRaw = val('CHECKOUT_MODE').toLowerCase();
+if (modeRaw && !['external', 'platform'].includes(modeRaw)) envProblems.push('CHECKOUT_MODE must be exactly "external" or "platform"');
+
 module.exports = {
   root,
   port: Number(env.PORT || 3000),
-  isProd: env.NODE_ENV === 'production',
+  isProd,
+  envProblems,
+  // Production listens on loopback only (the reverse proxy is the public entry point). Set HOST=0.0.0.0 deliberately if needed.
+  host: val('HOST') || (isProd ? '127.0.0.1' : '0.0.0.0'),
   dbFile: env.PAIRPLUG_DB || path.join(root, 'data', 'pairplug.db'),
   uploadDir: env.PAIRPLUG_UPLOADS || path.join(root, 'data', 'uploads'),
   publicUrl: env.PUBLIC_URL || `http://localhost:${env.PORT || 3000}`,
@@ -28,12 +44,12 @@ module.exports = {
   // 'external': the seller is paid directly through THEIR OWN payment link (Stripe Payment Link). PairPlug never holds or
   //             moves buyer money: no escrow, wallet credit, fees or provider refunds for new orders.
   // 'platform': the original cart + PairPlug-held escrow flow (kept for history/tests; needs a payment provider).
-  checkoutMode: env.CHECKOUT_MODE === 'platform' ? 'platform' : 'external',
+  checkoutMode: modeRaw === 'platform' ? 'platform' : 'external',
   // Only HTTPS links on these exact hostnames may be saved as a seller checkout link. Extend deliberately, one host at a time.
   paymentLinkHosts: String(env.PAYMENT_LINK_HOSTS || 'buy.stripe.com').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
   // 'open' = anyone can open a store; 'invite' = only emails in SELLER_ALLOWED_EMAILS (private beta).
-  sellerOnboarding: env.SELLER_ONBOARDING === 'invite' ? 'invite' : 'open',
-  sellerAllowedEmails: String(env.SELLER_ALLOWED_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+  sellerOnboarding: onboardingRaw === 'open' ? 'open' : onboardingRaw === '' ? (isProd ? 'invite' : 'open') : 'invite',   // production default and any unrecognised value => invite-only
+  sellerAllowedEmails: val('SELLER_ALLOWED_EMAILS').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
   trustProxy: /^\d+$/.test(env.TRUST_PROXY || '') ? Number(env.TRUST_PROXY) : (env.TRUST_PROXY || 'loopback'),
   taxRateBps: Number(env.TAX_RATE_BPS || 0), // flat sales-tax estimate; 0 = not charged
   // Payments: 'stripe' when STRIPE_SECRET_KEY is set, 'sandbox' when PAYMENTS_MODE=sandbox, otherwise disabled.
