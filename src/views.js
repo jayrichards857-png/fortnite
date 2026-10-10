@@ -43,7 +43,7 @@ function header(user, path, counts, wide) {
         <a href="/account">Account</a>${user.is_seller ? '<a href="/dashboard">Seller dashboard</a>' : ''}${user.is_admin ? '<a href="/admin">Admin</a>' : ''}
         <a href="/messages">Messages</a><a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
       : `<a class="btn small ghost" href="/login">Log in</a><a class="btn small" href="/register">Sign up</a>`}
-      <a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>
+      ${config.checkoutMode === 'platform' ? `<a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>` : ''}
       <details class="dd right mobile-only"><summary class="iconlink" aria-label="Menu">${icon('menu')}</summary><div class="dd-menu">
         <a href="/">Home</a><a href="/shop">Shop</a>${user && user.is_seller ? '<a href="/dashboard">Sell</a>' : '<a href="/sell">Sell</a>'}${user ? '<a href="/orders">Orders</a>' : ''}
         <span class="dd-title">Categories</span>${cats}</div></details>
@@ -58,7 +58,7 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
     notifications: q.get('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id).n,
     messages: require('./chat/service').unreadTotal(user.id),
   } : {};
-  const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey
+  const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey && config.checkoutMode === 'platform'
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'Buy and sell secondhand clothing, sneakers and streetwear across North America.')}">
@@ -89,6 +89,9 @@ const grid = (items, ctx) => `<div class="grid">${items.map((l) => card(l, ctx))
 function empty(title, text, cta) {
   return `<div class="empty"><h3>${esc(title)}</h3><p class="muted">${esc(text)}</p>${cta ? `<a class="btn" href="${cta[0]}">${esc(cta[1])}</a>` : ''}</div>`;
 }
+const EXT_LABEL = { pending_payment: 'Awaiting payment confirmation', paid: 'Payment confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled', refunded: 'Refunded' };
+/** Status pill that never overstates what we know: direct orders are "awaiting payment confirmation" until the seller confirms. */
+const orderPill = (o) => `<span class="pill s-${esc(o.status)}">${esc(o.payment_mode === 'external' ? EXT_LABEL[o.status] || o.status : String(o.status).replace('_', ' '))}</span>`;
 const statusPill = (s) => `<span class="pill s-${esc(s)}">${esc(String(s).replace('_', ' '))}</span>`;
 
 function pager(page, pages, params) {
@@ -99,9 +102,9 @@ function pager(page, pages, params) {
 }
 
 function dashNav(path) {
-  const items = [['/dashboard', 'Overview'], ['/dashboard/inventory', 'Inventory'], ['/dashboard/orders', 'Orders'], ['/dashboard/analytics', 'Analytics'], ['/dashboard/finance', 'Earnings & tax'], ['/dashboard/import', 'CSV import']];
+  const items = [['/dashboard', 'Overview'], ['/dashboard/inventory', 'Inventory'], ['/dashboard/orders', 'Orders'], ['/dashboard/analytics', 'Analytics'], ['/dashboard/finance', config.checkoutMode === 'platform' ? 'Earnings & tax' : 'Earnings'], ['/dashboard/import', 'CSV import'], ['/dashboard/settings', 'Settings']];
   return `<nav class="subnav" aria-label="Seller dashboard">${items.map(([h, l]) => `<a href="${h}"${path === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}
     <a class="btn small push" href="/dashboard/listings/new">${icon('plus')} New listing</a></nav>`;
 }
 
-module.exports = { layout, card, grid, empty, icon, img, statusPill, pager, dashNav, money, esc, date };
+module.exports = { layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };

@@ -11,7 +11,9 @@
     "create-admin": "node scripts/create-admin.js",
     "seed:demo": "node scripts/seed-demo.js",
     "screenshots": "node scripts/screenshots.js",
-    "test:browser": "node scripts/browser-journey.js && node scripts/browser-chat.js"
+    "test:browser": "node scripts/browser-journey.js && node scripts/browser-chat.js && node scripts/browser-beta.js",
+    "backup": "node scripts/backup.js",
+    "start:beta": "NODE_ENV=production CHECKOUT_MODE=external node src/server.js"
   },
   "repository": {
     "type": "git",

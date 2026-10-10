@@ -8,13 +8,23 @@ const { transition } = require('./orderMachine');
 const { notify } = require('./notify');
 const { getProviderByName } = require('./payments');
 
+/** PairPlug holds no money for direct-checkout orders, so none of the escrow functions may touch them. */
+function assertPlatformOrder(orderId) {
+  const o = q.get('SELECT payment_mode FROM orders WHERE id = ?', orderId);
+  if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
+  if (o.payment_mode !== 'platform') throw Object.assign(new Error('This order was paid directly to the seller; PairPlug holds no funds for it.'), { status: 409 });
+}
+
 /** Move shipped -> delivered (carrier sync or buyer confirmation) and start the auto-release clock. */
 function markDelivered(orderId, actor) {
   return tx(() => {
     const days = getSettings().auto_release_days;
     const t = now();
-    transition(orderId, 'delivered', { actor, set: { delivered_at: t, auto_release_at: t + days * 86400 } });
+    const mode = q.get('SELECT payment_mode m FROM orders WHERE id = ?', orderId);
+    const direct = mode && mode.m === 'external';   // direct orders: record delivery only; there is no escrow clock
+    transition(orderId, 'delivered', { actor, set: direct ? { delivered_at: t } : { delivered_at: t, auto_release_at: t + days * 86400 } });
     const o = q.get('SELECT * FROM orders WHERE id = ?', orderId);
+    if (direct) { notify(o.buyer_id, `order:${o.id}:delivered`, 'Order delivered', `Order #${o.id} was reported delivered.`, `/orders/${o.id}`); return; }
     notify(o.buyer_id, `order:${o.id}:delivered`, 'Order delivered', `Confirm receipt on order #${o.id} or funds release to the seller in ${days} days.`, `/orders/${o.id}`);
     notify(o.seller_id, `order:${o.id}:delivered-seller`, 'Order delivered', `Order #${o.id} was delivered. Funds release after buyer confirmation or ${days} days.`, '/dashboard/orders');
   });
@@ -23,6 +33,7 @@ function markDelivered(orderId, actor) {
 /** delivered|disputed -> released, crediting the seller's wallet exactly once. */
 function releaseToSeller(orderId, actor) {
   return tx(() => {
+    assertPlatformOrder(orderId);
     transition(orderId, 'released', { actor, set: { released_at: now(), auto_release_at: null } });
     const o = q.get('SELECT * FROM orders WHERE id = ?', orderId);
     q.run("INSERT INTO ledger(user_id, order_id, kind, amount_cents, note, created_at) VALUES(?,?,'sale_release',?,?,?)",
@@ -36,6 +47,7 @@ function releaseToSeller(orderId, actor) {
 function buyerConfirm(orderId, userId) {
   const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', orderId, userId);
   if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
+  assertPlatformOrder(orderId);
   // Disputed orders are resolved by an admin only; the buyer's confirm button must not bypass that.
   if (!['shipped', 'delivered'].includes(o.status)) throw Object.assign(new Error(`Order can't be confirmed while ${o.status.replace('_', ' ')}.`), { status: 409 });
   if (o.status === 'shipped') markDelivered(orderId, `buyer:${userId}`);
@@ -44,7 +56,7 @@ function buyerConfirm(orderId, userId) {
 
 /** Cron-style job: release every delivered order whose hold window has elapsed. */
 function autoReleaseDue() {
-  const due = q.all("SELECT id FROM orders WHERE status = 'delivered' AND auto_release_at IS NOT NULL AND auto_release_at <= ?", now());
+  const due = q.all("SELECT id FROM orders WHERE status = 'delivered' AND payment_mode = 'platform' AND auto_release_at IS NOT NULL AND auto_release_at <= ?", now());
   let n = 0;
   for (const { id } of due) { try { releaseToSeller(id, 'system:auto-release'); n++; } catch (e) { if (e.status !== 409) throw e; } }
   return n;
@@ -57,6 +69,7 @@ function autoReleaseDue() {
  */
 async function refundOrder(orderId, { actor, reason, relist = false }) {
   const order = tx(() => {
+    assertPlatformOrder(orderId);
     transition(orderId, 'refunded', { actor, note: reason, set: { refunded_cents: q.get('SELECT total_cents t FROM orders WHERE id = ?', orderId).t } });
     const o = q.get('SELECT * FROM orders WHERE id = ?', orderId);
     q.run("INSERT INTO refunds(order_id, amount_cents, reason, status, created_at) VALUES(?,?,?, 'pending', ?)", o.id, o.total_cents, reason || null, now());

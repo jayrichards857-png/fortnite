@@ -4,6 +4,7 @@ const { q, tx, now } = require('./db');
 const { clean, cleanLine, dollarsToCents, HttpError } = require('./util');
 const { ownedUploads } = require('./images');
 const { notify } = require('./notify');
+const { validatePaymentUrl, resolveLink } = require('./paymentLinks');
 
 const CATS = new Set(config.categories.map((c) => c[0]));
 const SELLER_STATUSES = new Set(['draft', 'active', 'archived']); // 'sold'/'reserved' are owned by the order system
@@ -61,8 +62,18 @@ function validateListing(body, { publish }) {
   else if (condition && !config.conditions[condition]) errors.condition = 'Invalid condition.';
   const cost = dollarsToCents(body.cost);
   if (Number.isNaN(cost) || (cost != null && cost > 10000000)) errors.cost = 'Enter a valid cost, e.g. 12.50.';
-  const shipping = dollarsToCents(body.shipping) ?? 0;
-  if (Number.isNaN(shipping) || shipping > 100000) errors.shipping = 'Enter a shipping price up to $1,000.00.';
+  // Shipping terms: 'buyer' pays a flat fee; 'seller' offers free shipping and covers the label. If the client doesn't say, infer it.
+  let shipping = dollarsToCents(body.shipping) ?? 0;
+  if (Number.isNaN(shipping) || shipping > 100000) { errors.shipping = 'Enter a shipping price up to $1,000.00.'; shipping = 0; }
+  let shipping_payer = body.shipping_payer;
+  if (shipping_payer == null || shipping_payer === '') shipping_payer = shipping > 0 ? 'buyer' : 'seller';
+  if (!['buyer', 'seller'].includes(shipping_payer)) { errors.shipping_payer = 'Choose who pays for shipping.'; shipping_payer = 'buyer'; }
+  else if (shipping_payer === 'seller') shipping = 0;   // free shipping: the buyer is never charged shipping
+  else if (shipping <= 0 && !errors.shipping) errors.shipping = 'Enter the flat shipping fee the buyer pays, or choose free shipping.';
+  let payment_url = null;
+  if (body.payment_url != null && String(body.payment_url).trim() !== '') {
+    try { payment_url = validatePaymentUrl(body.payment_url); } catch (e) { errors.payment_url = (e.fields && e.fields.payment_url) || e.message; }
+  }
   const num = (k, max) => { const v = body[k]; if (v === '' || v == null) return null; const n = Number(v); if (!(n > 0 && n <= max)) { errors[k] = 'Enter a positive number.'; return null; } return n; };
   const weight_oz = num('weight_oz', 2400), length_in = num('length_in', 120), width_in = num('width_in', 120), height_in = num('height_in', 120);
   const sku = cleanLine(body.sku, 60) || null;
@@ -71,7 +82,7 @@ function validateListing(body, { publish }) {
   if (publish && !(weight_oz > 0)) errors.weight_oz = 'Add a shipping weight so buyers can be charged correctly.';
   if (Object.keys(errors).length) throw new HttpError(422, 'Please fix the highlighted fields.', errors);
   return { title, description: clean(body.description, 4000), category, brand: cleanLine(body.brand, 60) || null, size: cleanLine(body.size, 30) || null,
-    condition, price_cents: price, cost_cents: cost, shipping_cents: shipping, sku, weight_oz, length_in, width_in, height_in, images };
+    condition, price_cents: price, cost_cents: cost, shipping_cents: shipping, shipping_payer, payment_url, sku, weight_oz, length_in, width_in, height_in, images };
 }
 
 function saveListing(user, id, body) {
@@ -79,6 +90,9 @@ function saveListing(user, id, body) {
   if (body.status && !SELLER_STATUSES.has(body.status)) throw new HttpError(422, 'Invalid status');
   const v = validateListing(body, { publish });
   const files = ownedUploads(user.id, v.images);
+  if (publish && config.checkoutMode === 'external' && !resolveLink(v, user)) {
+    throw new HttpError(422, 'Please fix the highlighted fields.', { payment_url: "Add this item's payment link, or set a default any-amount checkout link in Settings, before publishing." });
+  }
   return tx(() => {
     const t = now();
     let cur = null;
@@ -92,7 +106,7 @@ function saveListing(user, id, body) {
       if (dup) throw new HttpError(422, 'Please fix the highlighted fields.', { sku: 'You already use this SKU on another listing.' });
     }
     const status = body.status || (cur ? cur.status : 'draft');
-    const cols = ['title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
+    const cols = ['title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'shipping_payer', 'payment_url', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
     const vals = cols.map((c) => v[c]);
     let listingId = id;
     if (id) {
@@ -121,8 +135,8 @@ function duplicateListing(user, id) {
     const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
     if (!l) throw new HttpError(404, 'Listing not found');
     const t = now();
-    const r = q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, l.title + ' (copy)', l.description, l.category, l.brand, l.size, l.condition, l.price_cents, l.cost_cents, l.shipping_cents, l.weight_oz, l.length_in, l.width_in, l.height_in, t, t);
+    const r = q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, l.title + ' (copy)', l.description, l.category, l.brand, l.size, l.condition, l.price_cents, l.cost_cents, l.shipping_cents, l.shipping_payer, null, l.weight_oz, l.length_in, l.width_in, l.height_in, t, t);
     q.run('INSERT INTO listing_images(listing_id,file,position) SELECT ?, file, position FROM listing_images WHERE listing_id = ?', r.lastInsertRowid, id);
     return Number(r.lastInsertRowid);
   });
@@ -146,6 +160,7 @@ function bulkAction(user, { ids, action, status, price, percent }) {
         if (status === 'active') {
           const hasImg = q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
+          if (config.checkoutMode === 'external' && !resolveLink(l, user)) { result.skipped.push({ id, reason: 'no payment link (add one in the editor or Settings)' }); continue; }
         }
         q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
       } else if (action === 'price') {
@@ -196,19 +211,19 @@ function importCsv(user, text) {
         const cur = q.get('SELECT * FROM listings WHERE seller_id = ? AND sku = ?', user.id, rec.sku);
         if (cur && ['sold', 'reserved'].includes(cur.status)) throw new Error(`item is ${cur.status}`);
         const merged = cur ? { title: cur.title, description: cur.description, category: cur.category, brand: cur.brand, size: cur.size, condition: cur.condition,
-          price: (cur.price_cents / 100).toFixed(2), cost: cur.cost_cents == null ? '' : (cur.cost_cents / 100).toFixed(2), shipping: (cur.shipping_cents / 100).toFixed(2),
+          shipping_payer: cur.shipping_payer, payment_url: cur.payment_url, price: (cur.price_cents / 100).toFixed(2), cost: cur.cost_cents == null ? '' : (cur.cost_cents / 100).toFixed(2), shipping: (cur.shipping_cents / 100).toFixed(2),
           weight_oz: cur.weight_oz, length_in: cur.length_in, width_in: cur.width_in, height_in: cur.height_in } : {};
-        for (const k of ['title', 'description', 'category', 'brand', 'size', 'condition', 'price', 'cost', 'shipping', 'weight_oz', 'length_in', 'width_in', 'height_in']) if (rec[k] !== undefined && rec[k] !== '') merged[k] = rec[k];
+        for (const k of ['title', 'description', 'category', 'brand', 'size', 'condition', 'price', 'cost', 'shipping', 'shipping_payer', 'payment_url', 'weight_oz', 'length_in', 'width_in', 'height_in']) if (rec[k] !== undefined && rec[k] !== '') merged[k] = rec[k];
         merged.sku = rec.sku;
         const v = validateListing({ ...merged, images: [] }, { publish: false });
         const t = now();
         if (cur) {
-          q.run(`UPDATE listings SET title=?,description=?,category=?,brand=?,size=?,condition=?,price_cents=?,cost_cents=?,shipping_cents=?,weight_oz=?,length_in=?,width_in=?,height_in=?,updated_at=? WHERE id=?`,
-            v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.weight_oz, v.length_in, v.width_in, v.height_in, t, cur.id);
+          q.run(`UPDATE listings SET title=?,description=?,category=?,brand=?,size=?,condition=?,price_cents=?,cost_cents=?,shipping_cents=?,shipping_payer=?,payment_url=?,weight_oz=?,length_in=?,width_in=?,height_in=?,updated_at=? WHERE id=?`,
+            v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.shipping_payer, v.payment_url, v.weight_oz, v.length_in, v.width_in, v.height_in, t, cur.id);
           report.updated++;
         } else {
-          q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,sku,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, rec.sku, v.weight_oz, v.length_in, v.width_in, v.height_in, t, t);
+          q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,sku,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.shipping_payer, v.payment_url, rec.sku, v.weight_oz, v.length_in, v.width_in, v.height_in, t, t);
           report.created++;
         }
       } catch (e) { report.errors.push({ line, error: e.fields ? Object.values(e.fields).join(' ') : e.message }); }

@@ -110,4 +110,4 @@ async function createCheckout(user, { address, idempotencyKey }) {
   }
 }
 
-module.exports = { cartLines, quote, addToCart, createCheckout };
+module.exports = { cartLines, quote, addToCart, createCheckout, validateAddress };

@@ -1,0 +1,9 @@
+# /etc/caddy/Caddyfile — automatic HTTPS (Let's Encrypt) + WebSocket proxying. Replace the address with your real hostname.
+# Requires: DNS for the hostname points at this VM, and ports 80 and 443 are open.
+YOUR-SITE-ADDRESS {
+	encode gzip
+	request_body {
+		max_size 8MB
+	}
+	reverse_proxy 127.0.0.1:3000
+}

@@ -12,7 +12,7 @@ fs.mkdirSync(out, { recursive: true });
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 function startServer(port, db, uploads) {
-  const p = spawn(process.execPath, ['src/server.js'], { cwd: root, env: { ...process.env, PORT: String(port), PAIRPLUG_DB: db, PAIRPLUG_UPLOADS: uploads, PAYMENTS_MODE: 'sandbox', PUBLIC_URL: `http://localhost:${port}` }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const p = spawn(process.execPath, ['src/server.js'], { cwd: root, env: { ...process.env, PORT: String(port), PAIRPLUG_DB: db, PAIRPLUG_UPLOADS: uploads, PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', PUBLIC_URL: `http://localhost:${port}` }, stdio: ['ignore', 'pipe', 'inherit'] });
   return new Promise((res, rej) => { p.stdout.on('data', (d) => { if (String(d).includes('listening')) res(p); }); p.on('exit', (c) => rej(new Error('server exited ' + c))); setTimeout(() => rej(new Error('server start timeout')), 15000); });
 }
 

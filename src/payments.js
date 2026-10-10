@@ -102,6 +102,8 @@ function handlePaymentEvent(providerName, ev) {
     if (ev.type === 'ignored') return { ignored: true };
     const checkout = q.get('SELECT * FROM checkouts WHERE id = ?', ev.checkoutId);
     if (!checkout) return { ignored: true };
+    // A provider webhook can never mark a seller-direct checkout paid: only the seller's own confirmation can.
+    if (checkout.mode === 'external') return { ignored: true };
     const payment = q.get('SELECT * FROM payments WHERE checkout_id = ? ORDER BY id DESC LIMIT 1', checkout.id);
 
     if (ev.type === 'payment_succeeded') {
@@ -142,7 +144,10 @@ function expireStaleCheckouts() {
     const stale = q.all("SELECT id FROM checkouts WHERE status = 'pending' AND expires_at < ?", now());
     for (const c of stale) {
       q.run("UPDATE checkouts SET status = 'expired' WHERE id = ?", c.id);
-      for (const o of q.all('SELECT id FROM orders WHERE checkout_id = ?', c.id)) transition(o.id, 'cancelled', { actor: 'system', note: 'checkout expired' });
+      for (const o of q.all('SELECT id, buyer_id, payment_mode FROM orders WHERE checkout_id = ?', c.id)) {
+        transition(o.id, 'cancelled', { actor: 'system', note: 'checkout expired' });
+        if (o.payment_mode === 'external') notify(o.buyer_id, `order:${o.id}:expired`, 'Reservation expired', `Order #${o.id} was released because the seller never confirmed a payment. If you did pay, message the seller right away.`, `/orders/${o.id}`);
+      }
       releaseCheckoutItems(c.id);
     }
     return stale.length;

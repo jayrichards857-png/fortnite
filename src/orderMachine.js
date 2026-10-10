@@ -13,8 +13,8 @@ const { q, now } = require('./db');
 const TRANSITIONS = {
   pending_payment: ['paid', 'cancelled'],
   paid: ['shipped', 'refunded', 'disputed'],
-  shipped: ['delivered', 'disputed'],
-  delivered: ['released', 'disputed'],
+  shipped: ['delivered', 'disputed', 'refunded'],   // shipped/delivered -> refunded: only the direct-checkout seller route uses these
+  delivered: ['released', 'disputed', 'refunded'],
   disputed: ['refunded', 'released'],
   released: [], refunded: [], cancelled: [],
 };

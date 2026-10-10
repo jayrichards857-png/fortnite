@@ -21,7 +21,7 @@ r.get('/admin', A, (req, res) => {
     COALESCE(SUM(platform_fee_cents) FILTER (WHERE status IN ('paid','shipped','delivered','released','disputed')),0) fees,
     COALESCE(SUM(processing_fee_cents) FILTER (WHERE status IN ('paid','shipped','delivered','released','disputed')),0) proc,
     COALESCE(SUM(refunded_cents) FILTER (WHERE status = 'refunded'),0) refunds,
-    COALESCE(SUM(seller_payout_cents) FILTER (WHERE status IN ('paid','shipped','delivered','disputed')),0) escrow FROM orders`);
+    COALESCE(SUM(seller_payout_cents) FILTER (WHERE payment_mode = 'platform' AND status IN ('paid','shipped','delivered','disputed')),0) escrow FROM orders`);
   const c = q.get(`SELECT (SELECT COUNT(*) FROM users) users, (SELECT COUNT(*) FROM users WHERE is_seller=1) sellers, (SELECT COUNT(*) FROM listings WHERE status='active') active,
     (SELECT COUNT(*) FROM disputes WHERE status='open') disputes, (SELECT COUNT(*) FROM withdrawals WHERE status='requested') wd`);
   const failedRefunds = q.get("SELECT COUNT(*) n FROM refunds WHERE status <> 'succeeded'").n;

@@ -1,91 +1,66 @@
 # PairPlug
 
-A secondhand clothing / sneakers / streetwear marketplace for North America (US, Canada, Mexico) with
-escrow payments, disputes, and a reseller dashboard ("Reseller OS"). Node 22 + Express + SQLite (built-in `node:sqlite`),
-server-rendered pages with a little vanilla JS. **Two runtime dependencies (`express`, `ws`)**; `playwright-core` is dev-only (screenshots/browser test).
+A secondhand clothing / sneakers / streetwear marketplace for North America (US, Canada, Mexico). Node 22 + Express + SQLite (built-in `node:sqlite`),
+server-rendered pages with a little vanilla JS. Runtime dependencies: `express`, `ws`.
 
-> The repository was empty when this work started, so there was no existing PairPlug code, schema, auth or payment
-> integration to preserve. Everything here was built from scratch.
+## Private-beta payment model (read first)
 
-## Run it
+**PairPlug does not collect, hold, escrow, split or refund buyer money.** For the beta, each seller is paid *directly* through their **own Stripe Payment Link**:
 
+1. Buyer opens a listing and sees item price, shipping terms and the **total they will pay the seller** before leaving PairPlug.
+2. Buyer enters a shipping address and reserves the item, then is sent to the seller's own checkout link (`buy.stripe.com`, allowlisted, validated server-side; the destination always comes from the database, never from a request parameter).
+3. The order shows **“Awaiting payment confirmation.”** Clicking through, returning, or pressing “I've completed payment” **never** marks it paid. **Only the seller can confirm** (after checking their own Stripe dashboard).
+4. The seller buys a label themselves (PairPlug does not), enters carrier + tracking; the buyer gets a safe tracking link.
+
+| Question | Answer |
+|---|---|
+| Who processes payments? | The seller's payment provider (Stripe). |
+| Who handles refunds, chargebacks, payment disputes, sales tax? | The seller and their provider — **not PairPlug**. Stated on the listing, purchase and order pages. |
+| Is there escrow / buyer protection? | **No.** The earlier escrow/wallet/fee/dispute code is kept (history is preserved) but is disabled for new orders. |
+| PairPlug fees? | None in the beta. |
+| Is the Stripe link flow verified live? | **No.** The server side (validation, redirect, `client_reference_id=PP-<order>` parameter, seller confirmation) is tested; **no real Stripe payment has been made.** Do a real test purchase first. |
+
+Operating guide: [docs/BETA_RUNBOOK.md](docs/BETA_RUNBOOK.md) · Deployment & hosting research: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+## Run it locally
 ```bash
 npm install
-cp .env.example .env            # optional; values can also be exported in the shell
-PAYMENTS_MODE=sandbox npm start # http://localhost:3000   (npm run dev for auto-reload)
-
-# create an administrator
+npm start                       # http://localhost:3000 — direct-checkout beta mode, empty database, nothing seeded
 ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' npm run create-admin
 ```
+Needs Node ≥ 22.13 (prints an “experimental SQLite” warning — expected). The database and `data/uploads` are created and migrated automatically (migrations are additive).
+For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplug.env.example` (HTTPS `PUBLIC_URL`, `SELLER_ONBOARDING=invite`, `SELLER_ALLOWED_EMAILS`).
 
-Requires Node ≥ 22.13 (uses `node:sqlite`; it prints an "experimental" warning, which is expected).
-The database is created and migrated automatically on first start (`data/pairplug.db`). The live DB starts **empty** — nothing is seeded.
-
-| Command | What it does |
+| Command | Purpose |
 |---|---|
-| `npm test` | 43 unit + HTTP/WebSocket end-to-end tests (incl. 13 chat tests), each file on a throwaway DB |
-| `npm run check` | Syntax-checks every JS file (no build step / no linter dependency) |
-| `npm run test:browser` | Two real-Chromium scenarios on empty temp DBs: `browser-journey.js` (seller → listing → buyer → checkout → ship → release) and `browser-chat.js` (two browsers chatting; add `--screenshots` to refresh the chat screenshots) |
-| `npm run seed:demo` | Builds an **isolated** fixture DB (`data/demo.db`) by driving the real API — for screenshots/QA only |
-| `npm run screenshots` | Boots the app on the fixture DB (and an empty DB) and captures `artifacts/screenshots/*.png` |
+| `npm test` | 69 unit/HTTP/WebSocket tests (each file on a throwaway DB) |
+| `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
+| `npm run test:browser` | Three real-Chromium journeys on empty temp DBs: legacy platform checkout, chat, and the **beta direct-checkout journey incl. mobile viewport** (`node scripts/browser-beta.js --screenshots` refreshes `artifacts/screenshots/beta-*.png`) |
+| `npm run backup` | Consistent DB snapshot + incremental photo copy (see DEPLOYMENT.md) |
+| `npm run seed:demo` / `npm run screenshots` | **Isolated fixture DB** for the older (platform-mode) screenshots. Never touches the live DB |
 
-## Features (all backed by the database)
+## What's implemented
+* **Buyer:** search/filters/sort/pagination, product pages with gallery, favorites, direct-checkout purchase flow, order page with status/tracking, reviews, private chat with the seller.
+* **Seller:** onboarding (invite-only switch for the beta), **Settings** (checkout link), listing editor (photos, shipping terms *buyer-pays flat fee* or *free shipping*, per-listing payment link, profit calculator), inventory, CSV import, **order page** (confirm/reject payment, tracking, delivered, record a refund), analytics.
+* **Admin:** users/ban, listing removal; legacy dispute/withdrawal/fee tools for historical orders.
+* **Messaging:** WebSocket with long-polling fallback, durable messages, unread/read receipts, offline queue (see below).
 
-**Buyer** – home, shop with SQL-level search/category/brand/size/condition/price filters, sort, pagination, shareable URLs,
-product pages with working gallery, favorites, cart, checkout, order tracking page, confirm receipt, disputes with photo evidence, reviews, in-app notifications.
-**Seller** – onboarding (NA-only ships-from), listing editor with photo upload + drafts + live profit calculator and payout preview, inventory table
-(search, filters, pagination, bulk select, bulk status/price, duplicate, archive), CSV import by SKU, orders (ship with tracking, cancel & refund),
-overview/analytics/aging/item profitability derived from orders, earnings, wallet, withdrawal requests, monthly tax summary (+CSV), public storefront.
-**Admin** – marketplace overview, dispute resolution (side-by-side evidence → refund or release), user ban + Pro plan toggle, listing removal, withdrawal queue, fee settings.
-
-### Money model (`src/pricing.js`, single source of truth)
-`seller payout = item price + shipping − platform fee − processing fee`; `platform revenue = platform fee (+ label markup)`.
-Defaults: 10% transaction fee (6% Pro), 2.9% + $0.30 estimated processing (passed to the seller), configurable by admins (affects new orders only).
-Prices are always recomputed on the server; the browser never submits a price.
-
-### Trust & escrow (`src/orderMachine.js`, `src/escrow.js`)
-`pending_payment → paid → shipped → delivered → released`, or `… → disputed → refunded | released`. Funds credit the seller's ledger only on `released`
-(buyer confirmation, or auto-release N days after delivery via the background job). `UNIQUE(order_id,'sale_release')` makes a double release impossible.
-
-### Concurrency
-Unique items are reserved in a `BEGIN IMMEDIATE` transaction with a conditional `UPDATE … WHERE status='active'`; reservations expire after 15 min (configurable).
-Verified by a test where 12 buyers race for one item: exactly one wins. Checkout is idempotent per `(buyer, key)`.
-
-## Messaging (buyer ↔ seller chat)
-
-Private chat at `/messages` (header chat icon, plus **Message seller** on every listing). Runs locally with no external service, account or Redis.
-
-* **Transport:** real **WebSocket** (`/api/chat/ws`, via `ws`) by default, with an automatic **long-polling** fallback (`GET /api/chat/sync`) when a WebSocket can't be established. The status pill always names the transport in use: `Live · WebSocket`, `Live · long-polling (WebSocket unavailable)`, `Connecting…`, `Reconnecting…`, `Offline`, `Signed out`. Force polling with `/messages?transport=polling`.
-* **Model:** one conversation per buyer/seller pair (`conversations`, `UNIQUE(buyer_id, seller_id)`; the listing is shown as context). Messages are persisted (`messages`) **before** the sender gets an ack; `UNIQUE(conversation_id, sender_id, client_id)` + client-generated idempotency keys prevent duplicates. Unread counts and read receipts come from `conversation_reads`.
-* **Security:** session-cookie auth reused for HTTP and the WebSocket upgrade (Origin checked); every command re-validates the session; membership is enforced server-side and ids come from the session/DB, never the client; non-members get 404; rate limits; bodies are rendered with `textContent`.
-* **Recovery:** the client keeps a cursor (highest message id seen from a sync) and an outbox in `localStorage`; after offline/reload it catches up with `sync(after=cursor)` and re-sends queued messages with the same key (stored once).
-* **Modular:** `src/chat/service.js` (all logic) ← `src/chat/ws.js` / `src/routes/chat.js` (transports) and `src/chat/hub.js` (pub/sub, in-process now). Client: `public/chat.js` has interchangeable `WebSocketTransport` / `PollingTransport`.
-* **Limits (honest):** typing indicators and live push work within a **single server process** (the hub is in-memory); messages themselves are always durable. The header unread badge is accurate at page load and updates live only on the Messages page. No email/push notification for new messages, no attachments, no blocking/reporting yet.
-* **Moving to Socket.IO + Redis later:** implement `subscribe/publish` of `hub.js` on Redis pub/sub (or the Socket.IO Redis adapter) and call `setHub()`; replace `ws.js` with a Socket.IO server calling `service.runCommand`, and add a `SocketIoTransport` to `public/chat.js` implementing `start/stop/rpc`. The service, schema and UI do not change. For multiple nodes also move rate limits to Redis and put the WebSocket behind a sticky/L4 load balancer.
-
-## Integrations — what's real and what isn't
-
+## Integrations & limitations (honest list)
 | Area | Status |
 |---|---|
-| **Payments – sandbox** (`PAYMENTS_MODE=sandbox`) | **Implemented and tested.** Simulates a provider; money never moves. Goes through the same signed, idempotent webhook as a real provider. |
-| **Payments – Stripe** | **Implemented, NOT tested against Stripe.** Creates Checkout Sessions, verifies webhook signatures (unit-tested), issues refunds. Needs `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`. Test with Stripe *test mode* before any live use. |
-| **Seller payouts (Stripe Connect transfers)** | **Not implemented.** Seller earnings are a ledger; withdrawals are requests an admin marks paid manually. |
-| **Shipping labels (Shippo/EasyPost)** | **Not implemented.** Interface stub only (`src/shipping.js`). Sellers enter carrier + tracking from a label bought elsewhere. No fake labels/tracking numbers are generated. |
-| **Tracking sync** | `POST /webhooks/tracking` (secret header) marks shipped orders delivered. Tested with simulated calls; not connected to any carrier. |
-| **Sales tax** | Flat `TAX_RATE_BPS` estimate only (default 0). No jurisdiction lookup / remittance. |
-| **Email / SMS / push, password reset** | **Not implemented.** Notifications are in-app only; password reset needs an email provider. |
-| **Promoted listings, Pro billing** | **Not implemented.** (Admins can flag a seller Pro for the lower fee; nothing bills it.) |
-| **Real-time updates** | Chat only (see Messaging). Orders/dashboards refresh on load. |
+| Seller payment links | Server-side tested. **Not tested against live Stripe.** Payment Links have a fixed product/price: the seller must create one per listing (item + shipping) — a default link is used only if the seller says it accepts any amount. |
+| Payment verification | **Manual**, by the seller. PairPlug cannot verify Stripe payments (no webhook/API integration in beta). |
+| Escrow, wallet, fees, withdrawals, Stripe adapter, sandbox | Legacy, **disabled for new orders** (`CHECKOUT_MODE=external`). Sandbox is refused in production. |
+| Shipping labels | **Not integrated.** Seller buys elsewhere; PairPlug links to services (not verified live) and stores carrier + tracking. Delivery is marked by buyer/seller (the carrier webhook is optional and untested against a real carrier). |
+| Tax | Not handled. The seller's Stripe configuration is responsible. |
+| Email/SMS/push, password reset | Not implemented (in-app notifications only). |
+| Hosting | **Not deployed.** Researched in DEPLOYMENT.md; needs a cloud account + hostname that I cannot create. |
+| Backups | Local snapshots only; off-site copy is a manual step. |
+| Scale | One process / SQLite; chat live-push is in-memory (single process). Fine for a private beta. |
 
-## Database & migrations
-Schema lives in `src/db.js` (`MIGRATIONS`, tracked with `PRAGMA user_version`; append-only) and is exported to [`docs/schema.sql`](docs/schema.sql). No manual migration step.
-Env vars: see `.env.example`.
+## Messaging (buyer ↔ seller chat)
+`/messages`. WebSocket by default, automatic long-polling fallback; the status pill names the transport actually in use. Messages persist before acknowledgement; idempotency keys + a UNIQUE constraint prevent duplicates; membership is enforced server-side; typing indicators are ephemeral and single-process.
+Code: `src/chat/service.js` (logic), `src/chat/ws.js` + `src/routes/chat.js` (transports), `src/chat/hub.js` (swap for Redis to scale), `public/chat.js` (interchangeable client transports).
 
 ## Security notes
-scrypt password hashes; session tokens stored hashed, HttpOnly + SameSite=Lax cookies (Secure in production); CSRF via required custom header on all mutations;
-login/registration rate limiting (in-memory, single node); all output HTML-escaped; uploads validated by magic bytes (JPEG/PNG/WebP ≤5 MB) and referenced by server-issued names only;
-ownership checks return 404 for other sellers' resources; CSP set (inline scripts/styles are allowed because the pages use small inline snippets — tightening to nonces is future work).
-
-## Screenshots
-`artifacts/screenshots/` — captured from the running app against the **isolated fixture DB** (`npm run seed:demo`), except `00-empty-marketplace.png`, which is the real empty state.
-Fixture images are neutral colour blocks, not product photos. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the schema/API/design write-up.
+scrypt password hashes; hashed session tokens, HttpOnly + SameSite=Lax cookies (Secure + HSTS in production); CSRF via required custom header; per-client-IP rate limiting (proxy-aware via `TRUST_PROXY`); HTML-escaped output; uploads validated by magic bytes (JPEG/PNG/WebP ≤5 MB), server-chosen names; ownership checks return 404; payment links allowlisted + re-validated at redirect; order snapshots/terms/ledger protected by database triggers; generic error responses (no stack traces); production start-up guard. CSP currently allows inline scripts/styles (nonce tightening is future work).

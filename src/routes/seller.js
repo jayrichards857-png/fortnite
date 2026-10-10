@@ -13,21 +13,27 @@ const { notify } = require('../notify');
 const { PricingEngine } = require('../pricing');
 const { getLabelProvider } = require('../shipping');
 const { uploader } = require('./buyer');
+const X = require('../externalCheckout');
 
 const r = express.Router();
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, ...opts, body: opts.dash ? V.dashNav(req.path) + opts.body : opts.body, scripts: opts.scripts || '' }));
-const engine = () => new PricingEngine(getSettings(), config.taxRateBps);
+// Beta direct checkout: PairPlug charges no fee, so the calculators must not subtract one.
+const engine = () => { const st = getSettings(); if (X.isExternal()) { st.fee_bps_standard = 0; st.fee_bps_pro = 0; } return new PricingEngine(st, config.taxRateBps); };
 
 // ---------- Onboarding ----------
 r.get('/sell', (req, res) => {
   if (req.user && req.user.is_seller) return res.redirect('/dashboard');
   if (!req.user) return res.send(V.layout({ user: null, title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:520px"><h1>Sell on PairPlug</h1>
-    <p>List clothing, sneakers and accessories, manage inventory and ship from anywhere in North America. Payments are held in escrow until the buyer receives the item.</p>
-    <ul class="muted"><li>${(getSettings().fee_bps_standard / 100).toFixed(0)}% transaction fee on item price (${(getSettings().fee_bps_pro / 100).toFixed(0)}% on Pro)</li><li>Estimated card processing: ${(getSettings().processing_bps / 100).toFixed(1)}% + ${money(getSettings().processing_fixed_cents)}</li><li>No listing fees</li></ul>
+    <p>List clothing, sneakers and accessories, manage inventory and ship from anywhere in North America.${X.isExternal() ? ' Buyers pay <strong>you</strong> directly through your own Stripe checkout link — PairPlug never holds your money.' : ' Payments are held in escrow until the buyer receives the item.'}</p>
+    ${X.isExternal() ? '<ul class="muted"><li>No PairPlug fees during the private beta</li><li>You confirm payments, ship, and handle refunds and chargebacks with your own payment provider</li><li>You need a Stripe account with Payment Links</li></ul>'
+      : `<ul class="muted"><li>${(getSettings().fee_bps_standard / 100).toFixed(0)}% transaction fee on item price (${(getSettings().fee_bps_pro / 100).toFixed(0)}% on Pro)</li><li>Estimated card processing: ${(getSettings().processing_bps / 100).toFixed(1)}% + ${money(getSettings().processing_fixed_cents)}</li><li>No listing fees</li></ul>`}
     <a class="btn block" href="/register?next=/sell">Create an account to start</a><p class="small muted">Already have one? <a href="/login?next=/sell">Log in</a></p></div>` }));
+  if (config.sellerOnboarding === 'invite' && !config.sellerAllowedEmails.includes(String(req.user.email).toLowerCase())) {
+    return res.send(V.layout({ user: req.user, title: 'Invite only', path: '/sell', body: V.empty('Selling is invite-only right now', 'PairPlug is in a private beta with a small group of sellers. You can still browse, save items and buy.', ['/shop', 'Browse the shop']) }));
+  }
   const s = getSettings();
   res.send(V.layout({ user: req.user, title: 'Set up your store', path: '/sell', body: `<div class="narrow panel form-wide" style="max-width:560px"><h1>Set up your store</h1>
-    <p class="muted small">Fees: ${(s.fee_bps_standard / 100).toFixed(0)}% transaction fee + estimated processing ${(s.processing_bps / 100).toFixed(1)}% + ${money(s.processing_fixed_cents)} per order, deducted from your payout. Funds are released from escrow after delivery is confirmed.</p>
+    <p class="muted small">${X.isExternal() ? 'Private beta: no PairPlug fees. Buyers pay you directly through your own checkout link (set it up next in Settings). You handle payment confirmation, refunds and chargebacks.' : `Fees: ${(s.fee_bps_standard / 100).toFixed(0)}% transaction fee + estimated processing ${(s.processing_bps / 100).toFixed(1)}% + ${money(s.processing_fixed_cents)} per order, deducted from your payout. Funds are released from escrow after delivery is confirmed.`}</p>
     <form data-api="/api/sell/onboard" data-redirect="/dashboard">
       <label for="sn">Store name</label><input id="sn" name="store_name" required maxlength="60">
       <label for="sh">Store URL <span class="opt">(pairplug.com/s/…)</span></label><input id="sh" name="handle" required pattern="[a-zA-Z0-9_-]{3,30}" placeholder="your-handle">
@@ -39,6 +45,7 @@ r.get('/sell', (req, res) => {
 });
 r.post('/api/sell/onboard', auth.requireUser, (req, res) => {
   if (req.user.is_seller) throw new HttpError(409, 'You already have a store.');
+  if (config.sellerOnboarding === 'invite' && !config.sellerAllowedEmails.includes(String(req.user.email).toLowerCase())) throw new HttpError(403, 'Seller accounts are invite-only during the private beta. Contact PairPlug to be added.');
   const f = {}, handle = String(req.body.handle || '').trim(), country = String(req.body.country || '');
   const storeName = cleanLine(req.body.store_name, 60), region = cleanLine(req.body.region, 60), city = cleanLine(req.body.city, 60);
   if (!storeName) f.store_name = 'Enter a store name.';
@@ -58,16 +65,21 @@ const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div 
 // ---------- Overview ----------
 r.get('/dashboard', S, (req, res) => {
   const o = stats.overview(req.user.id), recent = q.all(`SELECT * FROM orders WHERE seller_id = ? AND status <> 'cancelled' ORDER BY created_at DESC LIMIT 5`, req.user.id);
-  const todo = q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'paid'", req.user.id).n;
+  const todo = q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'paid'", req.user.id).n, toConfirm = q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND payment_mode = 'external' AND status = 'pending_payment'", req.user.id).n;
   const body = `<h1>Overview</h1><p class="muted small">All figures come from your orders and listings. “Gross sales” is sales volume (item prices); “Net proceeds” is revenue after fees; “Profit” also subtracts what you paid for the item.</p>
+  ${toConfirm ? `<div class="panel" style="border-color:var(--accent)"><strong>${toConfirm} order${toConfirm > 1 ? 's' : ''} awaiting your payment check.</strong> <a href="/dashboard/orders?status=pending_payment">Review →</a></div>` : ''}
   ${todo ? `<div class="panel" style="border-color:var(--accent)"><strong>${todo} order${todo > 1 ? 's' : ''} waiting to ship.</strong> <a href="/dashboard/orders?status=paid">Ship now →</a></div>` : ''}
-  <h2>Sales</h2><div class="stats">
+  ${X.isExternal() ? `<h2>Direct checkout <span class="muted small">(buyers pay you through your own payment link)</span></h2><div class="stats">
+    ${stat('Awaiting your payment check', o.direct.awaiting, 'reserved, NOT paid until you confirm')}${stat('Confirmed orders', o.direct.confirmed, `${o.direct.to_ship} to ship`)}${stat('Item sales confirmed', money(o.direct.gross), 'before your payment provider\'s fees')}
+    ${stat('Shipping collected', money(o.direct.shipping_collected), 'flat fees buyers paid you')}${stat('Estimated margin', o.direct.margin.n ? money(o.direct.margin.margin) : '—', o.direct.margin.n ? `item price − your cost, ${o.direct.margin.n} item(s)` : 'record acquisition cost on listings')}${stat('Refunded (you reported)', money(o.direct.refunded_cents), `${o.direct.refunded} order(s)`)}</div>
+    <p class="small muted">PairPlug does not process these payments, so it shows no fees, payouts or balance for them. Check your payment provider for the money itself.</p>` : ''}
+  <h2>${X.isExternal() ? 'Earlier PairPlug-processed sales' : 'Sales'}</h2><div class="stats">
     ${stat('Active listings', o.listings.active, `${o.listings.drafts} draft${o.listings.drafts === 1 ? '' : 's'}`)}${stat('Total orders', o.orders, 'paid, excluding refunds')}${stat('Completed sales', o.completed, 'funds released')}
     ${stat('Gross sales', money(o.gross), 'item price volume')}${stat('Platform fees', money(o.platform_fees), `${(getSettings()[req.user.plan === 'pro' ? 'fee_bps_pro' : 'fee_bps_standard'] / 100).toFixed(0)}% transaction fee`)}${stat('Processing fees', money(o.processing_fees), 'estimated')}
     ${stat('Refunds', money(o.refunds), `${o.refund_count} order${o.refund_count === 1 ? '' : 's'}`)}${stat('Net proceeds', money(o.net), 'item + shipping − fees')}
     ${stat('Estimated profit', o.profit.orders ? money(o.profit.cents) : '—', o.profit.orders ? `from ${o.profit.orders} of ${o.orders} orders with cost recorded` : 'record acquisition cost on listings')}</div>
-  <h2>Balance</h2><div class="stats">${stat('Available', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'paid, awaiting delivery confirmation')}</div>
-  <h2>Recent orders</h2>${recent.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Date</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>${recent.map((x) => `<tr><td><a href="/orders/${x.id}">#${x.id}</a></td><td>${date(x.created_at)}</td><td class="num">${money(x.total_cents)}</td><td>${V.statusPill(x.status)}</td></tr>`).join('')}</tbody></table></div>`
+  <h2>Balance <span class="muted small">(historical PairPlug-held funds only)</span></h2><div class="stats">${stat('Available', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'paid, awaiting delivery confirmation')}</div>
+  <h2>Recent orders</h2>${recent.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Date</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>${recent.map((x) => `<tr><td><a href="${x.payment_mode === 'external' ? '/dashboard/orders/' : '/orders/'}${x.id}">#${x.id}</a></td><td>${date(x.created_at)}</td><td class="num">${money(x.total_cents)}</td><td>${V.orderPill(x)}</td></tr>`).join('')}</tbody></table></div>`
     : V.empty('No orders yet', 'Orders appear here after a buyer completes checkout.', ['/dashboard/listings/new', 'Create a listing'])}`;
   page(req, res, { title: 'Seller dashboard', path: '/dashboard', body, dash: true });
 });
@@ -119,9 +131,14 @@ function editor(req, res, l) {
       <div><label for="size">Size <span class="opt">(optional)</span></label><input id="size" name="size" maxlength="30" value="${v('size')}"></div>
       <div><label for="cond">Condition</label><select id="cond" name="condition"><option value="">Choose…</option>${opt(Object.entries(config.conditions), l && l.condition)}</select></div></div>
     <div class="row"><div><label for="price">Price (USD)</label><input id="price" name="price" inputmode="decimal" value="${cents('price_cents')}" required></div>
-      <div><label for="ship">Shipping charged to buyer</label><input id="ship" name="shipping" inputmode="decimal" value="${l ? cents('shipping_cents') : '0.00'}"></div>
+      <div><label for="ship">Flat shipping fee <span class="opt">(if buyer pays)</span></label><input id="ship" name="shipping" inputmode="decimal" value="${l ? cents('shipping_cents') : ''}"></div>
       <div><label for="cost">Acquisition cost <span class="opt">(private)</span></label><input id="cost" name="cost" inputmode="decimal" value="${cents('cost_cents')}"></div>
       <div><label for="sku">SKU <span class="opt">(optional)</span></label><input id="sku" name="sku" maxlength="60" value="${v('sku')}"></div></div>
+    <fieldset class="panel" style="margin:14px 0 0"><legend style="font-weight:600;font-size:13px;padding:0 6px">Shipping terms (shown to buyers before they leave PairPlug)</legend>
+      <label style="font-weight:400;display:flex;gap:8px;margin:6px 0"><input type="radio" name="shipping_payer" value="buyer"${!l || l.shipping_payer === 'buyer' ? ' checked' : ''}> <span><strong>Buyer pays a flat shipping fee</strong> (the amount in “Flat shipping fee” above, collected by your checkout link)</span></label>
+      <label style="font-weight:400;display:flex;gap:8px;margin:6px 0"><input type="radio" name="shipping_payer" value="seller"${l && l.shipping_payer === 'seller' ? ' checked' : ''}> <span><strong>Free shipping — I cover the label</strong> (buyer pays nothing extra)</span></label></fieldset>
+    ${X.isExternal() ? `<label for="purl">Payment link for this item <span class="opt">(Stripe Payment Link)</span></label><input id="purl" name="payment_url" inputmode="url" placeholder="https://buy.stripe.com/…" value="${v('payment_url')}" autocomplete="off">
+      <div class="hint">Create it in your Stripe dashboard for exactly <strong>item price + shipping fee</strong>. ${req.user.checkout_url && req.user.checkout_url_any_amount ? 'Leave blank to use your any-amount default link.' : 'Required to publish unless you set an any-amount default link in <a href="/dashboard/settings">Settings</a>.'}</div>` : ''}
     <div class="row"><div><label for="w">Weight (oz)</label><input id="w" name="weight_oz" inputmode="decimal" value="${v('weight_oz')}"></div><div><label for="len">Length (in)</label><input id="len" name="length_in" inputmode="decimal" value="${v('length_in')}"></div>
       <div><label for="wid">Width (in)</label><input id="wid" name="width_in" inputmode="decimal" value="${v('width_in')}"></div><div><label for="hei">Height (in)</label><input id="hei" name="height_in" inputmode="decimal" value="${v('height_in')}"></div></div>
     <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap"><button type="button" class="btn" data-save="active">${l && l.status === 'active' ? 'Save changes' : 'Publish'}</button>
@@ -170,26 +187,28 @@ const FULFIL = { paid: 'Awaiting shipment', shipped: 'Shipped', delivered: 'Deli
 r.get('/dashboard/orders', S, (req, res) => {
   const st = ['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].includes(req.query.status) ? req.query.status : null;
   const orders = q.all(`SELECT o.*, b.display_name buyer_name, c.ship_city, c.ship_region FROM orders o JOIN users b ON b.id = o.buyer_id JOIN checkouts c ON c.id = o.checkout_id
-    WHERE o.seller_id = ? AND o.status NOT IN ('pending_payment','cancelled') ${st ? 'AND o.status = ?' : ''} ORDER BY o.created_at DESC LIMIT 100`, ...(st ? [req.user.id, st] : [req.user.id]));
+    WHERE o.seller_id = ? AND (o.status NOT IN ('pending_payment','cancelled') OR (o.payment_mode = 'external' AND o.status = 'pending_payment')) ${st ? 'AND o.status = ?' : ''} ORDER BY o.created_at DESC LIMIT 100`, ...(st ? [req.user.id, st] : [req.user.id]));
   const label = getLabelProvider();
   const rows = orders.map((o) => {
     const items = q.all('SELECT title FROM order_items WHERE order_id = ?', o.id);
-    const act = o.status === 'paid' ? `<form data-api="/api/seller/orders/${o.id}/ship" data-reload style="display:flex;gap:4px;flex-wrap:wrap"><label class="sr" for="c${o.id}">Carrier</label><select id="c${o.id}" name="carrier" style="width:auto"><option>USPS</option><option>UPS</option><option>FedEx</option><option>Canada Post</option><option>Other</option></select>
+    const ext = o.payment_mode === 'external';
+    const act = ext ? `<a class="btn ${o.status === 'pending_payment' || o.status === 'paid' ? '' : 'ghost'} small" href="/dashboard/orders/${o.id}">${o.status === 'pending_payment' ? 'Confirm payment' : o.status === 'paid' ? 'Ship' : 'Details'}</a>` : o.status === 'paid' ? `<form data-api="/api/seller/orders/${o.id}/ship" data-reload style="display:flex;gap:4px;flex-wrap:wrap"><label class="sr" for="c${o.id}">Carrier</label><select id="c${o.id}" name="carrier" style="width:auto"><option>USPS</option><option>UPS</option><option>FedEx</option><option>Canada Post</option><option>Other</option></select>
         <label class="sr" for="t${o.id}">Tracking number</label><input id="t${o.id}" name="tracking" placeholder="Tracking #" required style="width:150px"><button class="btn small" type="submit">Mark shipped</button></form>
         <button class="btn ghost small" style="margin-top:4px" data-post="/api/seller/orders/${o.id}/cancel" data-confirm="Cancel and refund this order?">Cancel & refund</button>`
       : o.status === 'disputed' ? `<a class="btn ghost small" href="/orders/${o.id}">View dispute</a>` : `<a class="btn ghost small" href="/orders/${o.id}">Details</a>`;
-    return `<tr><td class="nowrap"><a href="/orders/${o.id}">#${o.id}</a><div class="muted small">${date(o.created_at)}</div></td><td>${items.map((i) => esc(i.title)).join('<br>')}</td>
+    return `<tr><td class="nowrap"><a href="${o.payment_mode === 'external' ? '/dashboard/orders/' : '/orders/'}${o.id}">#${o.id}</a><div class="muted small">${date(o.created_at)}</div></td><td>${items.map((i) => esc(i.title)).join('<br>')}</td>
       <td>${esc(o.buyer_name.split(' ')[0])}<div class="muted small">${esc(o.ship_city)}, ${esc(o.ship_region)}</div></td><td class="num">${money(o.total_cents)}<div class="muted small">payout ${money(o.seller_payout_cents)}</div></td>
-      <td>${V.statusPill(o.status === 'refunded' ? 'refunded' : 'paid')}</td><td>${FULFIL[o.status]}</td><td>${o.tracking_number ? `${esc(o.carrier)} ${esc(o.tracking_number)}` : '—'}</td><td>${act}</td></tr>`;
+      <td>${ext ? (o.status === 'pending_payment' ? '<span class="pill s-pending_payment">Unconfirmed</span>' : o.status === 'refunded' ? V.statusPill('refunded') : '<span class="pill s-paid">Confirmed by you</span>') : V.statusPill(o.status === 'refunded' ? 'refunded' : 'paid')}</td><td>${ext && o.status === 'pending_payment' ? 'Awaiting your payment check' : FULFIL[o.status]}</td><td>${o.tracking_number ? `${esc(o.carrier)} ${esc(o.tracking_number)}` : '—'}</td><td>${act}</td></tr>`;
   }).join('');
-  const body = `<h1>Orders</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${['paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s}</option>`).join('')}</select></form>
-  <p class="small muted">${label ? 'Label purchasing is configured but not implemented yet.' : 'Label purchasing needs a shipping provider (see README). Buy your label with your carrier, then enter the tracking number here.'}</p>
+  const body = `<h1>Orders</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s}</option>`).join('')}</select></form>
+  ${X.isExternal() ? '<p class="small muted">Direct checkout: buyers pay you through your own payment link. “Unconfirmed” orders are reserved but <strong>not paid</strong> until you confirm the payment arrived in your own account.</p>' : ''}
+  <p class="small muted">${label ? 'Label purchasing is configured but not implemented yet.' : 'PairPlug does not buy shipping labels. Buy a label with your carrier or a shipping service, then enter the tracking number here.'}</p>
   ${orders.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Items</th><th>Buyer</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th><th>Tracking</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : V.empty('No orders', st ? 'No orders with this status.' : 'Orders from buyers will appear here once paid.')}`;
   page(req, res, { title: 'Orders', path: '/dashboard/orders', body, dash: true });
 });
 r.post('/api/seller/orders/:id(\\d+)/ship', S, (req, res) => {
-  const carrier = cleanLine(req.body.carrier, 40), tracking = cleanLine(req.body.tracking, 60).replace(/\s/g, '');
+  const carrier = config.carriers.includes(req.body.carrier) ? req.body.carrier : '', tracking = cleanLine(req.body.tracking, 60).replace(/\s/g, '');
   if (!carrier) throw new HttpError(422, 'Choose a carrier.');
   if (!/^[A-Za-z0-9-]{6,40}$/.test(tracking)) throw new HttpError(422, 'Please fix the highlighted fields.', { tracking: 'Enter a valid tracking number (letters/numbers, 6–40 characters).' });
   tx(() => {
@@ -212,8 +231,8 @@ r.post('/api/seller/orders/:id(\\d+)/cancel', S, wrap(async (req, res) => {
 // ---------- Analytics ----------
 r.get('/dashboard/analytics', S, (req, res) => {
   const a = stats.analytics(req.user.id), max = Math.max(1, ...a.days.map((d) => d.gross));
-  const empty = !a.overview.orders;
-  const body = `<h1>Analytics</h1><div class="stats">${stat('Items sold', a.itemsSold)}${stat('Orders', a.overview.orders)}${stat('Average order value', a.overview.orders ? money(a.aov) : '—')}${stat('Gross sales (all time)', money(a.overview.gross))}</div>
+  const empty = !a.orders;
+  const body = `<h1>Analytics</h1><div class="stats">${stat('Items sold', a.itemsSold)}${stat('Orders', a.orders)}${stat('Average order value', a.orders ? money(a.aov) : '—')}${stat('Gross sales (all time)', money(a.gross))}</div>
   <h2>Gross sales, last 30 days</h2><div class="panel">${empty ? V.empty('No sales yet', 'Your sales chart will appear after your first paid order.') : `<div class="chart" role="img" aria-label="Daily gross sales for the last 30 days">${a.days.map((d) => `<div class="cbar" style="height:${Math.max(1, Math.round((d.gross / max) * 100))}%" title="${d.day}: ${money(d.gross)} (${d.orders} order${d.orders === 1 ? '' : 's'})"></div>`).join('')}</div>
     <div class="chart-axis"><span>${a.days[0].day}</span><span>Peak day ${money(max)}</span><span>${a.days[a.days.length - 1].day}</span></div>`}</div>
   <h2>Inventory aging <span class="muted small">(active listings, value ${money(a.aging.value)})</span></h2>
@@ -229,7 +248,7 @@ r.get('/dashboard/finance', S, (req, res) => {
   const o = stats.overview(req.user.id), tax = stats.monthlyTax(req.user.id);
   const ledger = q.all('SELECT * FROM ledger WHERE user_id = ? ORDER BY id DESC LIMIT 30', req.user.id), wd = q.all('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY id DESC LIMIT 10', req.user.id);
   const s = getSettings();
-  const body = `<h1>Earnings & tax</h1><div class="stats">${stat('Available to withdraw', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'released after delivery')}${stat('Net proceeds (all time)', money(o.net))}</div>
+  const body = `<h1>Earnings & tax</h1>${X.isExternal() ? '<div class="panel notice small">In the private beta, buyers pay you directly through your own payment provider, so those sales are <strong>not</strong> shown here and PairPlug holds no funds for them. This page covers earlier PairPlug-processed sales only. Use your payment provider\'s reports for taxes.</div>' : ''}<div class="stats">${stat('Available to withdraw', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'released after delivery')}${stat('Net proceeds (all time)', money(o.net))}</div>
   <div class="panel" style="margin-top:16px"><h3>Withdraw funds</h3><p class="small muted">Withdrawals are requests reviewed by PairPlug staff. Automated bank payouts need a Stripe Connect integration, which isn't enabled.</p>
     <form data-api="/api/seller/withdrawals" data-reload style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><div><label for="wa">Amount ($)</label><input id="wa" name="amount" inputmode="decimal" value="${(o.balance.availableCents / 100).toFixed(2)}"></div><button class="btn" type="submit"${o.balance.availableCents > 0 ? '' : ' disabled'}>Request withdrawal</button></form>
     ${wd.length ? `<table style="margin-top:10px"><tbody>${wd.map((w) => `<tr><td>${date(w.created_at)}</td><td class="num">${money(w.amount_cents)}</td><td>${V.statusPill(w.status)}</td></tr>`).join('')}</tbody></table>` : ''}</div>

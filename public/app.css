@@ -115,3 +115,7 @@ td.nowrap{white-space:nowrap}td.num,th.num{text-align:right;font-variant-numeric
 .composer{display:flex;gap:8px;padding:10px 16px;border-top:1px solid var(--line);align-items:flex-end}.composer textarea{min-height:40px;max-height:140px;resize:none;flex:1}
 .chat-empty{display:grid;place-items:center;flex:1;padding:16px}.linklike{background:none;border:0;padding:0;color:inherit;text-decoration:underline;cursor:pointer;font:inherit}
 @media (max-width:860px){.conn-list{display:inline-flex}.chat{grid-template-columns:1fr;height:calc(100vh - 150px);height:calc(100dvh - 150px)}.chat .chat-thread{display:none}.chat.has-active .chat-list{display:none}.chat.has-active .chat-thread{display:flex}.chat-back{display:block}.msg{max-width:88%}}
+
+/* direct checkout */
+.notice{background:#f4f8f5;border-color:#cfe0d5}.notice.strong{border-color:var(--accent);background:#eef5f0}.plain{margin:6px 0 0;padding-left:18px}.plain li{margin:4px 0}
+.steps{display:flex;gap:6px;list-style:none;margin:10px 0 16px;padding:0;flex-wrap:wrap}.steps li{flex:1;min-width:120px;padding:6px 10px;border-top:3px solid var(--line);font-size:13px;color:var(--muted)}.steps li.done{border-color:var(--accent);color:var(--text);font-weight:600}

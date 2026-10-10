@@ -280,6 +280,34 @@ CREATE TABLE conversation_reads (
   PRIMARY KEY (conversation_id, user_id)
 );
 `,
+// 3: private-beta direct checkout (seller-owned payment links). Additive only: historical orders/ledger rows are untouched.
+`
+ALTER TABLE users ADD COLUMN checkout_url TEXT;                              -- seller's default payment link (validated + allowlisted by the app)
+ALTER TABLE users ADD COLUMN checkout_url_any_amount INTEGER NOT NULL DEFAULT 0; -- seller attests the default link lets the buyer enter any amount
+ALTER TABLE listings ADD COLUMN payment_url TEXT;                            -- per-listing payment link (takes precedence)
+ALTER TABLE listings ADD COLUMN shipping_payer TEXT NOT NULL DEFAULT 'buyer' CHECK (shipping_payer IN ('buyer','seller'));
+UPDATE listings SET shipping_payer = 'seller' WHERE shipping_cents = 0;      -- pre-existing "Free" listings = seller pays
+ALTER TABLE checkouts ADD COLUMN mode TEXT NOT NULL DEFAULT 'platform' CHECK (mode IN ('platform','external'));
+ALTER TABLE orders ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'platform' CHECK (payment_mode IN ('platform','external'));
+ALTER TABLE orders ADD COLUMN shipping_payer TEXT;
+ALTER TABLE orders ADD COLUMN snapshot_json TEXT;                            -- immutable record of what was offered (see trigger)
+ALTER TABLE orders ADD COLUMN pay_clicked_at INTEGER;
+ALTER TABLE orders ADD COLUMN buyer_claimed_paid_at INTEGER;                 -- buyer SAYS they paid; never treated as proof
+ALTER TABLE orders ADD COLUMN payment_confirmed_at INTEGER;                  -- seller confirmed receipt of payment in their own provider
+ALTER TABLE orders ADD COLUMN payment_reference TEXT;                        -- seller's note, e.g. last digits of the Stripe payment id
+CREATE INDEX idx_orders_mode ON orders(payment_mode, seller_id, status);
+
+-- Financial/historical records must not be rewritten or removed by application bugs.
+CREATE TRIGGER orders_snapshot_immutable BEFORE UPDATE OF snapshot_json ON orders WHEN OLD.snapshot_json IS NOT NULL
+  BEGIN SELECT RAISE(ABORT, 'order snapshot is immutable'); END;
+CREATE TRIGGER orders_terms_immutable BEFORE UPDATE OF subtotal_cents, shipping_cents, tax_cents, total_cents, buyer_id, seller_id, payment_mode ON orders
+  BEGIN SELECT RAISE(ABORT, 'order terms are immutable'); END;
+CREATE TRIGGER orders_no_delete BEFORE DELETE ON orders BEGIN SELECT RAISE(ABORT, 'orders cannot be deleted'); END;
+CREATE TRIGGER order_items_immutable BEFORE UPDATE OF listing_id, title, price_cents, cost_cents ON order_items
+  BEGIN SELECT RAISE(ABORT, 'order items are immutable'); END;
+CREATE TRIGGER ledger_no_update BEFORE UPDATE ON ledger BEGIN SELECT RAISE(ABORT, 'ledger rows are append-only'); END;
+CREATE TRIGGER ledger_no_delete BEFORE DELETE ON ledger BEGIN SELECT RAISE(ABORT, 'ledger rows are append-only'); END;
+`,
 ];
 
 function migrate() {

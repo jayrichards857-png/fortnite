@@ -8,6 +8,8 @@ process.env.PAIRPLUG_DB = process.env.PAIRPLUG_DB || path.join(dir, 'test.db');
 process.env.PAIRPLUG_UPLOADS = process.env.PAIRPLUG_UPLOADS || path.join(dir, 'uploads');
 process.env.PAYMENTS_MODE = process.env.PAYMENTS_MODE ?? 'sandbox';
 process.env.CARRIER_WEBHOOK_SECRET = 'carrier-secret';
+// legacy tests exercise the PairPlug-held (platform) flow; direct-checkout tests set CHECKOUT_MODE=external before requiring this file
+process.env.CHECKOUT_MODE = process.env.CHECKOUT_MODE ?? 'platform';
 process.env.TAX_RATE_BPS = process.env.TAX_RATE_BPS ?? '0';
 
 const { png } = require('../scripts/png');

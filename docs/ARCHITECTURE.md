@@ -1,5 +1,7 @@
 # PairPlug architecture
 
+> **Private-beta note.** New orders use **direct checkout** (`CHECKOUT_MODE=external`, `src/externalCheckout.js`): the seller is paid through their own payment link and PairPlug holds no money. Sections below that describe escrow, the wallet ledger, fees, PairPlug-processed refunds and disputes describe the **legacy `platform` mode**, which is preserved for historical orders and tests but guarded off for new orders. See “Direct checkout” at the end.
+
 North-America-only marketplace (US/CA/MX). Brands, sizes and categories are **data**, not code: `listings.brand/size` are free-text fields and
 filter facets are computed from live rows (`SELECT DISTINCT`-style), so no brand is hardcoded anywhere. The category list is a small fixed taxonomy in `src/config.js`.
 
@@ -62,3 +64,25 @@ Dashboards are server-rendered pages: `/dashboard` (overview), `/inventory`, `/o
 | **Server-rendered HTML + small vanilla JS** | Fast first paint on mobile, SEO-friendly shareable product URLs, no build step. | Put a CDN in front of public pages; fingerprint static assets. |
 | **Provider interface for payments/shipping** | Stripe Connect (separate charges & transfers) or another multi-party provider can be slotted in without touching order logic. | Add Connect transfers on `released`; move webhook processing to a queue. |
 | **Not included but recommended for scale** | — | Object storage + image resizing for uploads, Redis for shared rate limits, a job queue for auto-release/notifications, full-text search (Postgres `tsvector` / Meilisearch) instead of `LIKE`. |
+
+
+## Direct checkout (private beta)
+
+`orders.payment_mode` is `platform` (legacy, default for pre-existing rows) or `external` (beta). Existing rows were migrated in place (migration 3 is additive) and are untouched.
+
+**Order states for `external` orders** (same state machine, narrower use):
+```
+pending_payment ──seller confirms──▶ paid ──seller ships──▶ shipped ──buyer/seller──▶ delivered
+      │                                │  └────────────── seller records refund ──▶ refunded   (also from shipped/delivered)
+      └─ cancelled (buyer cancel · seller rejects · reservation expired)
+```
+* `pending_payment` = **not paid**: the buyer started the seller's checkout; the listing is `reserved`. Nothing the buyer does can leave this state except cancelling. `paid` is only reachable through `sellerConfirmPayment` (seller session, own order, listing still reserved by this checkout).
+* `released` / `disputed` and the ledger are never used for external orders; `escrow.js` (`assertPlatformOrder`) refuses to touch them, `autoReleaseDue` ignores them, provider webhooks for external checkouts are ignored, and the dispute endpoints return 409.
+* **Reservation rules:** hold = 60 min (`external_hold_minutes`); buyer's “I've completed payment” extends to 72 h (`external_claim_hold_hours`) — a claim, never proof; the existing sweeper (`expireStaleCheckouts`, every minute and before each purchase) cancels expired orders and re-lists the item; max 3 unpaid reservations per buyer; one buyer wins a race via `BEGIN IMMEDIATE` + conditional `UPDATE … WHERE status='active'`; repeating the request returns the same order.
+* **Immutable snapshot:** `orders.snapshot_json` (listing details, photos, terms, shipping payer/fee, seller, payment-link host) is written once; triggers forbid updating it, the order's money/party columns, `order_items` price/title, deleting orders, and updating/deleting `ledger` rows.
+* **Payment links** (`src/paymentLinks.js`): HTTPS only, exact hostname allowlist (`PAYMENT_LINK_HOSTS`, default `buy.stripe.com`), no credentials/odd ports/homepages; stored per listing (`listings.payment_url`) or as the seller default (`users.checkout_url`, usable only with `checkout_url_any_amount=1`). The buyer redirect (`GET /orders/:id/pay`) reads the link from the DB, re-validates it, appends `client_reference_id=PP-<order id>`, and answers with `Cache-Control: no-store`.
+* **Shipping:** `listings.shipping_payer` = `buyer` (flat `shipping_cents`) or `seller` (free; `shipping_cents` forced to 0). Carrier from a fixed list, tracking number validated, tracking URL built only for known carriers.
+* **Data minimisation:** the buyer's address is stored on the checkout but shown to the seller only after they confirm payment.
+* **Stats:** direct sales are reported separately (`stats.directOverview`): item sales, shipping collected, cost-based margin — no fees, payouts, escrow or balance are claimed for them.
+
+Schema additions (migration 3): `users.checkout_url[_any_amount]`, `listings.payment_url/shipping_payer`, `checkouts.mode`, `orders.payment_mode/shipping_payer/snapshot_json/pay_clicked_at/buyer_claimed_paid_at/payment_confirmed_at/payment_reference`, plus the triggers above.

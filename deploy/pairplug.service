@@ -1,0 +1,26 @@
+# /etc/systemd/system/pairplug.service   (UNTESTED on a real VM — review before use; see docs/DEPLOYMENT.md)
+[Unit]
+Description=PairPlug (private beta)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pairplug
+Group=pairplug
+WorkingDirectory=/opt/pairplug
+EnvironmentFile=/etc/pairplug.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=3
+# the app flushes the SQLite WAL on SIGTERM; give it a moment
+TimeoutStopSec=15
+# sandboxing: the process may only write to its data and backup directories
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pairplug /var/backups/pairplug
+
+[Install]
+WantedBy=multi-user.target

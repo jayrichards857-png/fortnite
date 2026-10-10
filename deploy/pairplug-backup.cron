@@ -1,0 +1,2 @@
+# /etc/cron.d/pairplug-backup — daily consistent DB snapshot (+ new photos), keeps the newest 14 snapshots.
+17 3 * * * pairplug cd /opt/pairplug && PAIRPLUG_DB=/var/lib/pairplug/pairplug.db PAIRPLUG_UPLOADS=/var/lib/pairplug/uploads BACKUP_DIR=/var/backups/pairplug /usr/bin/node scripts/backup.js >> /var/backups/pairplug/backup.log 2>&1

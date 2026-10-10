@@ -38,7 +38,7 @@
     const p = new URLSearchParams({ price: form.elements.price.value, shipping: form.elements.shipping.value, cost: form.elements.cost.value, label: $('#pc-ship').value });
     try {
       const r = await pp.api('GET', '/api/seller/payout-preview?' + p);
-      out.innerHTML = `Transaction fee: −${cents(r.platformFeeCents)}<br>Processing (est.): −${cents(r.processingFeeCents)}<br><strong>Payout: ${cents(r.sellerPayoutCents)}</strong>` + (r.profitCents != null ? `<br>Profit after cost & label: <strong>${cents(r.profitCents)}</strong>` : '');
+      out.innerHTML = `PairPlug fee: ${r.platformFeeCents ? '−' + cents(r.platformFeeCents) : '$0.00 (beta)'}<br>Card processing (est., billed by your payment provider): −${cents(r.processingFeeCents)}<br><strong>You keep about: ${cents(r.sellerPayoutCents)}</strong>` + (r.profitCents != null ? `<br>Profit after cost & label: <strong>${cents(r.profitCents)}</strong>` : '');
     } catch (e) { out.textContent = e.message; }
   });
   ['#pc-cost', '#pc-ship', '#pc-margin'].forEach((s) => $(s).addEventListener('input', calc));

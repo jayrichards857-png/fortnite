@@ -21,7 +21,20 @@ module.exports = {
     auto_release_days: 3, // days after delivery before escrow auto-releases
     reservation_minutes: 15, // how long an item is held during checkout
     pro_monthly_cents: 1500,
+    external_hold_minutes: 60, // direct-checkout: how long an item is held while the buyer pays at the seller's checkout
+    external_claim_hold_hours: 72, // extended hold once the buyer says they've paid, so the seller can verify
   },
+  // --- Private-beta model ---------------------------------------------------------------------------------
+  // 'external': the seller is paid directly through THEIR OWN payment link (Stripe Payment Link). PairPlug never holds or
+  //             moves buyer money: no escrow, wallet credit, fees or provider refunds for new orders.
+  // 'platform': the original cart + PairPlug-held escrow flow (kept for history/tests; needs a payment provider).
+  checkoutMode: env.CHECKOUT_MODE === 'platform' ? 'platform' : 'external',
+  // Only HTTPS links on these exact hostnames may be saved as a seller checkout link. Extend deliberately, one host at a time.
+  paymentLinkHosts: String(env.PAYMENT_LINK_HOSTS || 'buy.stripe.com').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
+  // 'open' = anyone can open a store; 'invite' = only emails in SELLER_ALLOWED_EMAILS (private beta).
+  sellerOnboarding: env.SELLER_ONBOARDING === 'invite' ? 'invite' : 'open',
+  sellerAllowedEmails: String(env.SELLER_ALLOWED_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+  trustProxy: /^\d+$/.test(env.TRUST_PROXY || '') ? Number(env.TRUST_PROXY) : (env.TRUST_PROXY || 'loopback'),
   taxRateBps: Number(env.TAX_RATE_BPS || 0), // flat sales-tax estimate; 0 = not charged
   // Payments: 'stripe' when STRIPE_SECRET_KEY is set, 'sandbox' when PAYMENTS_MODE=sandbox, otherwise disabled.
   paymentsMode: env.PAYMENTS_MODE || '',
@@ -38,5 +51,6 @@ module.exports = {
     ['sneakers', 'Sneakers'], ['shoes', 'Shoes'], ['accessories', 'Accessories'],
     ['bags', 'Bags'], ['other', 'Other'],
   ],
+  carriers: ['USPS', 'UPS', 'FedEx', 'Canada Post', 'DHL', 'Other'],
   limits: { imageBytes: 5 * 1024 * 1024, maxImages: 8, csvRows: 1000 },
 };

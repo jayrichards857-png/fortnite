@@ -13,6 +13,8 @@ const { isLocalShip } = require('../pricing');
 const { saveUpload, ownedUploads } = require('../images');
 const { notify } = require('../notify');
 const { transition, PAID_STATES } = require('../orderMachine');
+const X = require('../externalCheckout');
+const { resolveLink } = require('../paymentLinks');
 
 const r = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -65,6 +67,21 @@ r.get('/shop', (req, res) => {
   page(req, res, { title: f.q ? `“${f.q}”` : 'Shop', body });
 });
 
+// Direct-checkout buy box: shows exactly what the buyer will pay and who they pay BEFORE they leave PairPlug.
+function directBuyBox(l, user) {
+  const t = X.terms(l);
+  const rows = `<div class="summary-row"><span>Item</span><span>${money(t.itemCents)}</span></div>
+    <div class="summary-row"><span>Shipping</span><span>${t.shippingPayer === 'seller' ? 'Free (seller pays)' : money(t.shippingCents) + ' flat'}</span></div>
+    <div class="summary-row total"><span>You pay the seller</span><span>${money(t.totalCents)}</span></div>`;
+  let cta;
+  if (l.status === 'sold') cta = '<button class="btn block" disabled>Sold</button>';
+  else if (l.status === 'reserved') cta = '<button class="btn block" disabled>Reserved — another buyer is paying</button><p class="small muted" style="margin:6px 0 0">If they don\'t complete payment, this item becomes available again.</p>';
+  else if (l.status !== 'active') cta = '';
+  else if (!X.purchasable(l).ok) cta = `<button class="btn block" disabled>Checkout not available</button><p class="small muted" style="margin:6px 0 0">${esc(X.purchasable(l).reason)}</p>`;
+  else cta = `<a class="btn block" href="/buy/${l.id}">Continue to seller checkout</a><p class="small muted" style="margin:6px 0 0">You'll pay <strong>${esc(l.seller_name || l.seller_handle)}</strong> directly through their own checkout. PairPlug doesn't process or hold your payment, and refunds are handled by the seller.</p>`;
+  return `<div class="panel" style="margin:14px 0">${rows}${cta ? `<div style="margin-top:12px">${cta}</div>` : ''}</div>`;
+}
+
 // ---------- Listing detail ----------
 r.get('/listing/:id(\\d+)', (req, res) => {
   const l = L.getListing(Number(req.params.id));
@@ -75,6 +92,7 @@ r.get('/listing/:id(\\d+)', (req, res) => {
   const mine = owner, avail = l.status === 'active';
   const status = { active: 'Available', reserved: 'Reserved — another buyer is checking out', sold: 'Sold', draft: 'Draft (only you can see this)', archived: 'Archived (only you can see this)' }[l.status];
   const inCart = req.user && q.get('SELECT 1 x FROM cart_items WHERE user_id=? AND listing_id=?', req.user.id, l.id);
+  const ext = X.isExternal();
   const body = `<div class="product">
   <div class="gallery"><div class="main">${l.images.length ? `<img id="gmain" src="/uploads/${esc(l.images[0])}" alt="${esc(l.title)}">` : '<div class="noimg" style="height:100%"></div>'}</div>
   ${l.images.length > 1 ? `<div class="thumbs">${l.images.map((f, i) => `<button type="button" data-thumb="/uploads/${esc(f)}" aria-current="${i === 0}" aria-label="Photo ${i + 1}"><img src="/uploads/${esc(f)}" alt=""></button>`).join('')}</div>` : ''}</div>
@@ -82,16 +100,17 @@ r.get('/listing/:id(\\d+)', (req, res) => {
     <div>${avail ? '<span class="pill s-active">Available</span>' : `${V.statusPill(l.status)} <span class="muted small">${esc(status)}</span>`}</div>
     <dl class="facts">${l.brand ? `<dt>Brand</dt><dd>${esc(l.brand)}</dd>` : ''}${l.size ? `<dt>Size</dt><dd>${esc(l.size)}</dd>` : ''}${l.condition ? `<dt>Condition</dt><dd>${esc(config.conditions[l.condition])}</dd>` : ''}
       <dt>Category</dt><dd><a href="/shop?category=${esc(l.category)}">${esc((config.categories.find((c) => c[0] === l.category) || [])[1])}</a></dd>
-      <dt>Shipping</dt><dd>${l.shipping_cents ? money(l.shipping_cents) : 'Free'}</dd>
+      <dt>Shipping</dt><dd>${l.shipping_payer === 'seller' || !l.shipping_cents ? '<strong>Free shipping</strong> — the seller covers the label' : `${money(l.shipping_cents)} flat fee, paid by the buyer`}</dd>
       <dt>Ships from</dt><dd>${esc(seller || '—')} ${isLocalShip(l.seller_country) ? '<span class="badge-local">Local ship</span>' : ''}</dd></dl>
-    ${mine ? `<a class="btn block" href="/dashboard/listings/${l.id}/edit">Edit listing</a>` : `${['active', 'reserved', 'sold'].includes(l.status) ? `<p style="margin:0 0 4px"><button class="btn ghost small" data-chat-start="${l.id}">Message seller</button></p>` : ''}<div class="buybox">
+    ${ext && !mine ? directBuyBox(l, req.user) : ''}
+    ${mine ? `<a class="btn block" href="/dashboard/listings/${l.id}/edit">Edit listing</a>` : ext ? `<p style="margin:8px 0 0">${['active', 'reserved', 'sold'].includes(l.status) ? `<button class="btn ghost small" data-chat-start="${l.id}">Message seller</button> ` : ''}<button class="btn ghost small${faved ? ' on' : ''}" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')} Save</button></p>` : `${['active', 'reserved', 'sold'].includes(l.status) ? `<p style="margin:0 0 4px"><button class="btn ghost small" data-chat-start="${l.id}">Message seller</button></p>` : ''}<div class="buybox">
       ${avail ? (inCart ? '<a class="btn" href="/cart">In cart — view cart</a>' : `<button class="btn" data-cart-add="${l.id}" data-buy>Buy now</button><button class="btn ghost" data-cart-add="${l.id}">Add to cart</button>`) : `<button class="btn" disabled>${l.status === 'sold' ? 'Sold' : 'Unavailable'}</button>`}
       <button class="btn ghost${faved ? ' on' : ''}" style="flex:0" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')}</button></div>`}
     ${l.description ? `<h2>Description</h2><p style="white-space:pre-wrap">${esc(l.description)}</p>` : ''}
     <div class="panel" style="margin-top:18px"><a href="/s/${esc(l.seller_handle)}" style="text-decoration:none"><strong>${esc(l.seller_name || l.seller_handle)}</strong></a>
       <div class="small muted">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} · ${rate.n} review${rate.n > 1 ? 's' : ''}` : 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
       ${l.seller_bio ? `<p class="small">${esc(l.seller_bio)}</p>` : ''}
-      <p class="small muted" style="margin:6px 0 0">Payment is held in escrow until you confirm delivery.</p></div></div></div>`;
+      <p class="small muted" style="margin:6px 0 0">${ext ? 'You pay this seller directly. PairPlug does not hold or refund payments — message the seller about any payment problem.' : 'Payment is held in escrow until you confirm delivery.'}</p></div></div></div>`;
   page(req, res, { title: l.title, body, description: l.description.slice(0, 150) });
 });
 
@@ -275,7 +294,7 @@ r.get('/orders', auth.requireUser, (req, res) => {
     const items = q.all('SELECT * FROM order_items WHERE order_id = ?', o.id);
     return `<tr><td><a href="/orders/${o.id}">#${o.id}</a><div class="muted small">${date(o.created_at)}</div></td>
       <td><div style="display:flex;gap:8px;align-items:center">${V.img(items[0] && items[0].image, 'thumb')}<div>${items.map((i) => esc(i.title)).join('<br>')}<div class="muted small">${esc(o.store_name || o.handle)}</div></div></div></td>
-      <td class="num">${money(o.total_cents)}</td><td>${V.statusPill(o.status)}</td><td>${o.tracking_number ? `${esc(o.carrier || '')} ${esc(o.tracking_number)}` : '<span class="muted">—</span>'}</td></tr>`;
+      <td class="num">${money(o.total_cents)}</td><td>${V.orderPill(o)}</td><td>${o.tracking_number ? `${esc(o.carrier || '')} ${esc(o.tracking_number)}` : '<span class="muted">—</span>'}</td></tr>`;
   }).join('');
   page(req, res, { title: 'My orders', body: `<h1>My orders</h1>${orders.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Items</th><th class="num">Total</th><th>Status</th><th>Tracking</th></tr></thead><tbody>${rows}</tbody></table></div>` : V.empty('No orders yet', 'When you buy something it will show up here.', ['/shop', 'Browse the shop'])}` });
 });
@@ -340,6 +359,7 @@ r.post('/api/orders/:id(\\d+)/dispute', auth.requireUser, (req, res) => {
   tx(() => {
     const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(req.params.id), req.user.id);
     if (!o) throw new HttpError(404, 'Order not found');
+    if (o.payment_mode === 'external') throw new HttpError(409, 'This order was paid directly to the seller. Message the seller about problems; refunds and payment disputes are handled by the seller and their payment provider.');
     if (q.get('SELECT 1 x FROM disputes WHERE order_id = ?', o.id)) throw new HttpError(409, 'A dispute is already open for this order.');
     transition(o.id, 'disputed', { actor: `buyer:${req.user.id}`, note: reason.slice(0, 120), set: { auto_release_at: null } });
     const d = q.run('INSERT INTO disputes(order_id, opened_by, reason, created_at) VALUES(?,?,?,?)', o.id, req.user.id, reason, now());
@@ -350,7 +370,7 @@ r.post('/api/orders/:id(\\d+)/dispute', auth.requireUser, (req, res) => {
 });
 r.post('/api/orders/:id(\\d+)/dispute/evidence', auth.requireUser, (req, res) => {
   const o = q.get('SELECT * FROM orders WHERE id = ? AND (buyer_id = ? OR seller_id = ?)', Number(req.params.id), req.user.id, req.user.id);
-  const d = o && q.get("SELECT * FROM disputes WHERE order_id = ? AND status = 'open'", o.id);
+  const d = o && o.payment_mode === 'platform' && q.get("SELECT * FROM disputes WHERE order_id = ? AND status = 'open'", o.id);
   if (!d) throw new HttpError(404, 'No open dispute');
   const images = ownedUploads(req.user.id, JSON.parse(req.body.evidence_json || '[]').slice(0, 4)), note = clean(req.body.note, 1000);
   if (!images.length && !note) throw new HttpError(422, 'Add a message or at least one photo.');
@@ -364,7 +384,7 @@ r.post('/api/orders/:id(\\d+)/dispute/evidence', auth.requireUser, (req, res) =>
 r.post('/api/orders/:id(\\d+)/review', auth.requireUser, (req, res) => {
   const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(req.params.id), req.user.id);
   if (!o) throw new HttpError(404, 'Order not found');
-  if (o.status !== 'released') throw new HttpError(409, 'You can review once the order is complete.');
+  if (o.status !== (o.payment_mode === 'external' ? 'delivered' : 'released')) throw new HttpError(409, 'You can review once the order is complete.');
   const rating = Number(req.body.rating);
   if (!(rating >= 1 && rating <= 5 && Number.isInteger(rating))) throw new HttpError(422, 'Choose a rating from 1 to 5.');
   try { q.run('INSERT INTO reviews(order_id, buyer_id, seller_id, rating, body, created_at) VALUES(?,?,?,?,?,?)', o.id, req.user.id, o.seller_id, rating, clean(req.body.body, 1000) || null, now()); }
