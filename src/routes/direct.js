@@ -11,6 +11,7 @@ const auth = require('../auth');
 const X = require('../externalCheckout');
 const { validatePaymentUrl, trackingUrl, LABEL_PROVIDERS } = require('../paymentLinks');
 const L = require('../listings');
+const SP = require('./support');
 
 const r = express.Router();
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
@@ -88,12 +89,13 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
   ${stepper(o)}<div class="two"><section>${action}
     <div class="panel"><div class="line"><a href="/listing/${item.listing_id}">${V.img(item.image, 'thumb', item.title)}</a><div><a href="/listing/${item.listing_id}"><strong>${esc(snap.listing.title)}</strong></a><div class="muted small">${esc([snap.listing.size && 'Size ' + snap.listing.size, snap.listing.condition && config.conditions[snap.listing.condition]].filter(Boolean).join(' · '))}</div></div><div>${money(o.subtotal_cents)}</div></div></div>
     <div class="panel"><h3>Shipping</h3><p style="margin:0 0 8px">To ${esc(ck.ship_name)}, ${esc(ck.ship_city)}, ${esc(ck.ship_region)} ${esc(ck.ship_country)} · ${o.shipping_payer === 'seller' ? 'Free shipping (seller pays the label)' : `Flat fee ${money(o.shipping_cents)} (paid by you to the seller)`}</p>
-      ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
+      ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
     ${o.status === 'shipped' ? `<div class="panel"><h3>Received it?</h3><button class="btn" data-post="/api/orders/${o.id}/received">Mark as received</button></div>` : ''}
     ${o.status === 'delivered' && !review ? `<div class="panel"><h3>Review this seller</h3><form data-api="/api/orders/${o.id}/review" data-reload><label for="rt">Rating</label><select id="rt" name="rating"><option value="5">5 — Excellent</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1 — Poor</option></select>
       <label for="rb">Comment <span class="opt">(optional)</span></label><textarea id="rb" name="body" maxlength="1000"></textarea><button class="btn" type="submit" style="margin-top:12px">Submit review</button></form></div>` : ''}
     ${review ? `<div class="panel"><h3>Your review</h3><span class="stars">${'★'.repeat(review.rating)}${'☆'.repeat(5 - review.rating)}</span><p>${esc(review.body || '')}</p></div>` : ''}
-    <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Refunds, returns and chargebacks are handled by the seller and their payment provider. PairPlug does not hold your payment and cannot refund it.</p></div>
+    <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. PairPlug does not hold your payment and cannot refund it.</p></div>
+    ${SP.buyerPanels(o)}
   </section><aside class="panel sticky"><h3>Amount</h3>
     <div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div>
     <div class="summary-row total"><span>Total</span><span>${money(o.total_cents)}</span></div>
@@ -163,11 +165,10 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
     <p class="small muted">Reserved until ${new Date(ck.expires_at * 1000).toLocaleString()}; after that the item is released automatically.</p></div>`);
   if (o.status === 'paid') panels.push(`<div class="panel"><h3>Ship the order</h3><ol class="plain"><li>Buy a label yourself with a shipping service (PairPlug does <strong>not</strong> buy labels): ${LABEL_PROVIDERS.map((p) => `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.name)} ↗</a>`).join(' · ')}</li>
       <li>${o.shipping_payer === 'seller' ? '<strong>Free shipping:</strong> you cover the label cost.' : `<strong>Buyer-paid shipping:</strong> the buyer paid a ${money(o.shipping_cents)} flat fee to you.`}</li><li>Enter the carrier and tracking number:</li></ol>
-    <form data-api="/api/seller/orders/${o.id}/ship" data-reload class="row" style="align-items:end"><div><label for="ca">Carrier</label><select id="ca" name="carrier">${config.carriers.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div><div><label for="tn">Tracking number</label><input id="tn" name="tracking" required maxlength="40"></div><div><button class="btn" type="submit">Mark shipped</button></div></form></div>`);
+    <form data-api="/api/seller/orders/${o.id}/ship" data-reload class="row" style="align-items:end"><div><label for="ca">Carrier</label><select id="ca" name="carrier">${config.carriers.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div><div><label for="tn">Tracking number</label><input id="tn" name="tracking" required maxlength="40"></div><div><label for="sn2">Note to buyer <span class="opt">(optional)</span></label><input id="sn2" name="note" maxlength="200"></div><div><button class="btn" type="submit">Mark shipped</button></div></form>
+    <p class="small muted" style="margin:8px 0 0">Tracking shows what the carrier reports. It is not proof of delivery or contents; keep your receipt and photos of the package.</p></div>`);
   if (o.status === 'shipped') panels.push(`<div class="panel"><h3>Shipped</h3><p>${esc(o.carrier)} ${esc(o.tracking_number)}${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track ↗</a>` : ''}</p><button class="btn ghost" data-post="/api/seller/orders/${o.id}/received" data-confirm="Mark this order delivered?">Mark delivered</button></div>`);
-  if (['paid', 'shipped', 'delivered'].includes(o.status)) panels.push(`<details class="panel"><summary><strong>Refund or cancel this order</strong></summary><p class="small muted">PairPlug does not move money. Issue the refund yourself in your Stripe dashboard first, then record it here.</p>
-    <form data-api="/api/seller/orders/${o.id}/refunded" data-reload><label style="font-weight:400;display:flex;gap:8px"><input type="checkbox" name="confirm_refunded" required> I have refunded the buyer in my payment provider.</label>
-      <label style="font-weight:400;display:flex;gap:8px"><input type="checkbox" name="relist"> Put the item back on sale (only if I still have it).</label><button class="btn danger" type="submit" style="margin-top:10px">Record refund</button></form></details>`);
+  panels.push(SP.sellerPanels(o));
   const body = `<h1>Order #${o.id} ${V.orderPill(o)}</h1><p class="muted small">Reference <strong>${reqNo(o)}</strong> · Started ${date(o.created_at)} · Buyer ${esc(o.buyer_name)}${conv ? ` · <a href="/messages/${conv.id}">Message buyer</a>` : ''}</p>
   <div class="two"><section>${panels.join('')}
     <div class="panel"><h3>What was ordered (snapshot at checkout)</h3><div class="line"><a href="/listing/${item.listing_id}">${V.img(item.image, 'thumb', item.title)}</a><div><strong>${esc(snap.listing.title)}</strong><div class="muted small">${esc([snap.listing.brand, snap.listing.size && 'Size ' + snap.listing.size, snap.listing.condition && config.conditions[snap.listing.condition]].filter(Boolean).join(' · '))}</div></div><div>${money(snap.terms.itemCents)}</div></div>
@@ -180,10 +181,6 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
 });
 r.post('/api/seller/orders/:id(\\d+)/confirm-payment', S, (req, res) => res.json(X.sellerConfirmPayment(req.user, req.params.id, { reference: req.body.reference })));
 r.post('/api/seller/orders/:id(\\d+)/reject-payment', S, (req, res) => res.json(X.sellerRejectPayment(req.user, req.params.id)));
-r.post('/api/seller/orders/:id(\\d+)/refunded', S, (req, res) => {
-  if (!(req.body.confirm_refunded === true || req.body.confirm_refunded === 'on')) throw new HttpError(422, 'Please confirm you refunded the buyer in your payment provider.', { confirm_refunded: 'Required' });
-  res.json(X.sellerDeclareRefund(req.user, req.params.id, { relist: req.body.relist === true || req.body.relist === 'on' }));
-});
 r.post('/api/seller/orders/:id(\\d+)/received', S, (req, res) => res.json(X.markReceived(req.user, req.params.id, 'seller')));
 
 module.exports = { router: r };

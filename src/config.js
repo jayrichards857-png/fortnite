@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
 // values fall back to the *restrictive* setting, and every problem is reported (production refuses to start; see server.js).
 const envProblems = [];
 const val = (k) => String(env[k] ?? '').trim();
-for (const k of ['SIGNUPS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
+for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
   if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
 const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
 const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
@@ -60,6 +60,7 @@ module.exports = {
   signups: signupsRaw === 'open' ? 'open' : signupsRaw === '' ? (isProd ? 'closed' : 'open') : 'closed',
   releaseDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) ? releaseRaw : '',
   inviteTtlHours: 168,
+  supportEmail: /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(val('SUPPORT_EMAIL') || '') ? val('SUPPORT_EMAIL') : '',
   // Transactional email. 'none' (default): messages are recorded in the outbox but NOT sent. 'resend': sent via the Resend HTTP API (unverified live).
   email: { provider: emailProviderRaw === 'resend' ? 'resend' : 'none', apiKey: env.EMAIL_API_KEY || '', from: val('EMAIL_FROM') },
   sellerAllowedEmails: [],   // retired: seller access is now by admin-issued invitation (see src/invitations.js)

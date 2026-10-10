@@ -73,23 +73,23 @@ test('seller settings: link is validated server-side; only sellers may set it; a
   assert.equal((await s.get('/dashboard/settings')).status, 200);
 });
 
-test('publishing needs a usable payment link; shipping terms are validated and enforced', async () => {
+test('payment links are validated when supplied; link-less listings publish as contact-only; shipping terms are enforced', async () => {
   const s = await H.newSeller('Pub');
   const file = await H.upload(s);
   const body = { title: 'Wool sweater', category: 'clothing', condition: 'good', price: '30.00', weight_oz: '20', images: [file], status: 'active' };
   const noLink = await s.post('/api/seller/listings', { ...body, shipping: '5.00' });
-  assert.equal(noLink.status, 422); assert.ok(noLink.json.fields.payment_url);
+  assert.equal(noLink.status, 200, 'hybrid: no payment link is fine, the listing is contact-only');
+  assert.match((await new H.Client().get(`/listing/${noLink.json.id}`)).text, /Contact seller/); assert.doesNotMatch((await new H.Client().get(`/listing/${noLink.json.id}`)).text, />Buy now</);
   const badLink = await s.post('/api/seller/listings', { ...body, shipping: '5.00', payment_url: 'http://buy.stripe.com/abc123' });
   assert.equal(badLink.status, 422); assert.ok(badLink.json.fields.payment_url);
-  // draft without a link is fine (it cannot be bought)
-  assert.equal((await s.post('/api/seller/listings', { ...body, shipping: '5.00', status: 'draft' })).status, 200);
-  // a fixed-price default link does not count; an any-amount default does
+  // a fixed-price default link is not used implicitly; an any-amount default is
   const settings = { store_name: 'S', country: 'US', region: 'NY', city: 'B' };
   await s.put('/api/seller/settings', { ...settings, checkout_url: LINK });
-  assert.equal((await s.post('/api/seller/listings', { ...body, shipping: '5.00' })).status, 422);
+  const fixed = await s.post('/api/seller/listings', { ...body, shipping: '5.00' });
+  assert.doesNotMatch((await new H.Client().get(`/listing/${fixed.json.id}`)).text, />Buy now</);
   await s.put('/api/seller/settings', { ...settings, checkout_url: LINK, checkout_url_any_amount: true });
-  const ok = await s.post('/api/seller/listings', { ...body, shipping: '5.00' });
-  assert.equal(ok.status, 200);
+  const anyAmt = await s.post('/api/seller/listings', { ...body, shipping: '5.00' }); assert.equal(anyAmt.status, 200);
+  assert.match((await new H.Client().get(`/listing/${anyAmt.json.id}`)).text, />Buy now</);
   // shipping terms
   const withLink = { ...body, payment_url: LINK };
   const buyerZero = await s.post('/api/seller/listings', { ...withLink, shipping_payer: 'buyer', shipping: '0' });
@@ -98,24 +98,19 @@ test('publishing needs a usable payment link; shipping terms are validated and e
   const free = await s.post('/api/seller/listings', { ...withLink, shipping_payer: 'seller', shipping: '9.99' });
   assert.equal(free.status, 200);
   const fr = listingRow(free.json.id); assert.equal(fr.shipping_payer, 'seller'); assert.equal(fr.shipping_cents, 0, 'free shipping can never charge the buyer');
-  assert.equal(listingRow(ok.json.id).shipping_payer, 'buyer');
+  assert.equal(listingRow(anyAmt.json.id).shipping_payer, 'buyer');
   // CSV cannot sneak a bad link in
   const csv = await s.post('/api/seller/import', { csv: 'sku,title,category,price,shipping,payment_url\nA-1,Hat,accessories,10,3,https://evil.example/x\n' });
   assert.equal(csv.json.errors.length, 1);
-  // bulk publish skips drafts that have no link
-  const s2 = await H.newSeller('Bulk'); const f2 = await H.upload(s2);
-  const d = await s2.post('/api/seller/listings', { title: 'Draft one', category: 'clothing', condition: 'good', price: '12.00', shipping: '4', weight_oz: '5', images: [f2], status: 'draft' });
-  const bulk = await s2.post('/api/seller/listings/bulk', { ids: [d.json.id], action: 'status', status: 'active' });
-  assert.equal(bulk.json.updated, 0); assert.match(bulk.json.skipped[0].reason, /payment link/);
 });
 
 // ---------------------------------------------------------------- listing page + disabled platform surfaces
 test('listing page shows shipping terms and total, never escrow/cart language; cart and platform checkout are off', async () => {
   const { seller, buyer, id } = await scene();
   const page = (await new H.Client().get(`/listing/${id}`)).text;
-  assert.match(page, /Continue to seller checkout/); assert.match(page, /\$46\.00/); assert.match(page, /\$6\.00 flat fee, paid by the buyer/);
-  assert.match(page, /directly through their own checkout/);
-  assert.doesNotMatch(page, /escrow|Add to cart|Buy now/i);
+  assert.match(page, /Buy now/); assert.match(page, /\$46\.00/); assert.match(page, /\$6\.00 flat fee, paid by the buyer/);
+  assert.match(page, /directly through their own Stripe checkout/);
+  assert.doesNotMatch(page, /escrow|Add to cart/i);
   const free = await listing(seller, { shipping_payer: 'seller', shipping: '0' });
   assert.match((await new H.Client().get(`/listing/${free}`)).text, /Free shipping/);
   // the PairPlug-held checkout surfaces are disabled, API and pages
@@ -301,17 +296,21 @@ test('concurrency: 12 buyers race for one unique item → exactly one reservatio
   assert.equal(count('SELECT COUNT(*) n FROM order_items WHERE listing_id = ?', id), 1);
 });
 
-test('seller-declared refund: recorded without any provider call, optional relist; platform refund route refuses', async () => {
+test('seller-reported refund does NOT refund the order; only the buyer\'s confirmation does; no provider call', async () => {
   const { seller, buyer, id } = await scene();
   const o = (await purchase(buyer, id)).json.orderId; await seller.post(`/api/seller/orders/${o}/confirm-payment`);
   assert.equal((await seller.post(`/api/seller/orders/${o}/cancel`)).status, 409, 'PairPlug-refund route cannot touch a direct order');
   assert.equal(row(o).status, 'paid');
-  assert.equal((await seller.post(`/api/seller/orders/${o}/refunded`, { relist: true })).status, 422, 'must attest the refund');
+  assert.equal((await seller.post(`/api/seller/orders/${o}/refunded`, {})).status, 422, 'must attest the refund');
   assert.equal((await buyer.post(`/api/seller/orders/${o}/refunded`, { confirm_refunded: true })).status, 403);
-  assert.equal((await seller.post(`/api/seller/orders/${o}/refunded`, { confirm_refunded: true, relist: true })).status, 200);
-  assert.equal(row(o).status, 'refunded'); assert.equal(row(o).refunded_cents, row(o).total_cents); assert.equal(listingRow(id).status, 'active');
-  assert.equal(count('SELECT COUNT(*) n FROM refunds WHERE order_id = ?', o), 0, 'no refund object: PairPlug did not refund anything');
+  assert.equal((await seller.post(`/api/seller/orders/${o}/refunded`, { confirm_refunded: true })).status, 200);
+  assert.equal(row(o).status, 'paid', 'the seller saying so is not enough');
   assert.equal((await seller.post(`/api/seller/orders/${o}/refunded`, { confirm_refunded: true })).status, 409);
+  assert.equal((await seller.post(`/api/orders/${o}/refund-confirm`, { received: true })).status, 409, 'seller cannot confirm for the buyer');
+  assert.equal(row(o).status, 'paid');
+  assert.equal((await buyer.post(`/api/orders/${o}/refund-confirm`, { received: true })).status, 200);
+  assert.equal(row(o).status, 'refunded'); assert.equal(row(o).refunded_cents, row(o).total_cents);
+  assert.equal(count('SELECT COUNT(*) n FROM refunds WHERE order_id = ?', o), 0, 'no refund object: PairPlug did not refund anything');
 });
 
 test('privacy: other users cannot see a direct order or its address; sellers cannot see addresses of other sellers\' orders', async () => {

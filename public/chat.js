@@ -240,7 +240,8 @@
     for (const c of convs) {
       const a = el('a', 'conv' + (c.id === S.active ? ' on' : '') + (c.unread ? ' unread' : '')); a.href = '/messages/' + c.id; a.dataset.id = c.id; a.setAttribute('role', 'listitem');
       const top = el('div', 'conv-top'); top.append(el('strong', null, c.otherName), el('span', 'muted small', c.lastMessageAt ? ago(c.lastMessageAt) : ''));
-      const prev = el('div', 'conv-prev muted small', c.lastBody ? (c.lastSender === me.id ? 'You: ' : '') + c.lastBody : (c.listing ? 'About: ' + c.listing.title : 'No messages yet'));
+      const wl = waitingHours(c);
+      const prev = el('div', 'conv-prev muted small', (wl >= 0 ? `Awaiting your reply · ${wl}h · ` : '') + (c.lastBody ? (c.lastSender === me.id ? 'You: ' : '') + c.lastBody : (c.listing ? 'About: ' + c.listing.title : 'No messages yet')));
       a.append(top, prev); if (c.unread) a.append(el('b', 'badge-inline', String(c.unread)));
       box.append(a);
     }
@@ -249,10 +250,21 @@
     document.title = (total ? `(${total}) ` : '') + document.title.replace(/^\(\d+\) /, '');
   }
 
+  async function reportMessage(c, m) {
+    const reason = window.prompt('Why are you reporting this message? PairPlug support will be able to read this conversation. (10+ characters)');
+    if (!reason) return;
+    try { const r = await fetch('/api/chat/report', { method: 'POST', headers: HDRS, body: JSON.stringify({ conversationId: c.id, messageId: m.id, reason }), credentials: 'same-origin' }); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Could not send the report'); window.alert('Thanks. PairPlug support will review it (case #' + d.id + ').'); }
+    catch (e) { window.alert(e.message); }
+  }
+  const waitingHours = (c) => (c.role === 'seller' && c.lastSender && c.lastSender !== me.id && c.lastMessageAt ? Math.floor((Date.now() / 1000 - c.lastMessageAt) / 3600) : -1);
+
   function renderThread() {
     const c = S.convs.get(S.active), box = $('#msgs');
     $('#chat').classList.toggle('has-active', !!c); $('#composer').hidden = !c; $('#chat-empty').hidden = !!c; box.hidden = !c;
     $('#chat-title').textContent = c ? c.otherName : 'Select a conversation';
+    const wh = c ? waitingHours(c) : -1;
+    let ex = $('#expect'); if (!ex) { ex = el('div', 'muted small'); ex.id = 'expect'; ex.style.padding = '6px 12px'; $('#msgs').before(ex); }
+    ex.textContent = !c ? '' : c.role === 'seller' ? (wh >= 0 ? `Awaiting your reply · ${wh < 1 ? 'less than an hour' : wh + 'h'} ago. Buyers expect a reply within 48 hours.` : 'Buyers expect a reply within 48 hours (an expectation, not a guarantee).') : 'Sellers are expected to reply within 48 hours. That is an expectation, not a guarantee.';
     const lb = $('#chat-listing'); lb.textContent = '';
     if (c && c.listing) { const a = el('a', 'listing-ctx'); a.href = '/listing/' + c.listing.id;
       if (c.listing.image) { const i = el('img'); i.src = '/uploads/' + c.listing.image; i.alt = ''; a.append(i); }
@@ -268,6 +280,7 @@
       if (dayKey(m.createdAt) !== day) { day = dayKey(m.createdAt); box.append(el('div', 'daysep', new Date(m.createdAt * 1000).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }))); }
       const row = el('div', 'msg ' + (m.senderId === me.id ? 'mine' : 'theirs')); const bub = el('div', 'bubble'); bub.append(el('span', 'body', m.body), el('time', 'when', hhmm(m.createdAt))); row.append(bub);
       if (m.id === lastMine && c.otherReadUpTo >= m.id) row.append(el('div', 'receipt', 'Seen'));
+      if (m.senderId !== me.id) { const rp = el('button', 'linklike small report', 'Report'); rp.type = 'button'; rp.setAttribute('aria-label', 'Report this message'); rp.onclick = () => reportMessage(c, m); row.append(rp); }
       box.append(row);
     }
     for (const o of outbox.filter((x) => x.conversationId === c.id)) {

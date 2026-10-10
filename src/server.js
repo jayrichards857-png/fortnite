@@ -28,7 +28,7 @@ app.use((req, res, next) => {
   next();
 });
 // Uploaded files: served as inert images only (nosniff above + fixed extensions chosen by the server).
-app.use('/uploads', express.static(config.uploadDir, { maxAge: '7d', index: false, dotfiles: 'deny', setHeaders: (res) => res.set('Content-Disposition', 'inline') }));
+app.use('/uploads', express.static(config.uploadDir, { maxAge: '7d', index: false, dotfiles: 'deny', setHeaders: (res) => res.set({ 'Content-Disposition': 'inline', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cross-Origin-Resource-Policy': 'same-origin' }) }));
 app.use(express.static(path.join(config.root, 'public'), { maxAge: config.isProd ? '1h' : 0 }));
 
 // Webhook routes need the raw body, so they are mounted before the JSON parser (they apply their own parsers).
@@ -37,6 +37,8 @@ app.use((req, res, next) => (req.path.startsWith('/webhooks/') || req.path === '
 app.use(auth.csrfGuard);
 
 app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
+app.use(require('./routes/store').router);   // storefronts + editor (takes over /s/:handle)
+app.use(require('./routes/support').router);  // cases, refunds, reports, admin case tools
 app.use(require('./routes/direct').router);   // direct (seller-owned) checkout; must precede the legacy routers
 app.use(require('./routes/buyer').router);
 app.use(require('./routes/seller').router);
@@ -65,7 +67,9 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 
 function startJobs() {
   // Background sweeps. Both are idempotent and also safe if several app instances run them.
-  const tick = () => { try { payments.expireStaleCheckouts(); escrow.autoReleaseDue(); } catch (e) { console.error('job error', e); } };
+  let last = 0;
+  const tick = () => { try { payments.expireStaleCheckouts(); escrow.autoReleaseDue();
+    if (Date.now() - last > 3600e3) { last = Date.now(); require('./images').cleanupOrphanUploads(); require('./db').q.run('DELETE FROM sessions WHERE expires_at < ?', Math.floor(Date.now() / 1000)); } } catch (e) { console.error('job error', e); } };
   tick(); return setInterval(tick, 60 * 1000).unref();
 }
 

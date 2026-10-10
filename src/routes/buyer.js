@@ -77,8 +77,8 @@ function directBuyBox(l, user) {
   if (l.status === 'sold') cta = '<button class="btn block" disabled>Sold</button>';
   else if (l.status === 'reserved') cta = '<button class="btn block" disabled>Reserved — another buyer is paying</button><p class="small muted" style="margin:6px 0 0">If they don\'t complete payment, this item becomes available again.</p>';
   else if (l.status !== 'active') cta = '';
-  else if (!X.purchasable(l).ok) cta = `<button class="btn block" disabled>Checkout not available</button><p class="small muted" style="margin:6px 0 0">${esc(X.purchasable(l).reason)}</p>`;
-  else cta = `<a class="btn block" href="/buy/${l.id}">Continue to seller checkout</a><p class="small muted" style="margin:6px 0 0">You'll pay <strong>${esc(l.seller_name || l.seller_handle)}</strong> directly through their own checkout. PairPlug doesn't process or hold your payment, and refunds are handled by the seller.</p>`;
+  else if (!X.purchasable(l).ok) cta = `<p class="small muted" style="margin:0">${esc(X.purchasable(l).reason)} Use <strong>Contact seller</strong> to arrange payment and shipping.</p>`;   // no fake checkout button
+  else cta = `<a class="btn block" href="/buy/${l.id}">Buy now</a><p class="small muted" style="margin:6px 0 0">You'll pay <strong>${esc(l.seller_name || l.seller_handle)}</strong> directly through their own Stripe checkout. PairPlug doesn't process or hold your payment and can't guarantee a refund. <a href="/buy/${l.id}">How it works</a></p>`;
   return `<div class="panel" style="margin:14px 0">${rows}${cta ? `<div style="margin-top:12px">${cta}</div>` : ''}</div>`;
 }
 
@@ -96,21 +96,21 @@ r.get('/listing/:id(\\d+)', (req, res) => {
   const body = `<div class="product">
   <div class="gallery"><div class="main">${l.images.length ? `<img id="gmain" src="/uploads/${esc(l.images[0])}" alt="${esc(l.title)}">` : '<div class="noimg" style="height:100%"></div>'}</div>
   ${l.images.length > 1 ? `<div class="thumbs">${l.images.map((f, i) => `<button type="button" data-thumb="/uploads/${esc(f)}" aria-current="${i === 0}" aria-label="Photo ${i + 1}"><img src="/uploads/${esc(f)}" alt=""></button>`).join('')}</div>` : ''}</div>
-  <div><h1>${esc(l.title)}</h1><div class="pprice">${money(l.price_cents)}</div>
+  <div><h1>${esc(l.title)}</h1><div class="pprice">${money(l.price_cents)} <span class="muted small">${esc(l.currency || 'USD')}</span></div>
     <div>${avail ? '<span class="pill s-active">Available</span>' : `${V.statusPill(l.status)} <span class="muted small">${esc(status)}</span>`}</div>
     <dl class="facts">${l.brand ? `<dt>Brand</dt><dd>${esc(l.brand)}</dd>` : ''}${l.size ? `<dt>Size</dt><dd>${esc(l.size)}</dd>` : ''}${l.condition ? `<dt>Condition</dt><dd>${esc(config.conditions[l.condition])}</dd>` : ''}
       <dt>Category</dt><dd><a href="/shop?category=${esc(l.category)}">${esc((config.categories.find((c) => c[0] === l.category) || [])[1])}</a></dd>
       <dt>Shipping</dt><dd>${l.shipping_payer === 'seller' || !l.shipping_cents ? '<strong>Free shipping</strong> — the seller covers the label' : `${money(l.shipping_cents)} flat fee, paid by the buyer`}</dd>
       <dt>Ships from</dt><dd>${esc(seller || '—')} ${isLocalShip(l.seller_country) ? '<span class="badge-local">Local ship</span>' : ''}</dd></dl>
     ${ext && !mine ? directBuyBox(l, req.user) : ''}
-    ${mine ? `<a class="btn block" href="/dashboard/listings/${l.id}/edit">Edit listing</a>` : ext ? `<p style="margin:8px 0 0">${['active', 'reserved', 'sold'].includes(l.status) ? `<button class="btn ghost small" data-chat-start="${l.id}">Message seller</button> ` : ''}<button class="btn ghost small${faved ? ' on' : ''}" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')} Save</button></p>` : `${['active', 'reserved', 'sold'].includes(l.status) ? `<p style="margin:0 0 4px"><button class="btn ghost small" data-chat-start="${l.id}">Message seller</button></p>` : ''}<div class="buybox">
+    ${mine ? `<a class="btn block" href="/dashboard/listings/${l.id}/edit">Edit listing</a>` : ext ? `<p style="margin:8px 0 0">${['active', 'reserved', 'sold'].includes(l.status) ? `<button class="btn small" data-chat-start="${l.id}">Contact seller</button> ` : ''}<button class="btn ghost small${faved ? ' on' : ''}" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')} Save</button></p>` : `${['active', 'reserved', 'sold'].includes(l.status) ? `<p style="margin:0 0 4px"><button class="btn ghost small" data-chat-start="${l.id}">Contact seller</button></p>` : ''}<div class="buybox">
       ${avail ? (inCart ? '<a class="btn" href="/cart">In cart — view cart</a>' : `<button class="btn" data-cart-add="${l.id}" data-buy>Buy now</button><button class="btn ghost" data-cart-add="${l.id}">Add to cart</button>`) : `<button class="btn" disabled>${l.status === 'sold' ? 'Sold' : 'Unavailable'}</button>`}
       <button class="btn ghost${faved ? ' on' : ''}" style="flex:0" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')}</button></div>`}
     ${l.description ? `<h2>Description</h2><p style="white-space:pre-wrap">${esc(l.description)}</p>` : ''}
     <div class="panel" style="margin-top:18px"><a href="/s/${esc(l.seller_handle)}" style="text-decoration:none"><strong>${esc(l.seller_name || l.seller_handle)}</strong></a>
       <div class="small muted">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} · ${rate.n} review${rate.n > 1 ? 's' : ''}` : 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
       ${l.seller_bio ? `<p class="small">${esc(l.seller_bio)}</p>` : ''}
-      <p class="small muted" style="margin:6px 0 0">${ext ? 'You pay this seller directly. PairPlug does not hold or refund payments — message the seller about any payment problem.' : 'Payment is held in escrow until you confirm delivery.'}</p></div></div></div>`;
+      <p class="small muted" style="margin:6px 0 0">${ext ? 'You pay this seller directly. PairPlug does not hold or refund payments — message the seller about any payment problem.' : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">PairPlug sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
   page(req, res, { title: l.title, body, description: l.description.slice(0, 150) });
 });
 

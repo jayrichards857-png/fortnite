@@ -34,7 +34,7 @@ r.get('/messages', auth.requireUser, shell);
 r.get('/messages/:id(\\d+)', auth.requireUser, shell);
 
 // ---------- HTTP API (same service the WebSocket uses) ----------
-r.post('/api/chat/conversations', auth.requireUser, (req, res) => res.json({ id: service.startConversation(req.user, req.body.listingId) }));
+r.post('/api/chat/conversations', auth.requireUser, (req, res) => res.json({ id: service.startConversation(req.user, { listingId: req.body.listingId, sellerHandle: req.body.sellerHandle }) }));
 r.post('/api/chat/command', auth.requireUser, (req, res) => res.json({ ok: true, data: service.runCommand(req.user, req.body) }));
 
 /**

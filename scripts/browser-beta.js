@@ -55,9 +55,9 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     // ---- buyer: sees terms before leaving PairPlug
     await b.pg.goto(listingUrl);
     const lp = await b.pg.textContent('main');
-    assert.match(lp, /\$55\.00/); assert.match(lp, /\$7\.00 flat fee, paid by the buyer/); assert.match(lp, /Continue to seller checkout/); assert.doesNotMatch(lp, /escrow|Add to cart/i);
-    step('listing shows item $48 + shipping $7 = total $55 and "Continue to seller checkout"'); await shot(b.pg, 'beta-02-listing.png');
-    await b.pg.click('a:has-text("Continue to seller checkout")'); await b.pg.waitForURL(/\/login/);
+    assert.match(lp, /\$55\.00/); assert.match(lp, /\$7\.00 flat fee, paid by the buyer/); assert.match(lp, /Buy now/); assert.doesNotMatch(lp, /escrow|Add to cart/i);
+    step('listing shows item $48 + shipping $7 = total $55 and "Buy now"'); await shot(b.pg, 'beta-02-listing.png');
+    await b.pg.click('a:has-text("Buy now")'); await b.pg.waitForURL(/\/login/);
     await b.pg.goto(B + '/register?next=/buy/' + listingId); await b.pg.fill('#n', 'Jordan Buyer'); await b.pg.fill('#e', 'jordan@example.test'); await b.pg.fill('#p', 'a-long-password-2');
     await b.pg.click('button[type=submit]'); await b.pg.waitForURL((u) => u.pathname.startsWith('/buy/')); step('anonymous buyer is sent to sign up, then back to the purchase page');
     assert.match(await b.pg.textContent('main'), /does not collect, hold or protect/); assert.match(await b.pg.textContent('main'), /Refunds, chargebacks and payment problems are handled by the seller/);
@@ -98,7 +98,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
 
     // ---- mobile viewport
     const m = await mk({ width: 390, height: 844 }, { deviceScaleFactor: 2, isMobile: true, hasTouch: true });
-    await m.pg.goto(listingUrl); assert.match(await m.pg.textContent('main'), /Continue to seller checkout|Sold/);
+    await m.pg.goto(listingUrl); assert.match(await m.pg.textContent('main'), /Buy now|Sold/);
     const overflow = async (pg) => pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok((await overflow(m.pg)) <= 1, 'listing page has no horizontal scroll on mobile'); await shot(m.pg, 'beta-09-mobile-listing.png');
     const login = await fetch(B + '/api/login', { method: 'POST', headers: { 'X-Requested-With': 'pairplug', 'content-type': 'application/json' }, body: JSON.stringify({ email: 'jordan@example.test', password: 'a-long-password-2' }) });

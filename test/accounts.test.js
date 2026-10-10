@@ -76,7 +76,7 @@ test('an unverified seller cannot publish or take orders, but can save drafts an
   q.run('UPDATE users SET email_verified_at = 1 WHERE handle = ?', s.handle);
   const id = await H.makeListing(s, { payment_url: LINK, shipping_payer: 'buyer' });
   q.run('UPDATE users SET email_verified_at = NULL WHERE handle = ?', s.handle);
-  const page = (await buyer.get(`/listing/${id}`)).text; assert.doesNotMatch(page, /Buy now/); assert.match(page, /hasn&#39;t verified their email/); assert.match(page, /Message seller/);
+  const page = (await buyer.get(`/listing/${id}`)).text; assert.doesNotMatch(page, /Buy now/); assert.match(page, /hasn&#39;t verified their email/); assert.match(page, /Contact seller/);
   assert.equal((await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 409);
   assert.equal((await buyer.post('/api/chat/conversations', { listingId: id })).status, 200, 'still contactable');
   // verify through the real flow

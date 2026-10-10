@@ -18,21 +18,35 @@ function memberConversation(user, conversationId) {
   return c;
 }
 
+function presentOther(c, userId) { return other(c, userId); }
 function present(m) {
   return { id: m.id, conversationId: m.conversation_id, senderId: m.sender_id, body: m.body, clientId: m.client_id, listingId: m.listing_id, createdAt: m.created_at };
 }
 
-/** Buyer starts (or reopens) the single conversation with a listing's seller. The seller is derived from the listing on the server. */
-function startConversation(user, listingId) {
+/**
+ * Start (or reopen) the single conversation between the signed-in user and a seller. The seller is ALWAYS derived on the server:
+ * from the listing, or from the storefront handle. The client never supplies a user id. `arg` is a listing id or
+ * { listingId } | { sellerHandle } (contacting a seller needs no listing and no payment link).
+ */
+function startConversation(user, arg) {
   rateLimit(`chat-start:${user.id}`, 30, 3600);
-  const l = q.get(`SELECT l.id, l.seller_id, l.status, u.banned FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, Number(listingId));
-  if (!l || !['active', 'reserved', 'sold'].includes(l.status) || l.banned) throw new HttpError(404, 'Listing not found');
-  if (l.seller_id === user.id) throw new HttpError(403, "You can't message yourself about your own listing.");
+  const input = arg && typeof arg === 'object' ? arg : { listingId: arg };
+  let sellerId, listingId = null;
+  if (input.listingId) {
+    const l = q.get(`SELECT l.id, l.seller_id, l.status, u.banned, u.is_seller FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, Number(input.listingId));
+    if (!l || !['active', 'reserved', 'sold'].includes(l.status) || l.banned || !l.is_seller) throw new HttpError(404, 'Listing not found');
+    sellerId = l.seller_id; listingId = l.id;
+  } else if (input.sellerHandle) {
+    const sel = q.get('SELECT id, banned, is_seller FROM users WHERE handle = ? COLLATE NOCASE', String(input.sellerHandle).slice(0, 40));
+    if (!sel || !sel.is_seller || sel.banned) throw new HttpError(404, 'Seller not found');
+    sellerId = sel.id;
+  } else throw new HttpError(400, 'Choose a listing or a seller to contact.');
+  if (sellerId === user.id) throw new HttpError(403, "You can't message yourself.");
   return tx(() => {
-    q.run('INSERT OR IGNORE INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES(?,?,?,?)', user.id, l.seller_id, l.id, now());
-    // If a conversation already existed (maybe about another listing), just move the context to this listing.
-    q.run('UPDATE conversations SET listing_id = ? WHERE buyer_id = ? AND seller_id = ?', l.id, user.id, l.seller_id);
-    return q.get('SELECT * FROM conversations WHERE buyer_id = ? AND seller_id = ?', user.id, l.seller_id).id;
+    q.run('INSERT OR IGNORE INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES(?,?,?,?)', user.id, sellerId, listingId, now());
+    // an existing conversation keeps its history; a listing-based contact just moves the listing context
+    if (listingId) q.run('UPDATE conversations SET listing_id = ? WHERE buyer_id = ? AND seller_id = ?', listingId, user.id, sellerId);
+    return q.get('SELECT * FROM conversations WHERE buyer_id = ? AND seller_id = ?', user.id, sellerId).id;
   });
 }
 

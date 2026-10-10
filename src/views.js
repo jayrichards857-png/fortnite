@@ -64,7 +64,7 @@ function header(user, path, counts, wide) {
 </header>`;
 }
 
-function layout({ title, body, user, path = '/', description = '', wide = false, scripts = '' }) {
+function layout({ title, body, user, path = '/', description = '', wide = false, scripts = '', head = '' }) {
   const counts = user ? {
     cart: q.get('SELECT COUNT(*) n FROM cart_items WHERE user_id = ?', user.id).n,
     notifications: q.get('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id).n,
@@ -74,7 +74,7 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'Buy and sell secondhand clothing, sneakers and streetwear across North America.')}">
-<link rel="stylesheet" href="/app.css"></head><body>
+<link rel="stylesheet" href="/app.css">${head}</head><body>
 <a class="skip" href="#main">Skip to content</a>${sandbox}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
 <footer class="site-footer"><div class="wrap"><span>PairPlug · North American secondhand marketplace</span>
@@ -114,7 +114,7 @@ function pager(page, pages, params) {
 }
 
 function dashNav(path) {
-  const items = [['/dashboard', 'Overview'], ['/dashboard/inventory', 'Inventory'], ['/dashboard/orders', 'Orders'], ['/dashboard/analytics', 'Analytics'], ['/dashboard/finance', config.checkoutMode === 'platform' ? 'Earnings & tax' : 'Earnings'], ['/dashboard/import', 'CSV import'], ['/dashboard/settings', 'Settings']];
+  const items = [['/dashboard', 'Overview'], ['/dashboard/inventory', 'Inventory'], ['/dashboard/orders', 'Orders'], ['/dashboard/storefront', 'Storefront'], ['/dashboard/analytics', 'Analytics'], ['/dashboard/finance', config.checkoutMode === 'platform' ? 'Earnings & tax' : 'Earnings'], ['/dashboard/import', 'CSV import'], ['/dashboard/settings', 'Settings']];
   return `<nav class="subnav" aria-label="Seller dashboard">${items.map(([h, l]) => `<a href="${h}"${path === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}
     <a class="btn small push" href="/dashboard/listings/new">${icon('plus')} New listing</a></nav>`;
 }

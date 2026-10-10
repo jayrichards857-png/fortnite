@@ -88,7 +88,7 @@ r.get('/dashboard/inventory', S, (req, res) => {
   const pg = Math.max(1, parseInt(f.page, 10) || 1), per = 25;
   const total = q.get(`SELECT COUNT(*) n FROM listings WHERE ${where.join(' AND ')}`, ...p).n;
   const rows = q.all(`SELECT l.*, ${L.IMG_SQL} FROM listings l WHERE ${where.join(' AND ').replace(/\b(seller_id|status|title|sku|brand)\b/g, 'l.$1')} ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`, ...p, per, (pg - 1) * per);
-  const sale = { sold: 'Sold', reserved: 'In checkout', active: 'For sale', draft: 'Not published', archived: 'Not for sale' };
+  const sale = { sold: 'Sold', reserved: 'In checkout', active: 'For sale', draft: 'Not published', archived: 'Paused' };
   const body = `<h1>Inventory <span class="muted small">${total} item${total === 1 ? '' : 's'}</span></h1>
   <form class="filterbar" method="get"><label class="sr" for="iq">Search</label><input id="iq" type="search" name="q" placeholder="Search title, SKU, brand" value="${esc(f.q || '')}">
     <label class="sr" for="is">Status</label><select id="is" name="status" data-autosubmit><option value="">All statuses</option>${['draft', 'active', 'reserved', 'sold', 'archived'].map((s) => `<option${f.status === s ? ' selected' : ''}>${s}</option>`).join('')}</select><button class="btn ghost small">Filter</button></form>
@@ -99,7 +99,10 @@ r.get('/dashboard/inventory', S, (req, res) => {
   ${rows.map((l) => `<tr><td><input type="checkbox" class="sel" value="${l.id}" aria-label="Select ${esc(l.title)}"${['sold', 'reserved'].includes(l.status) ? ' disabled' : ''}></td><td>${V.img(l.image, 'thumb', l.title)}</td>
     <td><a href="/dashboard/listings/${l.id}/edit">${esc(l.title)}</a><div class="muted small">${esc([l.brand, l.size].filter(Boolean).join(' · '))}</div></td><td>${esc(l.sku || '—')}</td>
     <td class="num">${money(l.price_cents)}</td><td class="num">${l.cost_cents == null ? '—' : money(l.cost_cents)}</td><td>${V.statusPill(l.status)}</td><td>${sale[l.status]}</td><td>${date(l.created_at)}</td>
-    <td style="white-space:nowrap"><a class="btn ghost small" href="/dashboard/listings/${l.id}/edit">Edit</a> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/duplicate" data-redirect="/dashboard/listings/{id}/edit">Duplicate</button></td></tr>`).join('')}</tbody></table></div>
+    <td style="white-space:nowrap"><a class="btn ghost small" href="/dashboard/listings/${l.id}/edit">Edit</a> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/duplicate" data-redirect="/dashboard/listings/{id}/edit">Duplicate</button>
+      ${l.status === 'active' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/pause">Pause</button> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/mark-sold" data-confirm="Mark as sold? Use this only for an item you sold outside PairPlug. Buyers will no longer be able to buy it here.">Mark sold</button>` : ''}
+      ${l.status === 'archived' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/resume">Resume</button>` : ''}
+      ${['draft', 'archived'].includes(l.status) ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}" data-method="DELETE" data-confirm="Delete this item permanently? (Items with orders or conversations can't be deleted.)">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
   ${V.pager(pg, Math.max(1, Math.ceil(total / per)), { q: f.q || '', status: f.status || '' })}`
     : V.empty(f.q || f.status ? 'No matching listings' : 'No listings yet', f.q || f.status ? 'Try clearing the filters.' : 'Create your first listing to start selling.', ['/dashboard/listings/new', 'Create a listing'])}`;
   const script = `<script>(()=>{const sel=()=>[...document.querySelectorAll('.sel:checked')].map(x=>Number(x.value)),bar=document.getElementById('bulkbar');if(!bar)return;
@@ -129,16 +132,17 @@ function editor(req, res, l) {
     <div class="row"><div><label for="price">Price (USD)</label><input id="price" name="price" inputmode="decimal" value="${cents('price_cents')}" required></div>
       <div><label for="ship">Flat shipping fee <span class="opt">(if buyer pays)</span></label><input id="ship" name="shipping" inputmode="decimal" value="${l ? cents('shipping_cents') : ''}"></div>
       <div><label for="cost">Acquisition cost <span class="opt">(private)</span></label><input id="cost" name="cost" inputmode="decimal" value="${cents('cost_cents')}"></div>
+      <div><label for="cur">Currency</label><input id="cur" value="USD" disabled aria-describedby="curh"><div id="curh" class="hint">All PairPlug prices are in US dollars.</div></div>
       <div><label for="sku">SKU <span class="opt">(optional)</span></label><input id="sku" name="sku" maxlength="60" value="${v('sku')}"></div></div>
     <fieldset class="panel" style="margin:14px 0 0"><legend style="font-weight:600;font-size:13px;padding:0 6px">Shipping terms (shown to buyers before they leave PairPlug)</legend>
       <label style="font-weight:400;display:flex;gap:8px;margin:6px 0"><input type="radio" name="shipping_payer" value="buyer"${!l || l.shipping_payer === 'buyer' ? ' checked' : ''}> <span><strong>Buyer pays a flat shipping fee</strong> (the amount in “Flat shipping fee” above, collected by your checkout link)</span></label>
       <label style="font-weight:400;display:flex;gap:8px;margin:6px 0"><input type="radio" name="shipping_payer" value="seller"${l && l.shipping_payer === 'seller' ? ' checked' : ''}> <span><strong>Free shipping — I cover the label</strong> (buyer pays nothing extra)</span></label></fieldset>
     ${X.isExternal() ? `<label for="purl">Payment link for this item <span class="opt">(Stripe Payment Link)</span></label><input id="purl" name="payment_url" inputmode="url" placeholder="https://buy.stripe.com/…" value="${v('payment_url')}" autocomplete="off">
-      <div class="hint">Create it in your Stripe dashboard for exactly <strong>item price + shipping fee</strong>. ${req.user.checkout_url && req.user.checkout_url_any_amount ? 'Leave blank to use your any-amount default link.' : 'Required to publish unless you set an any-amount default link in <a href="/dashboard/settings">Settings</a>.'}</div>` : ''}
+      <div class="hint"><strong>Optional.</strong> Create it in your Stripe dashboard for exactly <strong>item price + shipping fee</strong> (a Payment Link has a fixed price; PairPlug cannot check that it matches). ${req.user.checkout_url && req.user.checkout_url_any_amount ? 'Leave blank to use your any-amount default link.' : 'Without a link this item is <em>contact-only</em>: buyers message you to arrange payment.'} PairPlug never holds the money. ${l && l.payment_url ? `<a href="${esc(l.payment_url)}" target="_blank" rel="noopener noreferrer">Open this link to check it ↗</a>` : ''}</div>` : ''}
     <div class="row"><div><label for="w">Weight (oz)</label><input id="w" name="weight_oz" inputmode="decimal" value="${v('weight_oz')}"></div><div><label for="len">Length (in)</label><input id="len" name="length_in" inputmode="decimal" value="${v('length_in')}"></div>
       <div><label for="wid">Width (in)</label><input id="wid" name="width_in" inputmode="decimal" value="${v('width_in')}"></div><div><label for="hei">Height (in)</label><input id="hei" name="height_in" inputmode="decimal" value="${v('height_in')}"></div></div>
     <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap"><button type="button" class="btn" data-save="active">${l && l.status === 'active' ? 'Save changes' : 'Publish'}</button>
-      <button type="button" class="btn ghost" data-save="draft">Save as draft</button>${l && l.status !== 'archived' ? '<button type="button" class="btn ghost" data-save="archived">Archive</button>' : ''}</div></form>
+      <button type="button" class="btn ghost" data-save="draft">Save as draft</button>${l && l.status !== 'archived' ? '<button type="button" class="btn ghost" data-save="archived">Pause listing</button>' : ''}</div></form>
   <aside class="panel sticky"><h3>Profit calculator</h3><p class="small muted">Recommends a retail price from your costs and target margin, using current fees.</p>
     <label for="pc-cost">Item cost ($)</label><input id="pc-cost" inputmode="decimal" value="${cents('cost_cents')}"><label for="pc-ship">Your shipping label cost ($)</label><input id="pc-ship" inputmode="decimal" placeholder="same as shipping charged"><div class="hint">Blank = assume the shipping you charge covers the label.</div>
     <label for="pc-margin">Target profit margin (%)</label><input id="pc-margin" inputmode="decimal" value="30"><div id="pc-out" class="small" style="margin-top:14px;line-height:1.7" aria-live="polite"></div>
@@ -157,6 +161,12 @@ r.get('/dashboard/listings/:id(\\d+)/edit', S, (req, res) => {
 // ---------- Listing APIs ----------
 r.post('/api/seller/listings', S, (req, res) => { const l = L.saveListing(req.user, null, req.body); res.json({ ok: true, id: l.id, status: l.status }); });
 r.put('/api/seller/listings/:id(\\d+)', S, (req, res) => { const l = L.saveListing(req.user, Number(req.params.id), req.body); res.json({ ok: true, id: l.id, status: l.status }); });
+r.post('/api/seller/listings/:id(\\d+)/:action(pause|resume|unpublish|mark-sold)', S, (req, res) => res.json({ ok: true, ...L.listingAction(req.user, req.params.id, req.params.action.replace('-', '_')) }));
+r.delete('/api/seller/listings/:id(\\d+)', S, (req, res) => {
+  const out = L.listingAction(req.user, req.params.id, 'delete');
+  for (const f of out.files || []) require('../images').removeIfUnreferenced(f);
+  res.json({ ok: true });
+});
 r.post('/api/seller/listings/:id(\\d+)/duplicate', S, (req, res) => res.json({ ok: true, id: L.duplicateListing(req.user, Number(req.params.id)) }));
 r.post('/api/seller/listings/bulk', S, (req, res) => res.json(L.bulkAction(req.user, req.body)));
 r.get('/api/seller/profit-calc', S, (req, res) => {
@@ -210,7 +220,7 @@ r.post('/api/seller/orders/:id(\\d+)/ship', S, (req, res) => {
   tx(() => {
     const o = q.get('SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
     if (!o) throw new HttpError(404, 'Order not found');
-    try { transition(o.id, 'shipped', { actor: `seller:${req.user.id}`, note: `${carrier} ${tracking}`, set: { carrier, tracking_number: tracking, shipped_at: now() } }); }
+    try { transition(o.id, 'shipped', { actor: `seller:${req.user.id}`, note: `${carrier} ${tracking}`, set: { carrier, tracking_number: tracking, shipped_at: now(), ship_note: cleanLine(req.body.note, 200) || null } }); }
     catch (e) { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; }
     notify(o.buyer_id, `order:${o.id}:shipped`, 'Your order shipped', `Order #${o.id} shipped with ${carrier}. Tracking: ${tracking}`, `/orders/${o.id}`);
   });

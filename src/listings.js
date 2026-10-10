@@ -5,6 +5,7 @@ const { clean, cleanLine, dollarsToCents, HttpError } = require('./util');
 const { ownedUploads } = require('./images');
 const { notify } = require('./notify');
 const { validatePaymentUrl, resolveLink } = require('./paymentLinks');
+const { audit } = require('./audit');
 
 const CATS = new Set(config.categories.map((c) => c[0]));
 const SELLER_STATUSES = new Set(['draft', 'active', 'archived']); // 'sold'/'reserved' are owned by the order system
@@ -26,6 +27,7 @@ function searchListings(f) {
   if (f.size) { where.push('l.size = ? COLLATE NOCASE'); p.push(f.size); }
   if (f.condition && config.conditions[f.condition]) { where.push('l.condition = ?'); p.push(f.condition); }
   if (f.seller) { where.push('u.handle = ? COLLATE NOCASE'); p.push(f.seller); }
+  if (Array.isArray(f.exclude) && f.exclude.length) where.push(`l.id NOT IN (${f.exclude.map((x) => Number(x) | 0).join(',')})`);
   const min = dollarsToCents(f.min), max = dollarsToCents(f.max);
   if (min && !Number.isNaN(min)) { where.push('l.price_cents >= ?'); p.push(min); }
   if (max && !Number.isNaN(max)) { where.push('l.price_cents <= ?'); p.push(max); }
@@ -92,9 +94,7 @@ function saveListing(user, id, body) {
   const files = ownedUploads(user.id, v.images);
   // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
   if (publish && !q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
-  if (publish && config.checkoutMode === 'external' && !resolveLink(v, user)) {
-    throw new HttpError(422, 'Please fix the highlighted fields.', { payment_url: "Add this item's payment link, or set a default any-amount checkout link in Settings, before publishing." });
-  }
+  // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
   return tx(() => {
     const t = now();
     let cur = null;
@@ -163,7 +163,6 @@ function bulkAction(user, { ids, action, status, price, percent }) {
           if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) { result.skipped.push({ id, reason: 'verify your email first' }); continue; }
           const hasImg = q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
-          if (config.checkoutMode === 'external' && !resolveLink(l, user)) { result.skipped.push({ id, reason: 'no payment link (add one in the editor or Settings)' }); continue; }
         }
         q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
       } else if (action === 'price') {
@@ -235,4 +234,49 @@ function importCsv(user, text) {
   return report;
 }
 
-module.exports = { searchListings, facets, getListing, saveListing, duplicateListing, bulkAction, importCsv, parseCsv, validateListing, IMG_SQL, SELLER_SQL };
+/** Can this listing go live right now? Returns a human-readable reason it can't, or null. One rule set for publish, resume and bulk. */
+function publishBlocker(user, l) {
+  if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) return 'Verify your email address first.';
+  if (!q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', l.id)) return 'Add at least one photo.';
+  if (!l.condition) return 'Choose a condition.';
+  if (!(l.weight_oz > 0)) return 'Add a shipping weight.';
+  return null;
+}
+
+/**
+ * Seller-driven listing state changes. Only legal transitions are allowed; sold/reserved items are owned by the order system
+ * (a reserved item has a buyer mid-checkout and cannot be touched).
+ *   pause: active -> archived     resume: archived -> active     unpublish: active -> draft
+ *   mark_sold: active -> sold (sold elsewhere / offline; no order is created)     delete: unused draft/archived -> removed
+ */
+function listingAction(user, id, action) {
+  return tx(() => {
+    const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(id), user.id);
+    if (!l) throw new HttpError(404, 'Listing not found');
+    if (l.status === 'reserved') throw new HttpError(409, 'A buyer is checking out this item right now. Try again after their reservation ends.');
+    const t = now(), set = (status) => q.run('UPDATE listings SET status = ?, updated_at = ? WHERE id = ?', status, t, l.id);
+    const bad = (m) => { throw new HttpError(409, m); };
+    switch (action) {
+      case 'pause': if (l.status !== 'active') bad('Only items for sale can be paused.'); set('archived'); break;
+      case 'unpublish': if (l.status !== 'active') bad('Only items for sale can be unpublished.'); set('draft'); break;
+      case 'resume': {
+        if (l.status !== 'archived') bad('Only paused items can be resumed.');
+        const why = publishBlocker(user, l); if (why) throw new HttpError(422, `Can't resume yet: ${why}`);
+        q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, ?), updated_at = ? WHERE id = ?', 'active', t, t, l.id); break;
+      }
+      case 'mark_sold': if (l.status !== 'active') bad('Only items for sale can be marked sold.'); set('sold'); audit(user, 'listing_marked_sold', { type: 'listing', id: l.id }); break;
+      case 'delete': {
+        if (!['draft', 'archived'].includes(l.status)) bad('Pause or unpublish the item before deleting it.');
+        if (q.get('SELECT 1 x FROM order_items WHERE listing_id = ?', l.id) || q.get('SELECT 1 x FROM conversations WHERE listing_id = ?', l.id)) bad('This item has orders or conversations, so it is kept for the record. Leave it paused instead.');
+        const files = q.all('SELECT file FROM listing_images WHERE listing_id = ?', l.id).map((r) => r.file);
+        q.run('DELETE FROM favorites WHERE listing_id = ?', l.id); q.run('DELETE FROM cart_items WHERE listing_id = ?', l.id); q.run('DELETE FROM listings WHERE id = ?', l.id);
+        audit(user, 'listing_deleted', { type: 'listing', id: l.id });
+        return { removed: true, files };
+      }
+      default: throw new HttpError(400, 'Unknown action');
+    }
+    return { status: q.get('SELECT status FROM listings WHERE id = ?', l.id).status };
+  });
+}
+
+module.exports = { publishBlocker, listingAction, searchListings, facets, getListing, saveListing, duplicateListing, bulkAction, importCsv, parseCsv, validateListing, IMG_SQL, SELLER_SQL };

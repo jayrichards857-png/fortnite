@@ -6,6 +6,8 @@ const config = require('./config');
 const { q, now } = require('./db');
 const { HttpError } = require('./util');
 
+const MAX_SIDE = 8000, MAX_PIXELS = 40e6;
+
 // We trust file *contents*, not the client-declared type: check magic bytes and pick the extension ourselves.
 function sniff(buf) {
   if (buf.length > 12 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
@@ -14,18 +16,47 @@ function sniff(buf) {
   return null;
 }
 
+/** Read pixel dimensions from the file header without decoding the image (no image library, no decompression). null = unreadable. */
+function dimensions(buf, ext = sniff(buf)) {
+  try {
+    if (ext === 'png') return buf.length >= 24 ? { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) } : null;
+    if (ext === 'jpg') {
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) { i++; continue; }
+        const m = buf[i + 1];
+        if (m === 0xff) { i++; continue; }
+        if ((m >= 0xc0 && m <= 0xcf) && ![0xc4, 0xc8, 0xcc].includes(m)) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+        if (m === 0xd8 || (m >= 0xd0 && m <= 0xd7) || m === 0x01) { i += 2; continue; }
+        i += 2 + buf.readUInt16BE(i + 2);
+      }
+      return null;
+    }
+    if (ext === 'webp') {
+      const fmt = buf.subarray(12, 16).toString();
+      if (fmt === 'VP8 ' && buf.length >= 30) return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
+      if (fmt === 'VP8L' && buf.length >= 25) return { w: 1 + (((buf[22] & 0x3f) << 8) | buf[21]), h: 1 + (((buf[24] & 0xf) << 10) | (buf[23] << 2) | ((buf[22] & 0xc0) >> 6)) };
+      if (fmt === 'VP8X' && buf.length >= 30) return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
 function saveUpload(userId, buf) {
   if (!buf || !buf.length) throw new HttpError(400, 'Empty upload');
   if (buf.length > config.limits.imageBytes) throw new HttpError(413, 'Image is larger than 5 MB');
   const ext = sniff(buf);
   if (!ext) throw new HttpError(415, 'Only JPEG, PNG or WebP images are allowed');
+  const d = dimensions(buf, ext);
+  if (!d || !(d.w > 0 && d.h > 0)) throw new HttpError(415, 'That image could not be read. Try exporting it again as JPEG or PNG.');
+  if (d.w > MAX_SIDE || d.h > MAX_SIDE || d.w * d.h > MAX_PIXELS) throw new HttpError(413, `Image dimensions are too large (max ${MAX_SIDE}px per side).`);
   const file = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
   fs.writeFileSync(path.join(config.uploadDir, file), buf);
   q.run('INSERT INTO uploads(file, user_id, created_at) VALUES(?,?,?)', file, userId, now());
   return file;
 }
 
-/** Only filenames this user actually uploaded may be attached to a listing/dispute. */
+/** Only filenames this user actually uploaded may be attached to a listing/dispute/storefront. */
 function ownedUploads(userId, files) {
   const out = [];
   for (const f of files) {
@@ -35,4 +66,34 @@ function ownedUploads(userId, files) {
   }
   return out;
 }
-module.exports = { saveUpload, ownedUploads, sniff };
+
+/** Dimensions of an already-stored upload (re-read from disk, so the caller can't lie about them). */
+function storedDimensions(file) {
+  try { return dimensions(fs.readFileSync(path.join(config.uploadDir, file))); } catch { return null; }
+}
+
+/** Is any record still pointing at this file? Order snapshots, evidence, listings and storefronts all count. */
+function isReferenced(file) {
+  const like = `%${file}%`;
+  return Boolean(
+    q.get('SELECT 1 x FROM listing_images WHERE file = ?', file) || q.get('SELECT 1 x FROM order_items WHERE image = ?', file) ||
+    q.get('SELECT 1 x FROM dispute_evidence WHERE image = ?', file) || q.get('SELECT 1 x FROM case_events WHERE image = ?', file) ||
+    q.get('SELECT 1 x FROM storefronts WHERE draft_json LIKE ? OR published_json LIKE ?', like, like) ||
+    q.get('SELECT 1 x FROM orders WHERE snapshot_json LIKE ?', like));
+}
+/** Delete an uploaded file ONLY if nothing references it any more. Never throws. */
+function removeIfUnreferenced(file) {
+  try {
+    if (!/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(file) || isReferenced(file)) return false;
+    fs.rmSync(path.join(config.uploadDir, file), { force: true });
+    q.run('DELETE FROM uploads WHERE file = ?', file);
+    return true;
+  } catch { return false; }
+}
+/** Housekeeping: uploads that were never attached to anything and are older than the grace period. */
+function cleanupOrphanUploads(graceSeconds = 24 * 3600) {
+  let n = 0;
+  for (const u of q.all('SELECT file FROM uploads WHERE created_at < ?', now() - graceSeconds)) if (removeIfUnreferenced(u.file)) n++;
+  return n;
+}
+module.exports = { saveUpload, ownedUploads, sniff, dimensions, storedDimensions, isReferenced, removeIfUnreferenced, cleanupOrphanUploads };

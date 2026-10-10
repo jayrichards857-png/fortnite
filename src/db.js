@@ -408,7 +408,7 @@ CREATE TABLE refund_requests (
   kind TEXT NOT NULL CHECK (kind IN ('refund','cancellation')),
   requested_by INTEGER NOT NULL REFERENCES users(id),
   reason TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','seller_reported_refunded','seller_declined','buyer_confirmed_refund','buyer_disputes_refund','admin_closed')),
+  status TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','seller_reported_refunded','seller_declined','buyer_confirmed_refund','buyer_disputes_refund','admin_verified_refund','admin_closed')),
   seller_note TEXT,
   refund_reference TEXT,
   case_id INTEGER REFERENCES cases(id),
