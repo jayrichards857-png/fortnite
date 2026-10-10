@@ -39,17 +39,14 @@ function readCookie(req, name) {
   return m ? decodeURIComponent(m.slice(name.length + 1)) : null;
 }
 
-/** Attach req.user (or null) on every request. Banned users are treated as logged out. */
-function loadUser(req, res, next) {
-  req.user = null;
+/** Resolve the logged-in user from the session cookie of any Node request (HTTP or WebSocket upgrade). Banned users resolve to null. */
+function userFromRequest(req) {
   const t = readCookie(req, 'pp_session');
-  if (t) {
-    const u = q.get(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-                     WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned = 0`, sha(t), now());
-    if (u) req.user = u;
-  }
-  next();
+  if (!t) return null;
+  return q.get(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+                WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned = 0`, sha(t), now()) || null;
 }
+function loadUser(req, res, next) { req.user = userFromRequest(req); next(); }
 
 const wantsJson = (req) => req.path.startsWith('/api/') || (req.headers.accept || '').includes('application/json');
 function denied(req, res, status, msg, redirect) {
@@ -88,4 +85,4 @@ function rateLimit(key, max, windowSec) {
   arr.push(t); hits.set(key, arr);
 }
 
-module.exports = { DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, csrfGuard, rateLimit };
+module.exports = { userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, csrfGuard, rateLimit };

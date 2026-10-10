@@ -20,6 +20,7 @@ Full DDL (tables, FKs, indexes): [`schema.sql`](schema.sql). Money = integer cen
 | `reviews` | `UNIQUE(order_id)`; only after `released` |
 | `favorites`, `cart_items`, `notifications` | `UNIQUE(user_id, dedupe_key)` prevents duplicate notifications |
 | `settings` | admin-editable fee parameters |
+| `conversations`, `messages`, `conversation_reads` | chat (migration 2): `UNIQUE(buyer_id, seller_id)`; `messages.id` is AUTOINCREMENT (monotonic sync cursor) with `UNIQUE(conversation_id, sender_id, client_id)` for idempotency; per-user read pointer drives unread counts and read receipts |
 
 There is no separate `shipments` table: shipment data (`carrier`, `tracking_number`, `label_ref`, timestamps) lives on `orders`, because the product ships one parcel per order. Split it out when multi-parcel orders or label purchases are added.
 
@@ -35,6 +36,7 @@ There is no separate `shipments` table: shipment data (`carrier`, `tracking_numb
 | Buyer orders | `POST /api/orders/:id/confirm`, `/dispute`, `/dispute/evidence`, `/review` |
 | Uploads | `POST /api/uploads` (raw image body) |
 | Seller | `POST /api/sell/onboard`; `POST|PUT /api/seller/listings[/:id]`, `POST /api/seller/listings/:id/duplicate`, `POST /api/seller/listings/bulk`, `POST /api/seller/import` (CSV); `GET /api/seller/profit-calc`, `/api/seller/payout-preview`; `POST /api/seller/orders/:id/ship`, `/cancel`; `POST /api/seller/withdrawals`; `GET /api/seller/tax.csv` |
+| Chat | `POST /api/chat/conversations` (start from a listing), `POST /api/chat/command` (`send`/`read`/`typing`/`history`/`sync`), `GET /api/chat/sync?after=&wait=` (long-poll), `WS /api/chat/ws` (same commands as frames) |
 | Admin | `POST /api/admin/disputes/:id/resolve`, `/api/admin/users/:id/ban`, `/plan`, `/api/admin/listings/:id/remove`, `/api/admin/withdrawals/:id`, `PUT /api/admin/settings` |
 
 Dashboards are server-rendered pages: `/dashboard` (overview), `/inventory`, `/orders`, `/analytics`, `/finance`, `/import`, `/listings/new|:id/edit`; admin under `/admin/*`.

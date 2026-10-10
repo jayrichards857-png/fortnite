@@ -13,11 +13,11 @@ process.env.TAX_RATE_BPS = process.env.TAX_RATE_BPS ?? '0';
 const { png } = require('../scripts/png');
 const config = require('../src/config');
 config.rateLimitScale = 1000;
-const { app } = require('../src/server');
+const { createServer } = require('../src/server');
 
 let server, base;
 async function start() {
-  await new Promise((res) => { server = app.listen(0, '127.0.0.1', res); });
+  await new Promise((res) => { server = createServer().listen(0, '127.0.0.1', res); });
   config.port = server.address().port; // sandbox pay endpoint calls back into this server
   base = `http://127.0.0.1:${config.port}`;
 }

@@ -8,15 +8,17 @@ const V = require('./views');
 const { HttpError } = require('./util');
 const payments = require('./payments');
 const escrow = require('./escrow');
+const { attachWebSocket } = require('./chat/ws');
 
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
 
 app.use((req, res, next) => {
+  const wsOrigin = `ws://${req.headers.host} wss://${req.headers.host}`; // explicit for browsers that don't treat 'self' as ws(s)
   res.set({
     'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'",
+    'Content-Security-Policy': `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; connect-src 'self' ${wsOrigin}`,
   });
   next();
 });
@@ -32,6 +34,7 @@ app.use(auth.csrfGuard);
 app.use(require('./routes/buyer').router);
 app.use(require('./routes/seller').router);
 app.use(require('./routes/admin').router);
+app.use(require('./routes/chat').router);
 
 app.get('/healthz', (req, res) => { q.get('SELECT 1'); res.json({ ok: true }); });
 
@@ -54,11 +57,18 @@ function startJobs() {
   tick(); return setInterval(tick, 60 * 1000).unref();
 }
 
+/** Create the HTTP server with the WebSocket transport attached (used by `npm start` and by the tests). */
+function createServer() {
+  const server = require('node:http').createServer(app);
+  attachWebSocket(server);
+  return server;
+}
+
 if (require.main === module) {
-  app.listen(config.port, () => {
+  createServer().listen(config.port, () => {
     startJobs();
     const p = payments.getProvider();
     console.log(`PairPlug listening on ${config.publicUrl}  (payments: ${p ? p.name : 'DISABLED — set STRIPE_SECRET_KEY or PAYMENTS_MODE=sandbox'})`);
   });
 }
-module.exports = { app, startJobs };
+module.exports = { app, createServer, startJobs };

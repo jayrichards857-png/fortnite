@@ -84,7 +84,7 @@ r.get('/listing/:id(\\d+)', (req, res) => {
       <dt>Category</dt><dd><a href="/shop?category=${esc(l.category)}">${esc((config.categories.find((c) => c[0] === l.category) || [])[1])}</a></dd>
       <dt>Shipping</dt><dd>${l.shipping_cents ? money(l.shipping_cents) : 'Free'}</dd>
       <dt>Ships from</dt><dd>${esc(seller || '—')} ${isLocalShip(l.seller_country) ? '<span class="badge-local">Local ship</span>' : ''}</dd></dl>
-    ${mine ? `<a class="btn block" href="/dashboard/listings/${l.id}/edit">Edit listing</a>` : `<div class="buybox">
+    ${mine ? `<a class="btn block" href="/dashboard/listings/${l.id}/edit">Edit listing</a>` : `${['active', 'reserved', 'sold'].includes(l.status) ? `<p style="margin:0 0 4px"><button class="btn ghost small" data-chat-start="${l.id}">Message seller</button></p>` : ''}<div class="buybox">
       ${avail ? (inCart ? '<a class="btn" href="/cart">In cart — view cart</a>' : `<button class="btn" data-cart-add="${l.id}" data-buy>Buy now</button><button class="btn ghost" data-cart-add="${l.id}">Add to cart</button>`) : `<button class="btn" disabled>${l.status === 'sold' ? 'Sold' : 'Unavailable'}</button>`}
       <button class="btn ghost${faved ? ' on' : ''}" style="flex:0" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')}</button></div>`}
     ${l.description ? `<h2>Description</h2><p style="white-space:pre-wrap">${esc(l.description)}</p>` : ''}

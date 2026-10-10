@@ -52,6 +52,11 @@
       try { await api('POST', '/api/cart', { listingId: Number(add.dataset.cartAdd) }); if (add.dataset.buy !== undefined) location.href = '/cart'; else { toast('Added to cart'); location.reload(); } }
       catch (e) { if (e.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname); else toast(e.message, true); }
     }
+    const chat = t.closest('[data-chat-start]');
+    if (chat) {
+      try { const d = await api('POST', '/api/chat/conversations', { listingId: Number(chat.dataset.chatStart) }); location.href = '/messages/' + d.id; }
+      catch (e) { if (e.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname); else toast(e.message, true); }
+    }
     const rm = t.closest('[data-cart-remove]');
     if (rm) { try { await api('DELETE', '/api/cart/' + rm.dataset.cartRemove); location.reload(); } catch (e) { toast(e.message, true); } }
     if (t.closest('[data-logout]')) { await api('POST', '/api/logout'); location.href = '/'; }

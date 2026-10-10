@@ -12,6 +12,7 @@ const ICONS = {
   bell: '<path d="M6 17V11a6 6 0 1 1 12 0v6l2 2H4zM10 21h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="M5 13l4 4L19 7"/>',
+  chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   truck: '<path d="M2 6h11v10H2zM13 10h4l4 3v3h-8"/><circle cx="7" cy="17" r="1.500"/><circle cx="17" cy="17" r="1.500"/>',
 };
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
@@ -34,12 +35,13 @@ function header(user, path, counts, wide) {
       <input id="hq" name="q" type="search" placeholder="Search brand, item, size…" autocomplete="off">
       <button aria-label="Search">${icon('search')}</button></form>
     <div class="actions">
-      ${user ? `<a class="iconlink" href="/favorites" aria-label="Favorites">${icon('heart')}</a>
+      ${user ? `<a class="iconlink" href="/messages" aria-label="Messages">${icon('chat')}<b class="badge" id="hdr-msg-badge"${counts.messages ? '' : ' hidden'}>${counts.messages || ''}</b></a>
+      <a class="iconlink" href="/favorites" aria-label="Favorites">${icon('heart')}</a>
       <a class="iconlink" href="/notifications" aria-label="Notifications">${icon('bell')}${counts.notifications ? `<b class="badge">${counts.notifications}</b>` : ''}</a>
       <details class="dd right"><summary class="iconlink" aria-label="Account">${icon('user')}</summary><div class="dd-menu">
         <span class="dd-title">${esc(user.display_name)}</span>
         <a href="/account">Account</a>${user.is_seller ? '<a href="/dashboard">Seller dashboard</a>' : ''}${user.is_admin ? '<a href="/admin">Admin</a>' : ''}
-        <a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
+        <a href="/messages">Messages</a><a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
       : `<a class="btn small ghost" href="/login">Log in</a><a class="btn small" href="/register">Sign up</a>`}
       <a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>
       <details class="dd right mobile-only"><summary class="iconlink" aria-label="Menu">${icon('menu')}</summary><div class="dd-menu">
@@ -54,6 +56,7 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
   const counts = user ? {
     cart: q.get('SELECT COUNT(*) n FROM cart_items WHERE user_id = ?', user.id).n,
     notifications: q.get('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id).n,
+    messages: require('./chat/service').unreadTotal(user.id),
   } : {};
   const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
