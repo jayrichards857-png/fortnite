@@ -1,0 +1,33 @@
+{
+  "name": "pairplug",
+  "version": "1.0.0",
+  "description": "PairPlug - secondhand marketplace for North America with escrow and a reseller dashboard",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "PAYMENTS_MODE=sandbox node --watch src/server.js",
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check.js",
+    "create-admin": "node scripts/create-admin.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "screenshots": "node scripts/screenshots.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jayrichards857-png/fortnite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jayrichards857-png/fortnite/issues"
+  },
+  "homepage": "https://github.com/jayrichards857-png/fortnite#readme",
+  "dependencies": {
+    "express": "^4.22.3"
+  },
+  "devDependencies": {
+    "playwright-core": "1.54"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  }
+}

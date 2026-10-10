@@ -1,0 +1,220 @@
+'use strict';
+const config = require('./config');
+const { q, tx, now } = require('./db');
+const { clean, cleanLine, dollarsToCents, HttpError } = require('./util');
+const { ownedUploads } = require('./images');
+const { notify } = require('./notify');
+
+const CATS = new Set(config.categories.map((c) => c[0]));
+const SELLER_STATUSES = new Set(['draft', 'active', 'archived']); // 'sold'/'reserved' are owned by the order system
+const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
+
+const IMG_SQL = `(SELECT file FROM listing_images WHERE listing_id = l.id ORDER BY position, id LIMIT 1) AS image`;
+const SELLER_SQL = `u.handle AS seller_handle, u.store_name AS seller_name, u.country AS seller_country, u.region AS seller_region, u.city AS seller_city`;
+
+/** Public marketplace search. Every filter becomes SQL; nothing is filtered client-side. */
+function searchListings(f) {
+  const where = ["l.status = 'active'"], p = [];
+  const terms = clean(f.q || '', 100).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
+  for (const t of terms) {
+    where.push(`(l.title LIKE ? ESCAPE '\\' OR l.brand LIKE ? ESCAPE '\\' OR l.category LIKE ? ESCAPE '\\' OR l.description LIKE ? ESCAPE '\\' OR l.size LIKE ? ESCAPE '\\')`);
+    const v = `%${likeEsc(t)}%`; p.push(v, v, v, v, v);
+  }
+  if (f.category && CATS.has(f.category)) { where.push('l.category = ?'); p.push(f.category); }
+  if (f.brand) { where.push('l.brand = ? COLLATE NOCASE'); p.push(f.brand); }
+  if (f.size) { where.push('l.size = ? COLLATE NOCASE'); p.push(f.size); }
+  if (f.condition && config.conditions[f.condition]) { where.push('l.condition = ?'); p.push(f.condition); }
+  if (f.seller) { where.push('u.handle = ? COLLATE NOCASE'); p.push(f.seller); }
+  const min = dollarsToCents(f.min), max = dollarsToCents(f.max);
+  if (min && !Number.isNaN(min)) { where.push('l.price_cents >= ?'); p.push(min); }
+  if (max && !Number.isNaN(max)) { where.push('l.price_cents <= ?'); p.push(max); }
+  const order = { price_asc: 'l.price_cents ASC, l.id DESC', price_desc: 'l.price_cents DESC, l.id DESC' }[f.sort] || 'l.published_at DESC, l.id DESC';
+  const perPage = 24, page = Math.max(1, parseInt(f.page, 10) || 1);
+  const from = `FROM listings l JOIN users u ON u.id = l.seller_id AND u.banned = 0 WHERE ${where.join(' AND ')}`;
+  const total = q.get(`SELECT COUNT(*) n ${from}`, ...p).n;
+  const items = q.all(`SELECT l.*, ${IMG_SQL}, ${SELLER_SQL} ${from} ORDER BY ${order} LIMIT ? OFFSET ?`, ...p, perPage, (page - 1) * perPage);
+  return { items, total, page, perPage, pages: Math.max(1, Math.ceil(total / perPage)) };
+}
+
+function facets() {
+  const col = (c) => q.all(`SELECT ${c} v, COUNT(*) n FROM listings WHERE status='active' AND ${c} IS NOT NULL AND ${c} <> '' GROUP BY ${c} COLLATE NOCASE ORDER BY n DESC, v LIMIT 30`).map((r) => r.v);
+  return { brands: col('brand'), sizes: col('size'),
+    categories: q.all("SELECT category v, COUNT(*) n FROM listings WHERE status='active' GROUP BY category").reduce((a, r) => ({ ...a, [r.v]: r.n }), {}) };
+}
+
+function getListing(id) {
+  const l = q.get(`SELECT l.*, ${SELLER_SQL}, u.bio AS seller_bio, u.created_at AS seller_since, u.plan AS seller_plan FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, id);
+  if (l) l.images = q.all('SELECT file FROM listing_images WHERE listing_id = ? ORDER BY position, id', id).map((r) => r.file);
+  return l;
+}
+
+function validateListing(body, { publish }) {
+  const errors = {};
+  const title = cleanLine(body.title, 120);
+  if (title.length < 3) errors.title = 'Enter a title (at least 3 characters).';
+  const category = String(body.category || '');
+  if (!CATS.has(category)) errors.category = 'Choose a category.';
+  const price = dollarsToCents(body.price);
+  if (price == null || Number.isNaN(price) || price < 100 || price > 1000000) errors.price = 'Enter a price between $1.00 and $10,000.00.';
+  const condition = body.condition || null;
+  if (publish && !config.conditions[condition]) errors.condition = 'Choose a condition.';
+  else if (condition && !config.conditions[condition]) errors.condition = 'Invalid condition.';
+  const cost = dollarsToCents(body.cost);
+  if (Number.isNaN(cost) || (cost != null && cost > 10000000)) errors.cost = 'Enter a valid cost, e.g. 12.50.';
+  const shipping = dollarsToCents(body.shipping) ?? 0;
+  if (Number.isNaN(shipping) || shipping > 100000) errors.shipping = 'Enter a shipping price up to $1,000.00.';
+  const num = (k, max) => { const v = body[k]; if (v === '' || v == null) return null; const n = Number(v); if (!(n > 0 && n <= max)) { errors[k] = 'Enter a positive number.'; return null; } return n; };
+  const weight_oz = num('weight_oz', 2400), length_in = num('length_in', 120), width_in = num('width_in', 120), height_in = num('height_in', 120);
+  const sku = cleanLine(body.sku, 60) || null;
+  const images = Array.isArray(body.images) ? body.images.slice(0, config.limits.maxImages) : [];
+  if (publish && images.length < 1) errors.images = 'Add at least one photo before publishing.';
+  if (publish && !(weight_oz > 0)) errors.weight_oz = 'Add a shipping weight so buyers can be charged correctly.';
+  if (Object.keys(errors).length) throw new HttpError(422, 'Please fix the highlighted fields.', errors);
+  return { title, description: clean(body.description, 4000), category, brand: cleanLine(body.brand, 60) || null, size: cleanLine(body.size, 30) || null,
+    condition, price_cents: price, cost_cents: cost, shipping_cents: shipping, sku, weight_oz, length_in, width_in, height_in, images };
+}
+
+function saveListing(user, id, body) {
+  const publish = body.status === 'active';
+  if (body.status && !SELLER_STATUSES.has(body.status)) throw new HttpError(422, 'Invalid status');
+  const v = validateListing(body, { publish });
+  const files = ownedUploads(user.id, v.images);
+  return tx(() => {
+    const t = now();
+    let cur = null;
+    if (id) {
+      cur = q.get('SELECT * FROM listings WHERE id = ?', id);
+      if (!cur || cur.seller_id !== user.id) throw new HttpError(404, 'Listing not found'); // 404 (not 403) so IDs of others' listings aren't confirmed
+      if (['sold', 'reserved'].includes(cur.status)) throw new HttpError(409, `This item is ${cur.status} and can't be edited.`);
+    }
+    if (v.sku) {
+      const dup = q.get('SELECT id FROM listings WHERE seller_id = ? AND sku = ? AND id <> ?', user.id, v.sku, id || 0);
+      if (dup) throw new HttpError(422, 'Please fix the highlighted fields.', { sku: 'You already use this SKU on another listing.' });
+    }
+    const status = body.status || (cur ? cur.status : 'draft');
+    const cols = ['title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
+    const vals = cols.map((c) => v[c]);
+    let listingId = id;
+    if (id) {
+      const published_at = status === 'active' && !cur.published_at ? t : cur.published_at;
+      q.run(`UPDATE listings SET ${cols.map((c) => c + ' = ?').join(', ')}, status = ?, published_at = ?, updated_at = ? WHERE id = ?`, ...vals, status, published_at, t, id);
+      if (cur.price_cents > v.price_cents && status === 'active') notifyPriceDrop(id, v.title, cur.price_cents, v.price_cents);
+    } else {
+      const r = q.run(`INSERT INTO listings(seller_id, ${cols.join(',')}, status, published_at, created_at, updated_at) VALUES(?, ${cols.map(() => '?').join(',')}, ?,?,?,?)`,
+        user.id, ...vals, status, status === 'active' ? t : null, t, t);
+      listingId = Number(r.lastInsertRowid);
+    }
+    q.run('DELETE FROM listing_images WHERE listing_id = ?', listingId);
+    files.forEach((f, i) => q.run('INSERT INTO listing_images(listing_id, file, position) VALUES(?,?,?)', listingId, f, i));
+    return q.get('SELECT * FROM listings WHERE id = ?', listingId);
+  });
+}
+
+function notifyPriceDrop(listingId, title, oldC, newC) {
+  const key = `listing:${listingId}:price:${newC}`;
+  for (const f of q.all('SELECT user_id FROM favorites WHERE listing_id = ?', listingId))
+    notify(f.user_id, key, 'Price drop on a saved item', `${title} dropped from $${(oldC / 100).toFixed(2)} to $${(newC / 100).toFixed(2)}.`, `/listing/${listingId}`);
+}
+
+function duplicateListing(user, id) {
+  return tx(() => {
+    const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
+    if (!l) throw new HttpError(404, 'Listing not found');
+    const t = now();
+    const r = q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, l.title + ' (copy)', l.description, l.category, l.brand, l.size, l.condition, l.price_cents, l.cost_cents, l.shipping_cents, l.weight_oz, l.length_in, l.width_in, l.height_in, t, t);
+    q.run('INSERT INTO listing_images(listing_id,file,position) SELECT ?, file, position FROM listing_images WHERE listing_id = ?', r.lastInsertRowid, id);
+    return Number(r.lastInsertRowid);
+  });
+}
+
+/**
+ * Bulk actions. Every id is checked for ownership and for a state that the *seller* may change.
+ * Items that are sold/reserved are skipped (reported back), since the order system owns those states.
+ */
+function bulkAction(user, { ids, action, status, price, percent }) {
+  if (!Array.isArray(ids) || !ids.length || ids.length > 500) throw new HttpError(422, 'Select between 1 and 500 listings.');
+  ids = ids.map(Number).filter(Number.isInteger);
+  return tx(() => {
+    const result = { updated: 0, skipped: [] };
+    for (const id of ids) {
+      const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
+      if (!l) { result.skipped.push({ id, reason: 'not found' }); continue; }
+      if (['sold', 'reserved'].includes(l.status)) { result.skipped.push({ id, reason: `${l.status} items can't be changed` }); continue; }
+      if (action === 'status') {
+        if (!SELLER_STATUSES.has(status)) throw new HttpError(422, 'Invalid status');
+        if (status === 'active') {
+          const hasImg = q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
+          if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
+        }
+        q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
+      } else if (action === 'price') {
+        let np;
+        if (percent != null) { const pc = Number(percent); if (!(pc >= -90 && pc <= 500)) throw new HttpError(422, 'Percent must be between -90 and 500'); np = Math.round(l.price_cents * (1 + pc / 100)); }
+        else { np = dollarsToCents(price); if (np == null || Number.isNaN(np)) throw new HttpError(422, 'Enter a valid price'); }
+        if (np < 100 || np > 1000000) { result.skipped.push({ id, reason: 'price out of range' }); continue; }
+        q.run('UPDATE listings SET price_cents = ?, updated_at = ? WHERE id = ?', np, now(), id);
+        if (np < l.price_cents && l.status === 'active') notifyPriceDrop(id, l.title, l.price_cents, np);
+      } else throw new HttpError(422, 'Unknown action');
+      result.updated++;
+    }
+    return result;
+  });
+}
+
+/** Minimal RFC4180 CSV parser (quotes, escaped quotes, CRLF). */
+function parseCsv(text) {
+  const rows = []; let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += c; }
+    else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); cur = ''; if (row.some((x) => x !== '')) rows.push(row); row = []; }
+    else cur += c;
+  }
+  row.push(cur); if (row.some((x) => x !== '')) rows.push(row);
+  return rows;
+}
+
+/**
+ * CSV import keyed on SKU. Existing SKUs get their price/cost/shipping/etc updated; unknown SKUs become
+ * *drafts* (photos can't come from a CSV, and publishing requires a photo). Never touches sold/reserved items.
+ */
+function importCsv(user, text) {
+  const rows = parseCsv(String(text || '').replace(/^﻿/, ''));
+  if (rows.length < 2) throw new HttpError(422, 'CSV needs a header row and at least one data row.');
+  if (rows.length - 1 > config.limits.csvRows) throw new HttpError(422, `Maximum ${config.limits.csvRows} rows per import.`);
+  const head = rows[0].map((h) => h.trim().toLowerCase());
+  if (!head.includes('sku')) throw new HttpError(422, 'CSV must have a "sku" column.');
+  const report = { created: 0, updated: 0, errors: [] };
+  tx(() => {
+    rows.slice(1).forEach((r, i) => {
+      const line = i + 2, rec = Object.fromEntries(head.map((h, j) => [h, (r[j] ?? '').trim()]));
+      try {
+        if (!rec.sku) throw new Error('sku is required');
+        const cur = q.get('SELECT * FROM listings WHERE seller_id = ? AND sku = ?', user.id, rec.sku);
+        if (cur && ['sold', 'reserved'].includes(cur.status)) throw new Error(`item is ${cur.status}`);
+        const merged = cur ? { title: cur.title, description: cur.description, category: cur.category, brand: cur.brand, size: cur.size, condition: cur.condition,
+          price: (cur.price_cents / 100).toFixed(2), cost: cur.cost_cents == null ? '' : (cur.cost_cents / 100).toFixed(2), shipping: (cur.shipping_cents / 100).toFixed(2),
+          weight_oz: cur.weight_oz, length_in: cur.length_in, width_in: cur.width_in, height_in: cur.height_in } : {};
+        for (const k of ['title', 'description', 'category', 'brand', 'size', 'condition', 'price', 'cost', 'shipping', 'weight_oz', 'length_in', 'width_in', 'height_in']) if (rec[k] !== undefined && rec[k] !== '') merged[k] = rec[k];
+        merged.sku = rec.sku;
+        const v = validateListing({ ...merged, images: [] }, { publish: false });
+        const t = now();
+        if (cur) {
+          q.run(`UPDATE listings SET title=?,description=?,category=?,brand=?,size=?,condition=?,price_cents=?,cost_cents=?,shipping_cents=?,weight_oz=?,length_in=?,width_in=?,height_in=?,updated_at=? WHERE id=?`,
+            v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.weight_oz, v.length_in, v.width_in, v.height_in, t, cur.id);
+          report.updated++;
+        } else {
+          q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,sku,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, rec.sku, v.weight_oz, v.length_in, v.width_in, v.height_in, t, t);
+          report.created++;
+        }
+      } catch (e) { report.errors.push({ line, error: e.fields ? Object.values(e.fields).join(' ') : e.message }); }
+    });
+  });
+  return report;
+}
+
+module.exports = { searchListings, facets, getListing, saveListing, duplicateListing, bulkAction, importCsv, parseCsv, validateListing, IMG_SQL, SELLER_SQL };
