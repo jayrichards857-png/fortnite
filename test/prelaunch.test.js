@@ -49,7 +49,11 @@ test('malformed settings can never widen access: inline comments, junk values, a
   assert.ok(cfgIn({ NODE_ENV: 'production', PUBLIC_URL: 'https://x.test', CHECKOUT_MODE: 'escrow' }).problems.some((p) => /CHECKOUT_MODE must be/.test(p)));
   // defaults: production => invite-only + loopback; development => open + all interfaces
   const prod = cfgIn({ NODE_ENV: 'production', PUBLIC_URL: 'https://x.test' }); assert.equal(prod.onb, 'invite'); assert.equal(prod.host, '127.0.0.1'); assert.deepEqual(prod.problems, []);
-  const dev = cfgIn({}); assert.equal(dev.onb, 'open'); assert.equal(dev.host, '0.0.0.0');
+  const dev = cfgIn({}); assert.equal(dev.onb, 'invite', 'invitation-only even in development unless explicitly opted out');
+  assert.equal(cfgIn({ SELLER_ONBOARDING: 'open' }).onb, 'open', 'explicit dev/test opt-out');
+  assert.equal(cfgIn({ NODE_ENV: 'production', PUBLIC_URL: 'https://x.test', SELLER_ONBOARDING: 'open' }).onb, 'invite', 'never open in production');
+  assert.ok(cfgIn({ NODE_ENV: 'production', PUBLIC_URL: 'https://x.test', SELLER_ONBOARDING: 'open' }).problems.some((p) => /not allowed in production/.test(p)), 'start-up refuses it outright');
+  assert.equal(prod.signups, 'open', 'buyer sign-up is open by default (buyer accounts only)'); assert.equal(dev.host, '0.0.0.0');
   assert.equal(cfgIn({ NODE_ENV: 'production', PUBLIC_URL: 'https://x.test', HOST: '0.0.0.0' }).host, '0.0.0.0', 'explicit opt-in still possible');
 });
 
@@ -87,12 +91,14 @@ async function inviteBuyer(base, adminCookie, email) {
 
 test('production process: DB, sessions and uploaded photos survive a restart; cookie flags; closed sign-ups; loopback-only bind', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-prod-')), port = await free();
-  const env = { PORT: String(port), PAIRPLUG_DB: path.join(dir, 'p.db'), PAIRPLUG_UPLOADS: path.join(dir, 'up') };
+  const env = { PORT: String(port), PAIRPLUG_DB: path.join(dir, 'p.db'), PAIRPLUG_UPLOADS: path.join(dir, 'up'), SIGNUPS: 'closed' };
   adminScript({ ...env, PUBLIC_URL: 'https://beta.example.test' }, { ADMIN_EMAIL: 'boss@example.test', ADMIN_PASSWORD: 'a-long-admin-password' });
   const base = `http://127.0.0.1:${port}`;
   let { p, out } = await startProd(env);
   try {
     assert.match(out, /bound to 127\.0\.0\.1:/);
+    // the development email preview does not exist in a production process, even for an administrator
+    { const ck = await loginAdmin(base); assert.equal((await pf(base + '/dev/emails', { headers: { cookie: ck } })).status, 404); }
     // public sign-up is closed: the page says Coming soon, the API refuses, no account appears
     assert.match(await (await pf(base + '/register')).text(), /Coming soon/);
     const closed = await pf(base + '/api/register', { method: 'POST', headers: J, body: JSON.stringify({ email: 'walkin@example.test', display_name: 'Walk In', password: 'a-long-password-1' }) });
@@ -147,7 +153,7 @@ test('create-admin: creates a working admin, promotes an existing user, rejects 
   const run = (extra) => { try { return { code: 0, out: execFileSync(process.execPath, ['scripts/create-admin.js'], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; } catch (e) { return { code: e.status, out: String(e.stderr) }; } };
   assert.equal(run({ ADMIN_EMAIL: 'boss@example.test', ADMIN_PASSWORD: 'short' }).code, 1);
   assert.equal(run({}).code, 1);
-  const ok = run({ ADMIN_EMAIL: 'Boss@Example.test', ADMIN_PASSWORD: 'a-long-admin-password' }); assert.equal(ok.code, 0); assert.match(ok.out, /Admin created/);
+  const ok = run({ ADMIN_EMAIL: 'Boss@Example.test', ADMIN_PASSWORD: 'a-long-admin-password' }); assert.equal(ok.code, 0); assert.match(ok.out, /Administrator account: boss@example\.test/);
   assert.doesNotMatch(ok.out, /a-long-admin-password/, 'password is never echoed');
   const { p } = await startProd({ ...env, PORT: String(port) });
   try {
@@ -161,9 +167,10 @@ test('create-admin: creates a working admin, promotes an existing user, rejects 
     const u = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: path2.split('/').pop(), display_name: 'Normal', password: 'a-long-password-1' }) });
     assert.equal((await pf(base + '/admin', { headers: { cookie: u.headers.get('set-cookie').split(';')[0] } })).status, 403);
   } finally { await stopProc(p); }
-  // promoting an existing account
+  // recovery: reset sets a new operator-chosen password for the existing administrator (full coverage in test/admin.test.js)
   await new Promise((r) => setTimeout(r, 100));
-  assert.match(run({ ADMIN_EMAIL: 'boss@example.test', ADMIN_PASSWORD: 'another-long-password' }).out, /promoted/);
+  const reset = execFileSync(process.execPath, ['scripts/create-admin.js', 'reset', '--email', 'boss@example.test'], { cwd: ROOT, env: { ...env, ADMIN_PASSWORD: 'another-long-password' }, encoding: 'utf8' });
+  assert.match(reset, /Administrator account: boss@example\.test/); assert.doesNotMatch(reset, /another-long-password/);
 });
 
 // ------------------------------------------------------------------ direct-checkout defects found in review

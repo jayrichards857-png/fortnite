@@ -48,10 +48,11 @@ sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo nano /etc/caddy/Caddyfile 
 sudo cp deploy/pairplug-backup.cron /etc/cron.d/pairplug-backup
 # 5. Check
 curl -s https://YOUR-SITE-ADDRESS/healthz
-# 6. Create the admin account (as the service user so DB file ownership stays correct; type the password, don't paste it into shared logs)
-sudo -u pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; cd /opt/pairplug; ADMIN_EMAIL=you@example.com ADMIN_PASSWORD="CHOOSE-A-LONG-PASSWORD" node scripts/create-admin.js'
+# 6. Create the admin account (as the service user so DB file ownership stays correct). It prints a random temporary password ONCE; change it at first login.
+sudo -u pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; cd /opt/pairplug; node scripts/create-admin.js setup --email you@example.com'
+# later: `status` shows who the admin is; `reset --email you@example.com` issues a new temporary password (the old one is not recoverable)
 ```
-In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `PAYMENTS_MODE=sandbox` is set, if `CHECKOUT_MODE=platform` has no payment provider, if `SELLER_ONBOARDING`/`CHECKOUT_MODE` hold an unrecognised value, or if any setting contains an inline ` # comment`. Public sign-ups are **closed by default in production** (`SIGNUPS=closed`, visitors see “Coming soon”), seller onboarding is invitation-only, `HOST` defaults to 127.0.0.1, and requests whose `Host` header isn't the `PUBLIC_URL` host are rejected (421).
+In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `PAYMENTS_MODE=sandbox` is set, if `CHECKOUT_MODE=platform` has no payment provider, if `SELLER_ONBOARDING`/`CHECKOUT_MODE` hold an unrecognised value, or if any setting contains an inline ` # comment`. Buyer sign-up is **open by default** (it creates buyer accounts only; `SIGNUPS=closed` pauses it), the public **Sell** page is “Coming Soon!” for everyone but approved sellers, seller onboarding is invitation-only and refused outright if `SELLER_ONBOARDING=open` is set in production, `HOST` defaults to 127.0.0.1, and requests whose `Host` header isn't the `PUBLIC_URL` host are rejected (421).
 
 ## 4. Backups and recovery
 * Daily cron runs `scripts/backup.js`: a transactionally-consistent `VACUUM INTO` snapshot (integrity-checked, files `0600`, directories `0700`), new photos copied incrementally, newest 14 snapshots kept, in `/var/backups/pairplug`.

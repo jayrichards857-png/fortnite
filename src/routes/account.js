@@ -19,20 +19,22 @@ const noStore = (res) => res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy
 const ipKey = (req, k) => `${k}:${req.ip}`;
 
 // ---------- Closed sign-ups: "Coming soon" ----------
-const soon = () => V.comingSoon();
+const soon = (kind) => V.comingSoon(kind);
 r.get('/register', (req, res, next) => {
   if (config.signups === 'open') return next();
   if (req.user) return res.redirect('/');
-  page(req, res, { title: 'Coming soon', body: soon() });
+  page(req, res, { title: 'Coming soon', body: soon('signup') });
 });
 r.post('/api/register', (req, res, next) => {
   if (config.signups === 'open') return next();
-  res.status(403).json({ error: `Sign-ups are closed during the private beta. Selling available ${V.releaseText()}.` });
+  res.status(403).json({ error: 'Sign-ups are paused during the private beta.' });
 });
-// Selling: invitation-only. (Open self-service onboarding exists only when SELLER_ONBOARDING=open, i.e. development/test.)
+// Selling: invitation-only. Everyone except an approved seller sees the Coming Soon page (admins included: they invite sellers from /admin/invitations).
+// Open self-service onboarding exists only when a developer/test sets SELLER_ONBOARDING=open outside production.
 r.get('/sell', (req, res, next) => {
   if ((req.user && req.user.is_seller) || config.sellerOnboarding === 'open') return next();
-  page(req, res, { title: 'Selling — coming soon', path: '/sell', body: soon() });
+  const admin = req.user && req.user.is_admin ? '<div class="panel notice" style="max-width:560px;margin:12px auto"><strong>Administrator:</strong> sellers join by invitation. <a href="/admin/invitations">Invite a seller</a> (max 3 during the beta).</div>' : '';
+  page(req, res, { title: 'Selling — Coming Soon', path: '/sell', body: soon('sell') + admin });
 });
 r.post('/api/sell/onboard', auth.requireUser, (req, res) => {
   if (config.sellerOnboarding !== 'open') throw new HttpError(403, 'Seller accounts are by invitation only during the private beta.');
@@ -74,7 +76,8 @@ r.post('/api/invitations/accept', (req, res) => {
 });
 
 // ---------- Email verification ----------
-const deliveryNote = () => (email.isConfigured() ? 'We sent you an email.' : 'Email delivery is not configured on this server yet, so no email could be sent. Contact the PairPlug team to finish verification.');
+const devPreview = !config.isProd && !email.isConfigured();      // local development only: there is no switch that enables this in production
+const deliveryNote = () => (email.isConfigured() ? 'We sent you an email.' : devPreview ? 'Development mode: no email was sent. Open the recorded message at /dev/emails and use its link.' : 'Email delivery is not configured on this server yet, so no email could be sent. Contact the PairPlug team to finish verification.');
 r.get('/verify-email', (req, res) => {
   noStore(res);
   const t = String(req.query.token || '');
@@ -96,13 +99,26 @@ r.get('/confirm-email-change', (req, res) => {
 });
 r.post('/api/email/confirm-change', (req, res) => { auth.rateLimit(ipKey(req, 'verify'), 30, 3600); tokens.confirmEmailChange(String(req.body.token || '')); res.json({ ok: true }); });
 
+// ---------- Local development only: read the emails that were RECORDED instead of sent ----------
+// Not a verification bypass: the link inside still has to be opened and confirmed, exactly like a real email. Falls through to 404 in production
+// and whenever a real email provider is configured. A user sees only messages addressed to their own email; admins see all.
+r.get('/dev/emails', auth.requireUser, (req, res, next) => {
+  if (config.isProd || email.isConfigured()) return next();
+  noStore(res);
+  const rows = req.user.is_admin ? q.all('SELECT * FROM email_outbox ORDER BY id DESC LIMIT 30') : q.all('SELECT * FROM email_outbox WHERE lower(to_email) = lower(?) ORDER BY id DESC LIMIT 30', req.user.email);
+  const linkify = (t) => esc(t).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
+  page(req, res, { title: 'Development emails', body: `<h1>Development email preview</h1><div class="panel notice small"><strong>Local development only.</strong> No email provider is configured, so messages are recorded here instead of being sent. This page does not exist in production.</div>
+    ${rows.length ? rows.map((m) => `<div class="panel"><div class="muted small">${esc(new Date(m.created_at * 1000).toISOString().slice(0, 16).replace('T', ' '))} · to ${esc(m.to_email)} · ${esc(m.kind)}</div><h3>${esc(m.subject)}</h3><pre style="white-space:pre-wrap;margin:0;font:inherit">${linkify(m.body)}</pre></div>`).join('') : V.empty('No recorded emails', 'Use “Send verification email” on your Account page, then come back here.', ['/account', 'Account'])}` });
+});
+
 // ---------- Account page ----------
 r.get('/account', auth.requireUser, (req, res) => {
   const u = req.user, verified = Boolean(u.email_verified_at);
-  const body = `<h1>Account</h1><div class="two"><section>
+  const forced = u.must_change_password ? '<div class="form-err" role="alert"><strong>Your password is temporary.</strong> Choose a new one below before doing anything else.</div>' : '';
+  const body = `<h1>Account</h1>${forced}<div class="two"><section>
     <form class="panel" data-api="/api/account" data-method="PATCH"><h3>Profile</h3><label for="dn">Name</label><input id="dn" name="display_name" value="${esc(u.display_name)}" required><button class="btn" type="submit" style="margin-top:12px">Save</button></form>
     <div class="panel"><h3>Email</h3><p style="margin:0 0 8px">${esc(u.email)} ${verified ? '<span class="pill s-active">Verified</span>' : '<span class="pill s-pending_payment">Not verified</span>'}</p>
-      ${verified ? '' : `<p class="small">${u.is_seller ? '<strong>Sellers must verify their email before publishing listings or receiving orders.</strong> ' : ''}<button class="btn small" data-post="/api/email/resend">Send verification email</button></p>${email.isConfigured() ? '' : '<p class="small muted">Email delivery is not configured on this server yet. The PairPlug team can complete verification with you.</p>'}`}
+      ${verified ? '' : `<p class="small">${u.is_seller ? '<strong>Sellers must verify their email before publishing listings or receiving orders.</strong> ' : ''}<button class="btn small" data-post="/api/email/resend">Send verification email</button></p>${email.isConfigured() ? '' : `<p class="small muted">${devPreview ? 'Development mode: no email provider is configured. <a href="/dev/emails">Open recorded emails</a> (local only).' : 'Email delivery is not configured on this server yet. The PairPlug team can complete verification with you.'}</p>`}`}
       <form data-api="/api/account/email" data-method="POST" style="margin-top:12px"><label for="ne">Change email</label><input id="ne" name="email" type="email" required><label for="cp">Current password</label><input id="cp" name="password" type="password" autocomplete="current-password" required><button class="btn ghost small" type="submit" style="margin-top:10px">Change email</button></form></div>
     <form class="panel" data-api="/api/account/password" data-method="POST"><h3>Password</h3><label for="p0">Current password</label><input id="p0" name="current" type="password" autocomplete="current-password" required>
       <label for="p1">New password <span class="opt">(8+ characters)</span></label><input id="p1" name="next" type="password" autocomplete="new-password" minlength="8" required><button class="btn" type="submit" style="margin-top:12px">Change password</button><p class="small muted">Changing your password signs you out everywhere else.</p></form></section>
@@ -123,7 +139,8 @@ r.post('/api/account/password', auth.requireUser, (req, res) => {
   if (!auth.verifyPassword(String(req.body.current || ''), req.user.password_hash)) throw new HttpError(403, 'Your current password is incorrect.');
   const pw = String(req.body.next || '');
   if (pw.length < 8 || pw.length > 200) throw new HttpError(422, 'Please fix the highlighted fields.', { next: 'Use at least 8 characters.' });
-  tx(() => { q.run('UPDATE users SET password_hash = ? WHERE id = ?', auth.hashPassword(pw), req.user.id); auth.destroyOtherSessions(req, req.user.id); });
+  if (pw === String(req.body.current || '')) throw new HttpError(422, 'Please fix the highlighted fields.', { next: 'Choose a password different from the current one.' });
+  tx(() => { q.run('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', auth.hashPassword(pw), req.user.id); auth.destroyOtherSessions(req, req.user.id); });
   audit(req.user, 'password_changed', { type: 'user', id: req.user.id });
   res.json({ ok: true, message: 'Password changed. Other devices were signed out.' });
 });

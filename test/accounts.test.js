@@ -21,11 +21,11 @@ const body = () => ({ title: 'Wool sweater', category: 'clothing', condition: 'g
 
 test('with no email provider nothing is claimed as sent: messages are only recorded in the outbox', async () => {
   const s = await unverifiedSeller();
-  const r = await s.post('/api/email/resend'); assert.equal(r.status, 200); assert.match(r.json.message, /not configured/i);
+  const r = await s.post('/api/email/resend'); assert.equal(r.status, 200); assert.match(r.json.message, /no email was sent/i);
   const m = lastMail(s.email, 'verify_email');
   assert.equal(m.status, 'not_configured'); assert.equal(m.provider, null); assert.equal(m.sent_at, null);
   assert.match(m.body, /\/verify-email\?token=/);
-  assert.match((await s.get('/account')).text, /Email delivery is not configured/);
+  assert.match((await s.get('/account')).text, /no email provider is configured/);
 });
 
 test('verification tokens: hashed at rest, GET never consumes, single use, expiring, one generic error', async () => {

@@ -43,6 +43,13 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     await v.pg.goto(B + '/sell'); assert.match(await v.pg.textContent('body'), /Coming soon/i); await shot(v.pg, 'final-01-coming-soon.png');
     assert.equal((await api(v.ctx, 'POST', '/api/register', { email: 'x@x.test', display_name: 'X', password: 'a-long-password-1' })).status, 403);
     assert.notEqual((await api(v.ctx, 'POST', '/api/sell/onboard', { store_name: 'X', handle: 'xxx' })).status, 200);
+    // Sell link from the real navigation, desktop + phone width, and the auth screens
+    await v.pg.goto(B + '/shop'); await Promise.all([v.pg.waitForURL(B + '/sell'), v.pg.click('nav.nav a[href="/sell"]')]);
+    assert.match(await v.pg.textContent('main'), /Coming Soon!/); assert.equal(await v.pg.locator('input[name=store_name]').count(), 0);
+    const ph = await mk({ width: 375, height: 760 });
+    for (const [p, shotName] of [['/sell', 'final-01b-sell-mobile.png'], ['/login', 'final-01c-login-mobile.png'], ['/register', 'final-01d-register-mobile.png']]) {
+      await ph.pg.goto(B + p); const over = await ph.pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth); assert.ok(over <= 1, `${p} overflows by ${over}px`); await shot(ph.pg, shotName);
+    }
     step('1. public sign-up and seller onboarding are closed; "Coming soon" with release date');
 
     // ---- 2. admin invites four sellers + a buyer; the 4th seller invitation is refused (cap 3)
@@ -116,7 +123,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     await s1.pg.goto(`${B}/dashboard/orders/${orderId}`); await s1.pg.check('input[name=confirm_refunded]'); await s1.pg.click('text=Report refund sent'); await s1.pg.waitForLoadState('networkidle');
     await b.pg.goto(`${B}/orders/${orderId}`); t = await b.pg.textContent('main'); assert.match(t, /seller says they refunded you/i); assert.doesNotMatch(await b.pg.textContent('h1'), /refunded/i, 'not refunded until the buyer confirms');
     await shot(b.pg, 'final-07-refund-confirm.png');
-    b.pg.once('dialog', (d) => d.accept()); await b.pg.click('text=Yes, I received the refund'); await b.pg.waitForLoadState('networkidle'); await b.pg.reload();
+    b.pg.once('dialog', (d) => d.accept()); await b.pg.click('text=Yes, I received the refund'); await b.pg.waitForTimeout(800); await b.pg.goto(`${B}/orders/${orderId}`);
     assert.match(await b.pg.textContent('h1'), /refunded/i); step('7. direct checkout: seller-confirmed payment, shipped w/ note, refund only completed by buyer confirmation');
 
     // ---- 8. sold / unavailable listing cannot start another order

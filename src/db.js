@@ -451,6 +451,10 @@ CREATE TRIGGER sellers_cap_update BEFORE UPDATE OF is_seller ON users
   WHEN NEW.is_seller = 1 AND OLD.is_seller = 0 AND (SELECT COUNT(*) FROM users WHERE is_seller = 1) >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'seller_cap'), 3)
   BEGIN SELECT RAISE(ABORT, 'seller cap reached'); END;
 `,
+// 5: administrator setup/reset — a CLI-issued temporary password must be changed at first login. Additive; existing users are unaffected (0).
+`
+ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+`,
 ];
 
 function migrate() {

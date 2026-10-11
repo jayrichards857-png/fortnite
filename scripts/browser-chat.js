@@ -11,7 +11,7 @@ const { png } = require('./png');
 
 const SHOTS = process.argv.includes('--screenshots'), OUT = path.resolve(__dirname, '..', 'artifacts', 'screenshots');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-chat-')), PORT = 3420, B = `http://localhost:${PORT}`;
-const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'c.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', RATE_LIMIT_SCALE: '100' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'c.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', RATE_LIMIT_SCALE: '100' }, stdio: ['ignore', 'pipe', 'inherit'] });
 const ready = new Promise((r) => server.stdout.on('data', (d) => String(d).includes('listening') && r()));
 const step = (m) => console.log('•', m);
 

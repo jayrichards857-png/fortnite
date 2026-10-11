@@ -7,17 +7,17 @@
 | Confirms the payment arrived | **The seller**, on PairPlug (`/dashboard/orders/<id>`). PairPlug can't verify it. Until then the order reads *Awaiting payment confirmation*. |
 | Refunds, returns, chargebacks, payment disputes, sales tax, Stripe fees | **The seller and their payment provider.** PairPlug does not refund or guarantee payments. It records the request, what each side *says*, and the founder can review evidence and act on listings/accounts. |
 | Buys the shipping label | **The seller**, outside PairPlug. Seller enters carrier + tracking (+ optional note). Tracking is not proof of delivery or contents. |
-| Account creation | **The founder**, by invitation only. Nobody can sign up on their own; the public site says “Coming soon”. |
+| Account creation | **Buyers** sign up themselves (buyer rights only). **Sellers** exist only by the founder's invitation (max 3); everyone else sees “Coming Soon!” on the Sell page. |
 | Escrow / “payment protection” | **Not provided.** |
 
 ## Response expectation (policy)
 Sellers are *expected* to reply to buyer messages within **48 hours**. This is shown to buyers and sellers as an expectation, **not a guarantee**. Conversations whose last message is from a buyer and older than 48h appear on **Admin → Response times** (seller and elapsed time only, no message text). Use it to check in with a seller. Nothing is penalised automatically.
 
 ## Onboarding the first seller (step by step)
-1. Confirm `PUBLIC_RELEASE_DATE` and `SUPPORT_EMAIL` in `/etc/pairplug.env`, restart. Create your admin account (DEPLOYMENT.md §3).
+1. Confirm `PUBLIC_RELEASE_DATE` and `SUPPORT_EMAIL` in `/etc/pairplug.env`, restart. Create your admin account: `node scripts/create-admin.js setup --email you@example.com` (prints a one-time temporary password; you must change it at first login; lost it? `reset`).
 2. **Admin → Invitations**: role *Seller*, their email → copy the link **once** (only a hash is stored) and send it to them yourself. It is single-use, bound to that email, expires in 7 days, and reserves one of the 3 seller slots.
 3. The seller opens the link, picks a password, store name, handle, and agrees to the terms → logged in.
-4. **Email verification.** Without an email provider nothing is sent. Open **Admin → Email outbox**, copy the seller's verification link and give it to them (the page is audited). They open it and press *Confirm email*. Sellers who are not verified can't publish or receive new orders.
+4. **Email verification.** *Configure real email delivery first* (DEPLOYMENT.md / `deploy/pairplug.env.example`: Resend account, verified domain, `EMAIL_PROVIDER`, `EMAIL_FROM`, `EMAIL_API_KEY`) and test one real send — it has never been verified live. Without a provider nothing is sent (locally you can read recorded messages at `/dev/emails`). Open **Admin → Email outbox**, copy the seller's verification link and give it to them (the page is audited). They open it and press *Confirm email*. Sellers who are not verified can't publish or receive new orders.
 5. Seller: **Storefront** → add images/theme/announcement → *Save draft* → *Preview* → *Publish*.
 6. Seller: **New listing**. A payment link is optional: without one, buyers can only **Contact seller**. To enable **Buy now**, create a Stripe Payment Link for exactly *item price + shipping* (Payment Links have a fixed price) and paste it. Links are validated for format and host only — **PairPlug cannot tell who owns a link or whether its amount matches**. Check it yourself before announcing; if the seller later changes or deletes the link, existing orders keep the link they were created with (see stale-link note below).
 7. **Test contact**: from a second account (buyer invitation) message the seller from the listing and confirm they see it with the “Awaiting your reply” indicator.

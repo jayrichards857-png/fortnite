@@ -13,7 +13,7 @@ const { png } = require('./png');
 const SHOTS = process.argv.includes('--screenshots'), OUT = path.resolve(__dirname, '..', 'artifacts', 'screenshots');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-beta-')), PORT = 3430, B = `http://localhost:${PORT}`;
 const photo = path.join(tmp, 'photo.png'); fs.writeFileSync(photo, png(300, 380, (x, y) => [120 + (y >> 5), 100, 90 + (x >> 4)]));
-const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'b.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), RATE_LIMIT_SCALE: '100', PAYMENTS_MODE: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'b.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), RATE_LIMIT_SCALE: '100', PAYMENTS_MODE: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
 const ready = new Promise((r) => server.stdout.on('data', (d) => String(d).includes('listening') && r(String(d))));
 const step = (m) => console.log('•', m);
 const LINK = 'https://buy.stripe.com/test_beta_journey_123';

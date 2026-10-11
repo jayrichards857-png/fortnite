@@ -171,19 +171,19 @@ test('Coming soon: closed sign-ups show the release date, create nothing, but lo
   try {
     const anon = new H.Client(), before = q.get('SELECT COUNT(*) n FROM users').n;
     const reg = await anon.get('/register'); assert.equal(reg.status, 200);
-    assert.match(reg.text, /Coming soon/); assert.match(reg.text, /Selling available <strong>November 1, 2026<\/strong>/);
+    assert.match(reg.text, /Coming soon/i); assert.match(reg.text, /Selling available <strong>November 1, 2026<\/strong>/);
     const api = await anon.post('/api/register', { email: 'closed@x.test', display_name: 'Closed', password: 'a-long-password-1' });
-    assert.equal(api.status, 403); assert.match(api.json.error, /closed/i); assert.match(api.json.error, /November 1, 2026/);
+    assert.equal(api.status, 403); assert.match(api.json.error, /paused/i);
     assert.equal(q.get('SELECT COUNT(*) n FROM users').n, before); assert.equal(q.get("SELECT COUNT(*) n FROM users WHERE email = 'closed@x.test'").n, 0);
-    const sell = await anon.get('/sell'); assert.match(sell.text, /Coming soon/); assert.match(sell.text, /November 1, 2026/);
-    const home = (await anon.get('/')).text; assert.match(home, /Coming soon/); assert.doesNotMatch(home, />Sign up</);
+    const sell = await anon.get('/sell'); assert.match(sell.text, /Coming soon/i); assert.match(sell.text, /November 1, 2026/);
+    const home = (await anon.get('/')).text; assert.match(home, /Coming soon/i); assert.doesNotMatch(home, />Sign up</);
     // existing users can still log in; a logged-in buyer gets the same Coming-soon page for /sell and cannot open a store
     const existing = q.get("SELECT email FROM users WHERE email = 'newbuyer@x.test'");
     assert.equal((await anon.post('/api/login', { email: existing.email, password: 'a-long-password-1' })).status, 200);
-    assert.match((await anon.get('/sell')).text, /Coming soon/);
+    assert.match((await anon.get('/sell')).text, /Coming soon/i);
     assert.equal((await anon.post('/api/sell/onboard', { store_name: 'S', handle: 'nopeshop', country: 'US', region: 'NY', city: 'B', agree: true })).status, 403);
     // without a configured date we say "very soon" instead of inventing one
-    config.releaseDate = ''; assert.match((await new H.Client().get('/register')).text, /Selling available <strong>very soon<\/strong>/);
+    config.releaseDate = ''; assert.match((await new H.Client().get('/register')).text, /Selling opens very soon/);
   } finally { config.signups = prevS; config.releaseDate = prevD; config.sellerOnboarding = prevO; }
 });
 

@@ -70,7 +70,48 @@ r.get('/admin/users', A, (req, res) => {
   const us = q.all(`SELECT * FROM users WHERE email LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\' OR handle LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 100`, t, t, t);
   page(req, res, { title: 'Users', body: `<h1>Users</h1><form class="filterbar"><input type="search" name="q" placeholder="Search email, name, handle" value="${esc(f)}" aria-label="Search users"><button class="btn ghost small">Search</button></form>
   <div class="tablewrap"><table><thead><tr><th>User</th><th>Role</th><th>Plan</th><th>Joined</th><th>Actions</th></tr></thead><tbody>${us.map((u) => `<tr><td>${esc(u.display_name)}<div class="muted small">${esc(u.email)}</div></td><td>${[u.is_admin && 'admin', u.is_seller && 'seller'].filter(Boolean).join(', ') || 'buyer'}${u.banned ? ' <span class="pill s-disputed">banned</span>' : ''}</td><td>${u.plan}</td><td>${date(u.created_at)}</td>
-    <td>${u.id === req.user.id ? '—' : `<button class="btn ghost small" data-post="/api/admin/users/${u.id}/ban" data-body='{"banned":${!u.banned}}'>${u.banned ? 'Unban' : 'Ban'}</button> ${u.is_seller ? `<button class="btn ghost small" data-post="/api/admin/users/${u.id}/plan" data-body='{"plan":"${u.plan === 'pro' ? 'standard' : 'pro'}"}'>Make ${u.plan === 'pro' ? 'Standard' : 'Pro'}</button>` : ''}`}</td></tr>`).join('')}</tbody></table></div>` });
+    <td>${u.id === req.user.id ? '—' : `<button class="btn ghost small" data-post="/api/admin/users/${u.id}/ban" data-body='{"banned":${!u.banned}}'>${u.banned ? 'Unban' : 'Ban'}</button> ${u.is_seller ? `<a class="btn ghost small" href="/admin/sellers">Manage seller access</a>` : (u.is_admin ? '' : `<button class="btn ghost small" data-seller-invite="${u.id}" data-email="${esc(u.email)}">Invite as seller</button>`)} <button class="btn ghost small" data-admin-role="${u.id}" data-make="${!u.is_admin}" data-email="${esc(u.email)}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+  <p class="small muted">Seller access is invitation-only and limited to ${invitations.slots().cap} accounts: “Invite as seller” creates a single-use invitation for that person's email (it uses one slot). Revoking or suspending sellers is on the Sellers page. Admin role changes ask for your password and are audit-logged.</p>
+  <script>
+  document.addEventListener('click',async e=>{
+    const inv=e.target.closest('[data-seller-invite]'),role=e.target.closest('[data-admin-role]');
+    try{
+      if(inv){if(!confirm('Create a seller invitation for '+inv.dataset.email+'? It reserves one of the seller slots.'))return;
+        const r=await pp.api('POST','/api/admin/users/'+inv.dataset.sellerInvite+'/seller-invite',{});
+        prompt('Copy this invitation link now. It will not be shown again:',r.link)}
+      if(role){const make=role.dataset.make==='true';
+        if(!confirm((make?'Give ADMINISTRATOR access to ':'Remove administrator access from ')+role.dataset.email+'?'))return;
+        const pw=prompt('Confirm with YOUR password:');if(!pw)return;
+        await pp.api('POST','/api/admin/users/'+role.dataset.adminRole+'/admin',{admin:make,password:pw});location.reload()}
+    }catch(x){alert(x.message)}
+  });
+  </script>` });
+});
+// Administrator role changes: re-authenticate with the acting admin's own password; never yourself; never the last administrator. Always audited.
+r.post('/api/admin/users/:id(\\d+)/admin', A, (req, res) => {
+  auth.rateLimit(`admin-role:${req.user.id}`, 10, 3600);
+  const id = Number(req.params.id), make = req.body.admin === true;
+  if (!auth.verifyPassword(String(req.body.password || ''), req.user.password_hash)) throw new HttpError(403, 'Your password is incorrect.');
+  if (id === req.user.id) throw new HttpError(400, "You can't change your own administrator role.");
+  tx(() => {
+    const t = q.get('SELECT id, is_admin, banned FROM users WHERE id = ?', id);
+    if (!t) throw new HttpError(404, 'User not found');
+    if (Boolean(t.is_admin) === make) throw new HttpError(409, make ? 'Already an administrator.' : 'Not an administrator.');
+    if (!make && q.get('SELECT COUNT(*) n FROM users WHERE is_admin = 1').n <= 1) throw new HttpError(409, 'There must always be at least one administrator.');
+    if (make && t.banned) throw new HttpError(409, 'Unban this account before making it an administrator.');
+    q.run('UPDATE users SET is_admin = ? WHERE id = ?', make ? 1 : 0, id);
+    audit(req.user, make ? 'admin_granted' : 'admin_revoked', { type: 'user', id });
+  });
+  res.json({ ok: true });
+});
+// "Approve seller access": issues the normal single-use invitation (so the cap, expiry and slot reservation all apply). The link is returned once.
+r.post('/api/admin/users/:id(\\d+)/seller-invite', A, (req, res) => {
+  auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
+  const u = q.get('SELECT id, email, is_seller FROM users WHERE id = ?', Number(req.params.id));
+  if (!u) throw new HttpError(404, 'User not found');
+  if (u.is_seller) throw new HttpError(409, 'Already a seller.');
+  const out = invitations.create(req.user, { kind: 'seller', email: u.email, note: 'Created from Users page' });
+  res.set('Cache-Control', 'no-store').json({ ok: true, link: out.link, expiresAt: out.expiresAt });
 });
 r.post('/api/admin/users/:id(\\d+)/ban', A, (req, res) => {
   const id = Number(req.params.id); if (id === req.user.id) throw new HttpError(400, "You can't ban yourself.");

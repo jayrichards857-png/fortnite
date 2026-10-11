@@ -20,7 +20,17 @@ server-rendered pages with a little vanilla JS. Runtime dependencies: `express`,
 | PairPlug fees? | None in the beta. |
 | Is the Stripe link flow verified live? | **No.** The server side (validation, redirect, `client_reference_id=PP-<order>` parameter, seller confirmation) is tested; **no real Stripe payment has been made.** Do a real test purchase first. |
 
-**Invite-only, closed sign-ups.** Nobody can create an account on their own: `/register` and `/sell` show **“Coming soon — selling available <release date>”**. People join through single-use, expiring, hashed invitations issued by the admin. At most **3 seller accounts** exist (enforced in SQLite triggers, race-tested). `PUBLIC_RELEASE_DATE` is a **placeholder in the deployment example — the founder must confirm the real date**.
+**Access model (private beta).** Anyone can browse and **sign up as a buyer** (buyer accounts never grant seller or admin rights and do not count toward the seller limit). **Selling is invitation-only**: the public **Sell** link opens a “Coming Soon!” page for everyone except approved sellers, and the onboarding API refuses everyone else on the server. Sellers join only through single-use, expiring, hashed invitations issued by the admin, and at most **3 seller accounts** can exist (enforced in SQLite triggers, race-tested). Set `SIGNUPS=closed` to pause buyer sign-up too. `PUBLIC_RELEASE_DATE` is a **placeholder in the deployment example — confirm the real date** (leave it unset to show “Selling opens very soon”).
+
+### Administrator login (local or server)
+There is exactly one kind of account that can open `/admin`: an **administrator**. It is created from the command line, never from the website, and its password is never stored or shown (only a scrypt hash is kept).
+```bash
+npm run admin:status                                  # who is the administrator? (emails only; no passwords exist to show)
+npm run admin:setup -- --email you@example.com        # first run: creates the admin and prints a random TEMPORARY password ONCE
+npm run admin:reset -- --email you@example.com        # forgot it? prints a new temporary password once; the old one cannot be recovered
+node scripts/create-admin.js promote --email someone@example.com   # make an existing account an admin
+```
+Sign in at `http://localhost:3000/login`; with a temporary password you are sent straight to **Account** and must choose a new password (other sessions are signed out). Administrators can manage roles and seller invitations on **Admin → Users** (password re-confirmation, audit-logged). Windows PowerShell: the same commands work; to avoid shell history use the generated password rather than `ADMIN_PASSWORD=…`.
 
 Operating guide: [docs/BETA_RUNBOOK.md](docs/BETA_RUNBOOK.md) · Deployment & hosting research: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -28,15 +38,16 @@ Operating guide: [docs/BETA_RUNBOOK.md](docs/BETA_RUNBOOK.md) · Deployment & ho
 ```bash
 npm install
 npm start                       # http://localhost:3000 — direct-checkout beta mode, empty database, nothing seeded
-ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' npm run create-admin
+npm run admin:setup -- --email you@example.com   # prints a one-time temporary password (see “Administrator login” above)
 ```
-In local development (not production) sign-ups default to open so you can click around; set `SIGNUPS=closed SELLER_ONBOARDING=invite` to see the beta behaviour.
+Local development behaves like the beta: buyer sign-up is open, selling is invitation-only. Developers who need self-service seller onboarding for experiments can set `SELLER_ONBOARDING=open` (refused in production; the test suites use it).
+**Email in local development:** no provider is configured, so messages are only recorded. Open **`/dev/emails`** while logged in to read the verification link addressed to *you* (admins see all). It is not a bypass — you still open the link and press *Confirm email*. That page does not exist in production or once a real provider is configured.
 Needs Node ≥ 22.13 (prints an “experimental SQLite” warning — expected). The database and `data/uploads` are created and migrated automatically (migrations are additive).
 For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplug.env.example` (HTTPS `PUBLIC_URL`, `SIGNUPS=closed`, `SELLER_ONBOARDING=invite`, `PUBLIC_RELEASE_DATE`).
 
 | Command | Purpose |
 |---|---|
-| `npm test` | 111 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
+| `npm test` | 124 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
 | `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
 | `npm run test:browser` | Four real-Chromium journeys on empty temp DBs: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile). Stripe is never contacted (redirect captured). |
 | `npm run backup` / `npm run restore -- <snapshot> [--force]` | Consistent DB snapshot + photos (owner-only perms) / integrity- and version-checked restore that keeps a `.pre-restore` copy |

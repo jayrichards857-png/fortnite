@@ -32,7 +32,7 @@ r.get('/', (req, res) => {
     <form action="/shop" role="search"><label class="sr" for="hq2">Search listings</label><input id="hq2" name="q" type="search" placeholder="Search brand, item or size"><button class="btn">Search</button></form></section>
     <div class="chips" aria-label="Categories">${config.categories.map(([s, n]) => `<a class="chip" href="/shop?category=${s}">${esc(n)}${cats[s] ? ` <span class="muted">${cats[s]}</span>` : ''}</a>`).join('')}</div>
     <div class="sechead"><h2>Just listed</h2><a href="/shop?sort=newest" class="small">View all →</a></div>
-    ${latest.length ? V.grid(latest, { favs: favSet(req.user) }) : V.empty('No listings yet', 'The marketplace is empty. Be the first to list an item.', ['/sell', 'Start selling'])}`;
+    ${latest.length ? V.grid(latest, { favs: favSet(req.user) }) : V.empty('No listings yet', 'The marketplace is empty right now. Check back soon.', ['/shop', 'Browse the shop'])}`;
   page(req, res, { title: 'Secondhand marketplace', body });
 });
 
@@ -134,6 +134,7 @@ r.get('/s/:handle', (req, res) => {
 const authForm = (kind, next) => {
   const reg = kind === 'register';
   return `<div class="narrow panel"><h1>${reg ? 'Create your account' : 'Log in'}</h1>
+  <p class="muted small" style="margin-top:-6px">${reg ? 'A free buyer account lets you message sellers, save favorites and order. Selling is invitation-only during the private beta.' : 'Welcome back. Approved beta sellers and administrators sign in here too.'}</p>
   <form data-api="/api/${kind}" data-redirect="${esc(next)}" novalidate>
     ${reg ? '<label for="n">Name</label><input id="n" name="display_name" autocomplete="name" required>' : ''}
     <label for="e">Email</label><input id="e" name="email" type="email" autocomplete="email" required>
@@ -179,7 +180,7 @@ r.get('/account', auth.requireUser, (req, res) => {
     <label for="dn">Name</label><input id="dn" name="display_name" value="${esc(u.display_name)}">
     <label for="em">Email</label><input id="em" value="${esc(u.email)}" disabled>
     <button class="btn" type="submit" style="margin-top:14px">Save</button></form></div>
-    ${u.is_seller ? `<p><a href="/dashboard">Go to seller dashboard →</a> · <a href="/s/${esc(u.handle)}">View my storefront</a></p>` : '<p><a href="/sell">Become a seller →</a></p>'}` });
+    ${u.is_seller ? `<p><a href="/dashboard">Go to seller dashboard →</a> · <a href="/s/${esc(u.handle)}">View my storefront</a></p>` : '<p class="muted small">Selling is invitation-only during the private beta.</p>'}` });
 });
 r.patch('/api/account', auth.requireUser, (req, res) => {
   const name = cleanLine(req.body.display_name, 80);

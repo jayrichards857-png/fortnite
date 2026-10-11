@@ -35,6 +35,12 @@ app.use(express.static(path.join(config.root, 'public'), { maxAge: config.isProd
 app.use(auth.loadUser);
 app.use((req, res, next) => (req.path.startsWith('/webhooks/') || req.path === '/api/uploads' ? next() : express.json({ limit: '2mb' })(req, res, next)));
 app.use(auth.csrfGuard);
+// An account holding a CLI-issued temporary password can do nothing except change it (or log out) until it has.
+app.use((req, res, next) => {
+  if (!req.user || !req.user.must_change_password || ['/account', '/api/account/password', '/api/logout', '/healthz'].includes(req.path)) return next();
+  if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'Change your temporary password first (Account page).', mustChangePassword: true });
+  return res.redirect('/account');
+});
 
 app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
 app.use(require('./routes/store').router);   // storefronts + editor (takes over /s/:handle)
@@ -85,6 +91,7 @@ function assertProductionConfig() {
   const problems = [...config.envProblems];
   if (!/^https:\/\//.test(config.publicUrl)) problems.push('PUBLIC_URL must be the public https:// address of the site');
   if (config.paymentsMode === 'sandbox') problems.push('PAYMENTS_MODE=sandbox simulates payments and must never run in production');
+  if (config.isProd && config.sellerOnboardingRequested === 'open') problems.push('SELLER_ONBOARDING=open is not allowed in production (sellers are invitation-only)');
   if (config.sellerOnboarding !== 'invite') problems.push('SELLER_ONBOARDING must be "invite" in production (hard seller cap, invitation-only)');
   if (config.email.provider === 'resend' && !(config.email.apiKey && config.email.from)) problems.push('EMAIL_PROVIDER=resend needs EMAIL_API_KEY and EMAIL_FROM');
   if (config.rateLimitScale !== 1) problems.push('RATE_LIMIT_SCALE must not be changed in production');

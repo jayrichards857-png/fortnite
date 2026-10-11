@@ -25,11 +25,16 @@ function releaseText() {
   const [y, m, d] = config.releaseDate.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
-function comingSoon() {
-  return `<div class="soon-card"><span class="pill s-pending_payment">Private beta</span><h1>Coming soon</h1>
-    <p class="lead">Selling available <strong>${esc(releaseText())}</strong>.</p>
-    <p class="muted">PairPlug is opening step by step. Right now accounts are created by invitation only, and sign-ups are closed to the public. Have an invitation? Open the link you were sent.</p>
-    <p><a class="btn" href="/">Browse the marketplace</a> <a class="btn ghost" href="/login">Log in</a></p></div>`;
+/** kind 'sell': the Sell page for everyone who is not an approved seller. kind 'signup': buyer sign-up switched off (SIGNUPS=closed). */
+function comingSoon(kind = 'sell') {
+  const when = config.releaseDate ? `<p class="lead">Selling available <strong>${esc(releaseText())}</strong>.</p>` : '<p class="lead">Selling opens very soon.</p>';
+  if (kind === 'signup') return `<div class="soon-card"><span class="pill s-pending_payment">Private beta</span><h1>Coming Soon!</h1>${when}
+    <p class="muted">PairPlug is opening step by step. Sign-ups are paused for now. Have an invitation? Open the link you were sent.</p>
+    <p class="soon-actions"><a class="btn" href="/shop">Browse the shop</a> <a class="btn ghost" href="/login">Log in</a></p></div>`;
+  return `<div class="soon-card"><span class="pill s-pending_payment">Private beta</span><h1>Coming Soon!</h1>${when}
+    <p class="muted">Seller onboarding is currently limited while PairPlug prepares its private beta. A small group of invited sellers is getting set up first, and everyone else can shop in the meantime.</p>
+    <p class="soon-actions"><a class="btn" href="/shop">Back to shopping</a> <a class="btn ghost" href="/login">Log in</a>${config.signups === 'open' ? ' <a class="btn ghost" href="/register">Sign up to buy</a>' : ''}</p>
+    <p class="small muted">Already approved as a beta seller? Log in and your seller dashboard opens automatically.</p></div>`;
 }
 function header(user, path, counts, wide) {
   const cats = config.categories.map(([s, n]) => `<a href="/shop?category=${s}">${esc(n)}</a>`).join('');
