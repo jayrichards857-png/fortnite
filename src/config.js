@@ -75,6 +75,8 @@ module.exports = {
   // Shipping labels (Shippo). TEST MODE ONLY in this release: only a `shippo_test_…` token enables the feature. A live token is recognised so we can
   // refuse it loudly; real purchasing stays disabled until who pays for postage has been verified (docs/SHIPPING.md). Never logged, never sent to browsers.
   shippo: { apiKey: val('SHIPPO_API_KEY'), mode: /^shippo_test_\S+$/.test(val('SHIPPO_API_KEY')) ? 'test' : /^shippo_live_\S+$/.test(val('SHIPPO_API_KEY')) ? 'live-blocked' : val('SHIPPO_API_KEY') ? 'invalid' : 'off' },
+  // Set ONLY by scripts/shipping-sandbox.js (isolated throwaway database full of clearly-marked test data). Ignored in production.
+  sandbox: env.PAIRPLUG_SANDBOX === '1' && !isProd,
   carrierWebhookSecret: env.CARRIER_WEBHOOK_SECRET || '',
   rateLimitScale: Number(env.RATE_LIMIT_SCALE || 1), // tests raise this; production keeps 1
   naCountries: ['US', 'CA', 'MX'], // North America

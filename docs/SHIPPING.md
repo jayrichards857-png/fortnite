@@ -31,6 +31,31 @@ Marking the order **shipped** stays a separate, explicit seller action (a label 
 4. Log in as an approved seller with a paid order → Order page → *Shipping label*.
 5. Verify against Shippo's test mode yourself: the first real call to `api.goshippo.com` happens here; the field mapping (`/shipments/`, `/transactions/`, `servicelevel.name`, `estimated_days`, `label_url`, `tracking_number`) follows Shippo's public docs but has **not** been run against the live API by me.
 
+## Try the whole workflow locally: the shipping sandbox (development only)
+There are no orders on a fresh install, and you should not fabricate payments on your real database. The sandbox builds a **separate throwaway database** (`data/shipping-sandbox.db`) with clearly-marked **TEST DATA**: a test seller, a test buyer, one **paid, unshipped** order (ready for a label) and one **unpaid** order (labels must be refused). Your real `data/pairplug.db` is never opened.
+
+```powershell
+cd C:\Users\dietr\fortnite
+# Option A: real Shippo TEST mode (your own test token, this terminal only; never paste it anywhere)
+$env:SHIPPO_API_KEY="shippo_test_xxxxxxxx"
+npm run sandbox:shipping
+# Option B: no Shippo at all, an in-process FAKE (UI and flow only; its label link is not a real file)
+npm run sandbox:shipping -- --fake-shippo
+# start over from scratch (deletes ONLY the sandbox files)
+npm run sandbox:shipping -- --reset
+```
+It prints the login URL (`http://localhost:3100/login`), the two test accounts (`seller@sandbox.invalid`, `buyer@sandbox.invalid`) with **fresh one-time passwords generated for that run**, and the order pages. It listens on `127.0.0.1` only and shows a **SHIPPING SANDBOX — TEST DATA ONLY** banner on every page. Stop it with Ctrl+C, then start your normal app as usual (`npm start`).
+
+**Exercise it (as the test seller):**
+1. Open the *paid* order page. In *Shipping label* enter a ship-from address (sample: `TEST Seller`, `965 Mission St`, `San Francisco`, `CA`, `94103`, `US`). Try a bad ZIP (`BAD`) to see validation.
+2. Check the package (prefilled 20 oz, 12×9×4 in). Try weight `0` or height `500` to see validation, then **Get shipping rates** (prices, carrier, days).
+3. **Buy shipping label** → read the confirmation dialog → confirm. You get *Test label created*, a tracking number and **Print / download label** (the order itself is *not* marked shipped).
+4. Press Buy again or reload: no second purchase. Open the *unpaid* order: labels are refused until payment is confirmed.
+5. As the test buyer, the order page never shows test tracking.
+6. Failure handling is unit-tested (provider error, timeout, queued, duplicate); to see one live, temporarily run with an invalid token and observe the safe error message.
+
+**Safety rules the sandbox enforces** (tested in `test/sandbox.test.js`): refuses `NODE_ENV=production`; accepts only `shippo_test_` tokens and refuses `shippo_live_` ones (without echoing them); refuses any database holding non-sandbox accounts or orders, and refuses `data/pairplug.db`; `config.sandbox` is ignored in production; no app route is changed or bypassed — the orders are created with the normal checkout functions, so seller ownership and the paid/unshipped rules apply exactly as for real orders; nothing prints tokens, provider ids or addresses (it prints only URLs and the test passwords).
+
 ## Pricing assumptions (NOT verified from Shippo's own pricing page)
 Third-party sources I found (May–Oct 2026 pages; they conflict): Shippo's free **Starter** plan has API access and about **30 free labels/month**; beyond that roughly **$0.05–$0.08 per label** (some sources say $0.05 applies only to bringing your *own* carrier account; one says $0.07 per API label); paid plans start around $19/month. **Postage itself is always extra, billed per label at carrier rates.** Sources: [clickpost.ai](https://clickpost.ai/blog/shippo-pricing), [hackceleration](https://www.hackceleration.com/labs/shippo-pricing), [fitgap](https://us.fitgap.com/products/shippo), [toolradar](https://toolradar.com/tools/shippo/pricing). **Confirm on goshippo.com/pricing before relying on any number.** Test mode costs nothing.
 

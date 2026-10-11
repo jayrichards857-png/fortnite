@@ -77,10 +77,11 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
   } : {};
   const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey && config.checkoutMode === 'platform'
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
+  const testData = config.sandbox ? '<div class="banner warn-banner" role="status"><strong>SHIPPING SANDBOX — TEST DATA ONLY.</strong> Nothing here is a real customer, payment or order. Labels are Shippo test labels and are not valid postage.</div>' : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'Buy and sell secondhand clothing, sneakers and streetwear across North America.')}">
 <link rel="stylesheet" href="/app.css">${head}</head><body>
-<a class="skip" href="#main">Skip to content</a>${sandbox}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
+<a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
 <footer class="site-footer"><div class="wrap"><span>PairPlug · North American secondhand marketplace</span>
 <span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a></span></div></footer>
