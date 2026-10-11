@@ -205,7 +205,7 @@ test('buyer actions never confirm payment; the hold extends only so the seller c
   assert.equal(row(o).status, 'pending_payment'); assert.equal(listingRow(id).status, 'reserved');
   // the seller (and only the seller) can confirm; the address stays hidden until they do
   const page = (await seller.get(`/dashboard/orders/${o}`)).text;
-  assert.match(page, /Confirm the payment/); assert.doesNotMatch(page, /1 Main St/); assert.match(page, /shown after you confirm/);
+  assert.match(page, /Confirm the payment/); assert.doesNotMatch(page, /1 Main St/); assert.match(page, /after you confirm the payment/);
 });
 
 test('seller confirmation: authorization, state, inventory, no wallet movement; then fulfilment with tracking', async () => {

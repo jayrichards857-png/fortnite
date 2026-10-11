@@ -196,10 +196,84 @@ function sellerDeclareRefund(user, orderId, { relist }) {
   });
 }
 
-/** shipped -> delivered, by the buyer ("I got it") or the seller. No funds are released: there is nothing held. */
+// ---------------------------------------------------------------- recipient address (collected at checkout; older orders may lack it)
+const ADDR_COLS = ['ship_name', 'ship_line1', 'ship_city', 'ship_region', 'ship_postal', 'ship_country'];
+/** Is the order's delivery address usable for fulfilment? (Older orders may predate address collection; we never invent one.) */
+const addressMissing = (ck) => !ck || ADDR_COLS.some((c) => !String(ck[c] || '').trim()) || !config.naCountries.includes(String(ck.ship_country || '').toUpperCase());
+
+/** The BUYER supplies/repairs the delivery address on their own order. Only while the address is missing and the order is not shipped. */
+function buyerSetAddress(user, orderId, address) {
+  const addr = validateAddress(address);
+  return tx(() => {
+    const o = buyerOrder(user, orderId), ck = q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id);
+    if (['shipped', 'delivered', 'released', 'cancelled', 'refunded'].includes(o.status)) throw new HttpError(409, 'This order can no longer be changed.');
+    if (!addressMissing(ck)) throw new HttpError(409, 'This order already has a delivery address. Message the seller if it needs to change.');
+    q.run('UPDATE checkouts SET ship_name=?, ship_line1=?, ship_line2=?, ship_city=?, ship_region=?, ship_postal=?, ship_country=? WHERE id=?', addr.ship_name, addr.ship_line1, addr.ship_line2, addr.ship_city, addr.ship_region, addr.ship_postal, addr.ship_country, o.checkout_id);
+    notify(o.seller_id, `order:${o.id}:address-added`, 'Delivery address added', `Order #${o.id}: the buyer added a delivery address.`, `/dashboard/orders/${o.id}`);
+    return { ok: true };
+  });
+}
+/** The SELLER asks the buyer (in-app notification) to add the missing address. Throttled; never claims more than it did. */
+function sellerRequestAddress(user, orderId) {
+  rateLimit(`addr-req:${user.id}`, 30, 3600);
+  const o = sellerOrder(user, orderId), ck = q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id);
+  if (!addressMissing(ck)) throw new HttpError(409, 'This order already has a delivery address.');
+  if (['cancelled', 'refunded', 'shipped', 'delivered', 'released'].includes(o.status)) throw new HttpError(409, 'This order no longer needs an address.');
+  notify(o.buyer_id, `order:${o.id}:address-request:${Math.floor(now() / 21600)}`, 'Please add your delivery address', `Order #${o.id}: the seller needs your delivery address to ship your item.`, `/orders/${o.id}`);
+  return { ok: true, message: 'The buyer was sent an in-app notification asking for their address. (No email is sent.)' };
+}
+
+// ---------------------------------------------------------------- shipping (seller-entered carrier + tracking; PairPlug buys no postage)
+const TRACKING_RE = /^[A-Za-z0-9-]{6,40}$/;
+function shipInput(body) {
+  const carrier = config.carriers.includes(body.carrier) ? body.carrier : '', tracking = cleanLine(body.tracking, 60).replace(/\s/g, ''), note = cleanLine(body.note, 200) || null, f = {};
+  if (!carrier) f.carrier = 'Choose a carrier.';
+  if (!TRACKING_RE.test(tracking)) f.tracking = 'Enter a valid tracking number (letters/numbers, 6–40 characters).';
+  if (Object.keys(f).length) throw new HttpError(422, 'Please fix the highlighted fields.', f);
+  return { carrier, tracking, note };
+}
+const uniqueMsg = (e) => { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; };
+
+/** Mark a PAID order shipped. Idempotent for the same carrier+tracking; validates recipient, carrier and tracking; records history in order_events. */
+function sellerShip(user, orderId, body = {}) {
+  const { carrier, tracking, note } = shipInput(body);
+  const out = tx(() => {
+    const o = sellerOrder(user, orderId);
+    if (['shipped', 'delivered', 'released'].includes(o.status)) {
+      if (o.carrier === carrier && o.tracking_number === tracking) return { ok: true, alreadyShipped: true };
+      throw new HttpError(409, 'This order is already marked shipped. Use “Correct tracking” to change the carrier or tracking number.');
+    }
+    if (o.status !== 'paid' || !o.payment_confirmed_at) throw new HttpError(409, 'Confirm that you received the buyer\'s payment before shipping.');
+    const ck = q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id);
+    if (addressMissing(ck)) throw new HttpError(409, 'The buyer\'s delivery address is missing or incomplete. Ask the buyer to add it before you ship.', { address: 'missing' });
+    try { transition(o.id, 'shipped', { actor: `seller:${user.id}`, note: `${carrier} ${tracking}`, set: { carrier, tracking_number: tracking, shipped_at: now(), ship_note: note } }); } catch (e) { uniqueMsg(e); }
+    return { ok: true, order: o };
+  });
+  if (out.alreadyShipped) return out;
+  // Buyer notification is in-app only (there is no email mechanism) and is reported honestly.
+  let notified = false;
+  try { notify(out.order.buyer_id, `order:${out.order.id}:shipped`, 'Your order shipped', `Order #${out.order.id} shipped with ${carrier}. Tracking: ${tracking}${note ? '. Seller note: ' + note : ''}`, `/orders/${out.order.id}`); notified = true; } catch { /* the shipment is saved regardless */ }
+  return { ok: true, notified };
+}
+/** Fix a typo'd carrier/tracking/note on an order that is shipped but not yet delivered. History keeps the old and new values. */
+function sellerCorrectTracking(user, orderId, body = {}) {
+  const { carrier, tracking, note } = shipInput(body);
+  return tx(() => {
+    const o = sellerOrder(user, orderId);
+    if (o.status !== 'shipped') throw new HttpError(409, 'Tracking can only be corrected while the order is shipped and not yet delivered.');
+    if (o.carrier === carrier && o.tracking_number === tracking && (o.ship_note || null) === note) return { ok: true, unchanged: true };
+    try { q.run('UPDATE orders SET carrier = ?, tracking_number = ?, ship_note = ?, updated_at = ? WHERE id = ?', carrier, tracking, note, now(), o.id); } catch (e) { uniqueMsg(e); }
+    q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?, 'shipped', 'shipped', ?, ?, ?)", o.id, `seller:${user.id}`, `Tracking corrected: ${o.carrier} ${o.tracking_number} → ${carrier} ${tracking}`, now());
+    try { notify(o.buyer_id, `order:${o.id}:tracking:${tracking}`, 'Tracking updated', `Order #${o.id}: tracking is now ${carrier} ${tracking}.`, `/orders/${o.id}`); } catch { /* ignore */ }
+    return { ok: true };
+  });
+}
+
+/** shipped -> delivered. Only the BUYER ("I got it") or a verified carrier report can say so: a seller's own claim is not reliable evidence of delivery. */
 function markReceived(user, orderId, who) {
   return tx(() => {
     const o = who === 'buyer' ? buyerOrder(user, orderId) : sellerOrder(user, orderId);
+    if (who !== 'buyer') throw new HttpError(403, 'Only the buyer (or a verified carrier delivery report) can mark an order delivered.');
     if (o.status !== 'shipped') throw new HttpError(409, 'Only shipped orders can be marked received.');
     transition(o.id, 'delivered', { actor: `${who}:${user.id}`, note: who === 'buyer' ? 'Buyer confirmed receipt' : 'Seller marked delivered', set: { delivered_at: now() } });
     notify(who === 'buyer' ? o.seller_id : o.buyer_id, `order:${o.id}:delivered`, 'Order delivered', `Order #${o.id} was marked delivered.`, who === 'buyer' ? `/dashboard/orders/${o.id}` : `/orders/${o.id}`);
@@ -207,4 +281,4 @@ function markReceived(user, orderId, who) {
   });
 }
 
-module.exports = { isExternal, terms, purchasable, startPurchase, payRedirect, buyerClaimPaid, buyerCancel, sellerConfirmPayment, sellerRejectPayment, sellerDeclareRefund, markReceived, buyerOrder, sellerOrder };
+module.exports = { buyerSetAddress, sellerRequestAddress, sellerShip, sellerCorrectTracking, addressMissing, isExternal, terms, purchasable, startPurchase, payRedirect, buyerClaimPaid, buyerCancel, sellerConfirmPayment, sellerRejectPayment, sellerDeclareRefund, markReceived, buyerOrder, sellerOrder };

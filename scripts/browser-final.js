@@ -119,7 +119,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     await s1.pg.goto(`${B}/dashboard/orders`); t = await s1.pg.textContent('main'); assert.match(t, /Awaiting your payment confirmation/); assert.match(t, new RegExp(`#${orderId}`)); assert.doesNotMatch(t, /No orders/);
     await b.pg.goto(`${B}/orders`); t = await b.pg.textContent('main'); assert.match(t, new RegExp(`PP-${orderId}`)); assert.match(t, /Awaiting payment confirmation/i);
     await s1.pg.goto(`${B}/dashboard/orders/${orderId}`); await s1.pg.click('text=Payment received'); await s1.pg.waitForLoadState('networkidle');
-    assert.match(await s1.pg.textContent('main'), /How to ship this order/i);
+    assert.match(await s1.pg.textContent('main'), /Ship this order/i);
     await s1.pg.goto(`${B}/dashboard/orders`); assert.match(await s1.pg.textContent('main'), /Paid — ready to ship/); await s1.pg.goto(`${B}/dashboard/inventory?status=sold`); assert.match(await s1.pg.textContent('main'), /Buyable jacket/);
     await s1.pg.goto(`${B}/dashboard/orders/${orderId}`);
     await s1.pg.fill('#tn', '9400111899223344'); await s1.pg.fill('#sn2', 'Left with front desk'); await s1.pg.click('button:has-text("Mark shipped")'); await s1.pg.waitForLoadState('networkidle');

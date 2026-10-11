@@ -26,8 +26,8 @@ const NO_LABEL_UI = /Buy shipping label|Get shipping rates|Shipping label \(sand
 
 test('the live seller order page explains the manual workflow in plain steps and offers no PairPlug label purchase', async () => {
   const { seller, o } = await order(); const page = (await seller.get(`/dashboard/orders/${o}`)).text;
-  assert.match(page, /How to ship this order/); assert.match(page, /Buy postage yourself/); assert.match(page, /PairPlug does not buy labels or pay postage/);
-  assert.match(page, /Ship to/); assert.match(page, /Enter the carrier and tracking number/); assert.match(page, /Mark shipped/);
+  assert.match(page, /Ship this order/); assert.match(page, /Buy postage yourself/); assert.match(page, /PairPlug does not buy labels or pay postage/);
+  assert.match(page, /Recipient/); assert.match(page, /Enter the carrier and tracking number/); assert.match(page, /Mark shipped/);
   assert.match(page, /it is <em>not<\/em> a prepaid label/); assert.match(page, /you still buy and pay for postage yourself/);
   assert.match(page, /records<\/strong> it in PairPlug/); assert.match(page, /does not buy postage and does not guarantee delivery/);
   for (const c of config.carriers) assert.ok(page.includes(`<option>${c}</option>`), `carrier ${c}`);

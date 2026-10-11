@@ -151,7 +151,7 @@ test('listing lifecycle: pause, resume, unpublish, mark sold, delete — ownersh
   q.run('INSERT INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES((SELECT id FROM users WHERE email = ?), (SELECT id FROM users WHERE handle = ?), ?, 1)', buyer.email, s.handle, kept.json.id);
   assert.equal((await s.req('DELETE', `/api/seller/listings/${kept.json.id}`)).status, 409);
   await H.makeListing(s, { payment_url: LINK, title: 'Still for sale' });
-  assert.match((await s.get('/dashboard/inventory')).text, /Record external sale/);
+  assert.match((await s.get('/dashboard/inventory')).text, /Sold outside PairPlug/);
 });
 
 test('listing validation & hybrid purchase UI: currency, prices, contact-only listings never show a checkout button', async () => {

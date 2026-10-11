@@ -84,7 +84,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await s.pg.goto(B + '/dashboard/orders'); assert.match(await s.pg.textContent('tbody'), /Unconfirmed/);
     await s.pg.click('a:has-text("Confirm payment")'); await s.pg.waitForSelector('text=Confirm the payment');
     assert.doesNotMatch(await s.pg.textContent('main'), /1 Test Way/); step('seller order page: payment unconfirmed, shipping address hidden'); await shot(s.pg, 'beta-05-seller-order-confirm.png');
-    await s.pg.fill('#pr', 'ch_test_123'); await s.pg.click('button:has-text("Payment received")'); await s.pg.waitForSelector('text=How to ship this order'); assert.match(await s.pg.textContent('main'), /PairPlug does not buy labels or pay postage/); assert.doesNotMatch(await s.pg.textContent('main'), /Buy shipping label|Get shipping rates/);
+    await s.pg.fill('#pr', 'ch_test_123'); await s.pg.click('button:has-text("Payment received")'); await s.pg.waitForSelector('text=Ship this order'); assert.match(await s.pg.textContent('main'), /PairPlug does not buy labels or pay postage/); assert.doesNotMatch(await s.pg.textContent('main'), /Buy shipping label|Get shipping rates/);
     assert.match(await s.pg.textContent('main'), /1 Test Way/); step('after the SELLER confirmed, status is paid and the address is revealed');
     assert.match(await s.pg.textContent('main'), /does not<\/?[a-z]*>? buy labels|does not buy labels|does\s+not\s+buy/i);
     await s.pg.fill('#tn', '9400111899223344'); await s.pg.click('button:has-text("Mark shipped")'); await s.pg.waitForSelector('text=Shipped'); step('seller recorded carrier + tracking'); await shot(s.pg, 'beta-06-seller-order-shipped.png');

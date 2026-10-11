@@ -26,10 +26,11 @@ Sellers are *expected* to reply to buyer messages within **48 hours**. This is s
 10. **Support issue drill**: as the buyer open *Report a problem* on the test order; as admin open **Admin → Cases**, reply, add an internal note, close with a decision. Check **Admin → Audit**.
 
 ## Daily seller routine
-1. Dashboard → awaiting your payment check: find a payment of the **total** with reference `PP-<order id>` in Stripe → *Payment received — confirm order*, otherwise *release item*.
-2. Buy postage in your own shipping account, then enter carrier + tracking → *Mark shipped* (the order page lists these steps).
-3. Reply to messages within 48 hours.
-4. Refund requested → refund in **Stripe first**, then *Report refund sent*. The order shows *refunded* only after the buyer confirms receipt (or the founder verifies).
+1. **Orders → Awaiting your payment confirmation**: find a payment of the **total** with reference `PP-<order id>` in your payment provider → *Payment received — confirm order* (the listing becomes Sold), otherwise *release item*.
+2. **Orders → Paid — ready to ship** → open the order → **Ship this order**: buy postage in your own account, ship to the recipient shown, enter carrier + tracking (+ optional message) → *Mark shipped*. The buyer gets an in-app notification (no email). Typo? *Correct the carrier, tracking or message*.
+3. An order is **Delivered** only when the buyer confirms receipt (or a verified carrier report says so); you can't mark it yourself.
+4. If an older order shows “delivery address is missing”, press *Ask the buyer to add it*; the buyer adds it on their order page.
+5. Reply to messages within 48 hours. Refund requested → refund in your payment provider first, then *Report refund sent* (the order is refunded once the buyer confirms).
 
 ## Reservation rules (double-sale protection)
 * “Reserve item & continue” holds the item for **60 minutes**; if the buyer presses *I've completed payment* the hold extends to **72 hours** (a claim, never proof).
