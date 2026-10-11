@@ -12,6 +12,7 @@ const X = require('../externalCheckout');
 const { validatePaymentUrl, trackingUrl, LABEL_PROVIDERS } = require('../paymentLinks');
 const L = require('../listings');
 const SP = require('./support');
+const SHP = require('../shipments');
 
 const r = express.Router();
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
@@ -76,7 +77,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
   if (o.seller_id === req.user.id) return res.redirect(`/dashboard/orders/${o.id}`);
   const snap = JSON.parse(o.snapshot_json), item = q.get('SELECT * FROM order_items WHERE order_id = ?', o.id);
   const ck = q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id), events = q.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id);
-  const review = q.get('SELECT * FROM reviews WHERE order_id = ?', o.id), track = trackingUrl(o.carrier, o.tracking_number);
+  const review = q.get('SELECT * FROM reviews WHERE order_id = ?', o.id), track = trackingUrl(o.carrier, o.tracking_number), buyerLbl = SHP.realLabel(o.id);
   const pending = o.status === 'pending_payment', until = ck.expires_at;
   const action = pending ? `<div class="panel notice strong"><h3>Step 2: pay the seller</h3>
       <p>Your item is reserved until <strong>${new Date(until * 1000).toLocaleString()}</strong>. Pay <strong>${money(o.total_cents)}</strong> on the seller's own checkout page (opens in the seller's payment provider, not PairPlug).</p>
@@ -89,7 +90,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
   ${stepper(o)}<div class="two"><section>${action}
     <div class="panel"><div class="line"><a href="/listing/${item.listing_id}">${V.img(item.image, 'thumb', item.title)}</a><div><a href="/listing/${item.listing_id}"><strong>${esc(snap.listing.title)}</strong></a><div class="muted small">${esc([snap.listing.size && 'Size ' + snap.listing.size, snap.listing.condition && config.conditions[snap.listing.condition]].filter(Boolean).join(' · '))}</div></div><div>${money(o.subtotal_cents)}</div></div></div>
     <div class="panel"><h3>Shipping</h3><p style="margin:0 0 8px">To ${esc(ck.ship_name)}, ${esc(ck.ship_city)}, ${esc(ck.ship_region)} ${esc(ck.ship_country)} · ${o.shipping_payer === 'seller' ? 'Free shipping (seller pays the label)' : `Flat fee ${money(o.shipping_cents)} (paid by you to the seller)`}</p>
-      ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
+      ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}${buyerLbl && buyerLbl.tracking_status ? `<p class="small" style="margin:6px 0 0">Carrier status: <strong>${esc(buyerLbl.tracking_status)}</strong></p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
     ${o.status === 'shipped' ? `<div class="panel"><h3>Received it?</h3><button class="btn" data-post="/api/orders/${o.id}/received">Mark as received</button></div>` : ''}
     ${o.status === 'delivered' && !review ? `<div class="panel"><h3>Review this seller</h3><form data-api="/api/orders/${o.id}/review" data-reload><label for="rt">Rating</label><select id="rt" name="rating"><option value="5">5 — Excellent</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1 — Poor</option></select>
       <label for="rb">Comment <span class="opt">(optional)</span></label><textarea id="rb" name="body" maxlength="1000"></textarea><button class="btn" type="submit" style="margin-top:12px">Submit review</button></form></div>` : ''}
@@ -156,6 +157,7 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
   const events = q.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id), track = trackingUrl(o.carrier, o.tracking_number);
   const showAddress = Boolean(o.payment_confirmed_at) && o.status !== 'cancelled';     // data minimisation: address only once you've confirmed payment
   const conv = q.get('SELECT id FROM conversations WHERE buyer_id = ? AND seller_id = ?', o.buyer_id, req.user.id);
+  const realLbl = SHP.realLabel(o.id), carrierName = (c) => config.carriers.find((x) => String(c || '').toLowerCase().startsWith(x.toLowerCase())) || 'Other';   // only REAL labels prefill; test labels never do
   const panels = [];
   if (o.status === 'pending_payment') panels.push(`<div class="panel notice strong"><h3>Confirm the payment</h3>
     <p>Open your Stripe dashboard and look for a payment of <strong>${money(o.total_cents)}</strong> with client reference <strong>${reqNo(o)}</strong>. ${o.buyer_claimed_paid_at ? '<strong>The buyer says they have paid.</strong>' : 'The buyer has not said they paid yet.'}</p>
@@ -163,9 +165,10 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
     <form data-api="/api/seller/orders/${o.id}/confirm-payment" data-reload><label for="pr">Payment reference <span class="opt">(optional note, e.g. last 6 characters of the Stripe payment id)</span></label><input id="pr" name="reference" maxlength="80">
       <p style="margin-top:12px"><button class="btn" type="submit">Payment received — confirm order</button> <button class="btn ghost" type="button" data-post="/api/seller/orders/${o.id}/reject-payment" data-confirm="Release the item? The buyer will be told no payment was received.">No payment received — release item</button></p></form>
     <p class="small muted">Reserved until ${new Date(ck.expires_at * 1000).toLocaleString()}; after that the item is released automatically.</p></div>`);
+  if (['paid', 'shipped', 'delivered'].includes(o.status)) panels.push(`<div class="panel" id="ship-panel" data-order="${o.id}"><h3>Shipping label</h3><noscript><p>Enable JavaScript to buy a label here, or enter the tracking number below.</p></noscript></div>`);
   if (o.status === 'paid') panels.push(`<div class="panel"><h3>Ship the order</h3><ol class="plain"><li>Buy a label yourself with a shipping service (PairPlug does <strong>not</strong> buy labels): ${LABEL_PROVIDERS.map((p) => `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.name)} ↗</a>`).join(' · ')}</li>
       <li>${o.shipping_payer === 'seller' ? '<strong>Free shipping:</strong> you cover the label cost.' : `<strong>Buyer-paid shipping:</strong> the buyer paid a ${money(o.shipping_cents)} flat fee to you.`}</li><li>Enter the carrier and tracking number:</li></ol>
-    <form data-api="/api/seller/orders/${o.id}/ship" data-reload class="row" style="align-items:end"><div><label for="ca">Carrier</label><select id="ca" name="carrier">${config.carriers.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div><div><label for="tn">Tracking number</label><input id="tn" name="tracking" required maxlength="40"></div><div><label for="sn2">Note to buyer <span class="opt">(optional)</span></label><input id="sn2" name="note" maxlength="200"></div><div><button class="btn" type="submit">Mark shipped</button></div></form>
+    <form data-api="/api/seller/orders/${o.id}/ship" data-reload class="row" style="align-items:end"><div><label for="ca">Carrier</label><select id="ca" name="carrier">${config.carriers.map((c) => `<option${realLbl && carrierName(realLbl.carrier) === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></div><div><label for="tn">Tracking number</label><input id="tn" name="tracking" required maxlength="40" value="${esc(realLbl ? realLbl.tracking_number : '')}"></div><div><label for="sn2">Note to buyer <span class="opt">(optional)</span></label><input id="sn2" name="note" maxlength="200"></div><div><button class="btn" type="submit">Mark shipped</button></div></form>
     <p class="small muted" style="margin:8px 0 0">Tracking shows what the carrier reports. It is not proof of delivery or contents; keep your receipt and photos of the package.</p></div>`);
   if (o.status === 'shipped') panels.push(`<div class="panel"><h3>Shipped</h3><p>${esc(o.carrier)} ${esc(o.tracking_number)}${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track ↗</a>` : ''}</p><button class="btn ghost" data-post="/api/seller/orders/${o.id}/received" data-confirm="Mark this order delivered?">Mark delivered</button></div>`);
   panels.push(SP.sellerPanels(o));
@@ -177,7 +180,7 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
   </section><aside class="panel sticky"><h3>Amount</h3><div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div><div class="summary-row total"><span>Buyer pays you</span><span>${money(o.total_cents)}</span></div>
     <p class="small muted">Paid directly to you. PairPlug takes no fee and holds no funds.${o.payment_reference ? ` Your note: ${esc(o.payment_reference)}.` : ''}</p>
     <h3 style="margin-top:16px">History</h3><ul class="timeline">${events.map((e) => `<li><strong>${esc(e.to_status.replace('_', ' '))}</strong> <span class="muted">${new Date(e.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')}</span>${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</li>`).join('')}</ul></aside></div>`;
-  dash(req, res, { title: `Order #${o.id}`, path: '/dashboard/orders', body });
+  dash(req, res, { title: `Order #${o.id}`, path: '/dashboard/orders', body, scripts: '<script src="/shipping.js" defer></script>' });
 });
 r.post('/api/seller/orders/:id(\\d+)/confirm-payment', S, (req, res) => res.json(X.sellerConfirmPayment(req.user, req.params.id, { reference: req.body.reference })));
 r.post('/api/seller/orders/:id(\\d+)/reject-payment', S, (req, res) => res.json(X.sellerRejectPayment(req.user, req.params.id)));

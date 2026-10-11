@@ -455,6 +455,37 @@ CREATE TRIGGER sellers_cap_update BEFORE UPDATE OF is_seller ON users
 `
 ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
 `,
+// 6: shipping labels (Shippo, TEST MODE ONLY in this release). Additive: no existing row is touched.
+//   seller_ship_from  the seller's own sender address (we never invent one; sellers enter it)
+//   shipments         one row per quote/purchase attempt. test=1 rows used a Shippo TEST token: they are NOT valid postage and are never copied into orders.
+`
+CREATE TABLE seller_ship_from (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  name TEXT NOT NULL, line1 TEXT NOT NULL, line2 TEXT, city TEXT NOT NULL, region TEXT NOT NULL, postal TEXT NOT NULL,
+  country TEXT NOT NULL CHECK (country IN ('US','CA','MX')), phone TEXT, updated_at INTEGER NOT NULL
+);
+CREATE TABLE shipments (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  seller_id INTEGER NOT NULL REFERENCES users(id),
+  provider TEXT NOT NULL DEFAULT 'shippo',
+  test INTEGER NOT NULL CHECK (test IN (0,1)),
+  status TEXT NOT NULL CHECK (status IN ('rates_ready','purchasing','success','failed','superseded')),
+  weight_oz REAL NOT NULL, length_in REAL NOT NULL, width_in REAL NOT NULL, height_in REAL NOT NULL,
+  address_hash TEXT NOT NULL,
+  provider_shipment_id TEXT, rates_json TEXT, rates_fetched_at INTEGER,
+  selected_rate_id TEXT, carrier TEXT, service TEXT, price_cents INTEGER, currency TEXT,
+  provider_transaction_id TEXT, label_url TEXT, tracking_number TEXT, tracking_url TEXT, tracking_status TEXT,
+  error_message TEXT, confirmed_at INTEGER, purchased_at INTEGER,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_shipments_order ON shipments(order_id, id);
+-- At most one in-flight or completed purchase per order and mode: this is what makes double clicks and retries safe.
+CREATE UNIQUE INDEX idx_shipments_one_purchase ON shipments(order_id, test) WHERE status IN ('purchasing','success');
+CREATE TRIGGER shipments_no_delete BEFORE DELETE ON shipments BEGIN SELECT RAISE(ABORT, 'shipments cannot be deleted'); END;
+CREATE TRIGGER shipments_label_immutable BEFORE UPDATE OF order_id, seller_id, test, price_cents, currency, carrier, service, label_url, tracking_number, provider_transaction_id ON shipments
+  WHEN OLD.status = 'success' BEGIN SELECT RAISE(ABORT, 'a purchased label cannot be changed'); END;
+`,
 ];
 
 function migrate() {

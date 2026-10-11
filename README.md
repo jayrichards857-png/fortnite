@@ -47,9 +47,9 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 
 | Command | Purpose |
 |---|---|
-| `npm test` | 124 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
+| `npm test` | 134 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
 | `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
-| `npm run test:browser` | Four real-Chromium journeys on empty temp DBs: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile). Stripe is never contacted (redirect captured). |
+| `npm run test:browser` | Five real-Chromium journeys (incl. `browser-shipping.js`, the label panel against a fake Shippo) on empty temp DBs: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile). Stripe is never contacted (redirect captured). |
 | `npm run backup` / `npm run restore -- <snapshot> [--force]` | Consistent DB snapshot + photos (owner-only perms) / integrity- and version-checked restore that keeps a `.pre-restore` copy |
 | `npm run inventory:sellers` | Read-only report of seller accounts vs. the cap |
 | `node scripts/dump-schema.js` | Regenerates `docs/schema.sql` from the migrations |
@@ -68,7 +68,7 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 | Seller payment links | Server-side tested. **Not tested against live Stripe.** Payment Links have a fixed product/price: the seller must create one per listing (item + shipping) — a default link is used only if the seller says it accepts any amount. |
 | Payment verification | **Manual**, by the seller. PairPlug cannot verify Stripe payments (no webhook/API integration in beta). |
 | Escrow, wallet, fees, withdrawals, Stripe adapter, sandbox | Legacy, **disabled for new orders** (`CHECKOUT_MODE=external`). Sandbox is refused in production. |
-| Shipping labels | **Not integrated.** Seller buys elsewhere; PairPlug links to services (not verified live) and stores carrier + tracking. Delivery is marked by buyer/seller (the carrier webhook is optional and untested against a real carrier). |
+| Shipping labels | **Shippo, TEST MODE ONLY** (`SHIPPO_API_KEY=shippo_test_…`): rates, a confirmed test-label purchase, stored label/tracking, duplicate-safe. Tested only against a fake Shippo transport; **never against Shippo's live or sandbox servers**. **Real label purchasing is disabled** (who pays postage is unresolved; see [docs/SHIPPING.md](docs/SHIPPING.md)). Sellers can still buy a label elsewhere and enter carrier + tracking. |
 | Tax | Not handled. The seller's Stripe configuration is responsible. |
 | Email | Every message is recorded in `email_outbox`. With no provider configured nothing is sent and the UI says so (admin can hand a verification link over manually). The `resend` adapter exists but has **never sent a real email**. SMS/push: not implemented. |
 | Refunds | PairPlug moves no money. The seller *reports* a refund; the order becomes `refunded` only when the **buyer confirms** or an **admin independently verifies**. |

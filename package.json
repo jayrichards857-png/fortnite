@@ -14,7 +14,7 @@
     "admin:reset": "node scripts/create-admin.js reset",
     "seed:demo": "node scripts/seed-demo.js",
     "screenshots": "node scripts/screenshots.js",
-    "test:browser": "node scripts/browser-journey.js && node scripts/browser-chat.js && node scripts/browser-beta.js && node scripts/browser-final.js",
+    "test:browser": "node scripts/browser-journey.js && node scripts/browser-chat.js && node scripts/browser-beta.js && node scripts/browser-final.js && node scripts/browser-shipping.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "inventory:sellers": "node scripts/inventory-sellers.js",

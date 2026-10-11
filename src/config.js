@@ -9,8 +9,9 @@ const root = path.resolve(__dirname, '..');
 // values fall back to the *restrictive* setting, and every problem is reported (production refuses to start; see server.js).
 const envProblems = [];
 const val = (k) => String(env[k] ?? '').trim();
-for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
+for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'SHIPPO_API_KEY', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
   if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
+if (val('SHIPPO_API_KEY') && !/^shippo_(test|live)_\S+$/.test(val('SHIPPO_API_KEY'))) envProblems.push('SHIPPO_API_KEY must start with shippo_test_ (live keys are refused in this release)');
 const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
 const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
 if (onboardingRaw && !['open', 'invite'].includes(onboardingRaw)) envProblems.push('SELLER_ONBOARDING must be exactly "open" or "invite"');
@@ -71,8 +72,9 @@ module.exports = {
   paymentsMode: env.PAYMENTS_MODE || '',
   stripe: { secretKey: env.STRIPE_SECRET_KEY || '', webhookSecret: env.STRIPE_WEBHOOK_SECRET || '' },
   sandboxSecret: env.SANDBOX_WEBHOOK_SECRET || 'pairplug-sandbox-only-secret',
-  // Shipping: label purchase is enabled only when a provider key is present.
-  shippo: { apiKey: env.SHIPPO_API_KEY || '' },
+  // Shipping labels (Shippo). TEST MODE ONLY in this release: only a `shippo_test_…` token enables the feature. A live token is recognised so we can
+  // refuse it loudly; real purchasing stays disabled until who pays for postage has been verified (docs/SHIPPING.md). Never logged, never sent to browsers.
+  shippo: { apiKey: val('SHIPPO_API_KEY'), mode: /^shippo_test_\S+$/.test(val('SHIPPO_API_KEY')) ? 'test' : /^shippo_live_\S+$/.test(val('SHIPPO_API_KEY')) ? 'live-blocked' : val('SHIPPO_API_KEY') ? 'invalid' : 'off' },
   carrierWebhookSecret: env.CARRIER_WEBHOOK_SECRET || '',
   rateLimitScale: Number(env.RATE_LIMIT_SCALE || 1), // tests raise this; production keeps 1
   naCountries: ['US', 'CA', 'MX'], // North America

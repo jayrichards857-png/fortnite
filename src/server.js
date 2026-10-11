@@ -44,6 +44,7 @@ app.use((req, res, next) => {
 
 app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
 app.use(require('./routes/store').router);   // storefronts + editor (takes over /s/:handle)
+app.use(require('./routes/shipping').router);  // seller shipping labels (test mode)
 app.use(require('./routes/support').router);  // cases, refunds, reports, admin case tools
 app.use(require('./routes/direct').router);   // direct (seller-owned) checkout; must precede the legacy routers
 app.use(require('./routes/buyer').router);
@@ -91,6 +92,7 @@ function assertProductionConfig() {
   const problems = [...config.envProblems];
   if (!/^https:\/\//.test(config.publicUrl)) problems.push('PUBLIC_URL must be the public https:// address of the site');
   if (config.paymentsMode === 'sandbox') problems.push('PAYMENTS_MODE=sandbox simulates payments and must never run in production');
+  if (config.isProd && config.shippo.apiKey) problems.push('SHIPPO_API_KEY must not be set in production: label purchasing is test-mode only until postage billing is verified (docs/SHIPPING.md)');
   if (config.isProd && config.sellerOnboardingRequested === 'open') problems.push('SELLER_ONBOARDING=open is not allowed in production (sellers are invitation-only)');
   if (config.sellerOnboarding !== 'invite') problems.push('SELLER_ONBOARDING must be "invite" in production (hard seller cap, invitation-only)');
   if (config.email.provider === 'resend' && !(config.email.apiKey && config.email.from)) problems.push('EMAIL_PROVIDER=resend needs EMAIL_API_KEY and EMAIL_FROM');

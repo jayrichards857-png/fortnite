@@ -1,0 +1,45 @@
+# Shipping labels (Shippo) — test mode only
+
+**Status:** implemented and tested against a *fake* Shippo transport. **Not yet exercised against Shippo's servers** (this build environment could not reach `docs.goshippo.com`/`api.goshippo.com`, and no key was used). **Real postage purchasing is disabled** and cannot be switched on by configuration; see “Who pays for postage”.
+
+## What it does
+On a seller's order page (`/dashboard/orders/<id>`, orders that are *paid* and not yet shipped) a **Shipping label** panel lets the seller:
+1. save their **ship-from address** (never invented; asked for once; US/CA/MX validation),
+2. see the buyer's **delivery address** (from checkout; shown only after payment is confirmed) and enter/confirm the **package weight and dimensions** (listing values prefill when the listing has them),
+3. **Get shipping rates** (carrier, service, price, estimated days; cheapest first),
+4. **Buy shipping label** after an explicit confirmation dialog that shows carrier, service and price. The server re-checks the exact price, that the quote is < 24 h old and that addresses/package are unchanged.
+5. Print/download the label (`/dashboard/orders/<id>/label`, authenticated redirect) and see tracking. Stored per purchase in `shipments`: label URL, tracking number, carrier, service, price (cents), currency, provider transaction id, status, test flag.
+
+**Test labels are separated from real ones:** `shipments.test = 1` rows are shown with a TEST MODE banner, are *not valid postage*, are never copied into `orders.carrier/tracking_number`, never prefill the ship form and are never shown to buyers. Only real (`test = 0`) labels do those things, and no code path can create one in this release. Buyers see tracking/carrier status on their order page exactly as before (seller enters tracking; the optional `/webhooks/tracking` updates `shipments.tracking_status` for real labels).
+
+Marking the order **shipped** stays a separate, explicit seller action (a label is not proof the parcel was handed over). The checkout model is unchanged: no escrow, no PairPlug fee or markup on postage, no change to payment processing, onboarding stays invitation-only.
+
+## Safety properties (all covered by `test/shipping.test.js`)
+* Every endpoint requires a seller session and is scoped by `seller_id`; other sellers get **404**, buyers 403 (HTML: redirect), anonymous 401. The API key and label/provider ids never appear in browser-visible data.
+* Inputs validated (addresses, postal formats, weight 1–2400 oz, dimensions 0.5–108 in); incomplete data is requested, not guessed. Per-seller rate limits (quotes 20/h, purchases 10/h, status checks 30/h).
+* **Exactly-once purchase:** a unique partial index `(order_id, test) WHERE status IN ('purchasing','success')` plus a claim-before-call transaction. Double clicks / concurrent requests make **one** provider call; a retry after success returns the existing label.
+* Failure handling: provider **ERROR/rejection → `failed`** (retry with fresh rates); **timeout/5xx → stays `purchasing`** (outcome unknown — never auto-retried; seller uses *Check status*, or *Release* after 2 minutes only if no transaction id exists and they confirmed in their Shippo dashboard); **QUEUED/WAITING → `purchasing`** until *Check status* sees SUCCESS. Error text shown to users is sanitised.
+* Purchased labels are immutable and undeletable (DB triggers).
+* Config guards: `SHIPPO_API_KEY` must be `shippo_test_…`; a `shippo_live_…` key is recognised and **refused**; **the server refuses to start in production if the variable is set**; any non-test API response is rejected.
+
+## Setup (local, test mode)
+1. Create a free Shippo account and copy the **Test** API token from the API section (do not use the Live token). Never paste it into chat, commit it, or put it in a browser-visible place.
+2. Set it in *your own* environment only:
+   * PowerShell: `$env:SHIPPO_API_KEY="shippo_test_xxxxxxxx"; $env:HOST="0.0.0.0"; npm start`
+   * bash: `SHIPPO_API_KEY=shippo_test_xxxxxxxx npm start` (or a git-ignored `.env`/shell profile; see `.env.example`).
+3. Migration: automatic on start (schema v6, additive: `seller_ship_from`, `shipments`). Back up first (`npm run backup`); no existing rows are modified. Rollback = restore the backup (older code must not open a v6 database).
+4. Log in as an approved seller with a paid order → Order page → *Shipping label*.
+5. Verify against Shippo's test mode yourself: the first real call to `api.goshippo.com` happens here; the field mapping (`/shipments/`, `/transactions/`, `servicelevel.name`, `estimated_days`, `label_url`, `tracking_number`) follows Shippo's public docs but has **not** been run against the live API by me.
+
+## Pricing assumptions (NOT verified from Shippo's own pricing page)
+Third-party sources I found (May–Oct 2026 pages; they conflict): Shippo's free **Starter** plan has API access and about **30 free labels/month**; beyond that roughly **$0.05–$0.08 per label** (some sources say $0.05 applies only to bringing your *own* carrier account; one says $0.07 per API label); paid plans start around $19/month. **Postage itself is always extra, billed per label at carrier rates.** Sources: [clickpost.ai](https://clickpost.ai/blog/shippo-pricing), [hackceleration](https://www.hackceleration.com/labs/shippo-pricing), [fitgap](https://us.fitgap.com/products/shippo), [toolradar](https://toolradar.com/tools/shippo/pricing). **Confirm on goshippo.com/pricing before relying on any number.** Test mode costs nothing.
+
+## Who pays for postage — unresolved (blocker for live labels)
+PairPlug must not pay for or front postage. Options investigated (from Shippo's [integration paths](https://docs.goshippo.com/docs/Guides_general/integration-paths) and OAuth docs):
+| Option | Who is billed | Requirement / blocker |
+|---|---|---|
+| **A. Shippo OAuth (“connected accounts”)** | **Each seller, directly by Shippo** (their own Shippo account + payment method) | OAuth credentials are issued by **Shippo's sales team** on request (company, callback URL, use case). That is an extra approval/account step outside this repo; plus an OAuth flow and secure per-seller token storage. **Not implemented.** Best long-term fit. |
+| **B. Seller pastes their own Shippo API key** | Each seller, by Shippo | Needs per-seller secret storage (encryption at rest, rotation, key never shown again), sellers must each hold a Shippo account, and a live key must be validated safely. Feasible but real security work. **Not implemented.** |
+| **C. Platform / white-label managed accounts** | **PairPlug** collects/pays postage and must bill sellers | Violates the beta rule that PairPlug holds no funds and doesn't pay for postage. **Rejected.** |
+
+**Decision:** real purchasing stays disabled. Enabling it requires: choose A or B, verify Shippo account setup and who is invoiced, implement per-seller credentials with security review, test with Shippo's test mode end-to-end, then a small supervised live purchase by one seller on their own account. Until then sellers buy labels in their own Shippo/carrier account and enter the tracking number (existing flow).

@@ -408,6 +408,7 @@ r.post('/webhooks/tracking', express.json(), (req, res) => {
   const { carrier, trackingNumber, status } = req.body || {};
   const o = q.get('SELECT * FROM orders WHERE carrier = ? AND tracking_number = ?', carrier, trackingNumber);
   if (!o) return res.json({ ok: true, ignored: true });
+  q.run("UPDATE shipments SET tracking_status = ?, updated_at = ? WHERE order_id = ? AND test = 0 AND status = 'success' AND tracking_number = ?", String(status || '').slice(0, 40) || null, now(), o.id, trackingNumber);
   if (String(status).toUpperCase() === 'DELIVERED' && o.status === 'shipped') escrow.markDelivered(o.id, 'carrier');
   res.json({ ok: true });
 });
