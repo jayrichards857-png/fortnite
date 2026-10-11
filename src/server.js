@@ -48,6 +48,7 @@ app.use(require('./routes/shipping').router);  // seller shipping labels (test m
 app.use(require('./routes/support').router);  // cases, refunds, reports, admin case tools
 app.use(require('./routes/direct').router);   // direct (seller-owned) checkout; must precede the legacy routers
 app.use(require('./routes/buyer').router);
+app.use(require('./routes/externalSales').router);   // seller's own records of sales made outside PairPlug
 app.use(require('./routes/seller').router);
 app.use(require('./routes/admin').router);
 app.use(require('./routes/adminBeta').router);

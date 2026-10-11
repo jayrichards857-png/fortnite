@@ -12,6 +12,7 @@ const { transition } = require('../orderMachine');
 const { notify } = require('../notify');
 const { PricingEngine } = require('../pricing');
 const SHIPPO = require('../shippo');
+const ES = require('../externalSales');
 const { uploader } = require('./buyer');
 const X = require('../externalCheckout');
 
@@ -88,6 +89,7 @@ r.get('/dashboard/inventory', S, (req, res) => {
   const pg = Math.max(1, parseInt(f.page, 10) || 1), per = 25;
   const total = q.get(`SELECT COUNT(*) n FROM listings WHERE ${where.join(' AND ')}`, ...p).n;
   const rows = q.all(`SELECT l.*, ${L.IMG_SQL} FROM listings l WHERE ${where.join(' AND ').replace(/\b(seller_id|status|title|sku|brand)\b/g, 'l.$1')} ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`, ...p, per, (pg - 1) * per);
+  const recorded = ES.recordedIds(rows.map((l) => l.id));
   const sale = { sold: 'Sold', reserved: 'In checkout', active: 'For sale', draft: 'Not published', archived: 'Paused' };
   const body = `<h1>Inventory <span class="muted small">${total} item${total === 1 ? '' : 's'}</span></h1>
   <form class="filterbar" method="get"><label class="sr" for="iq">Search</label><input id="iq" type="search" name="q" placeholder="Search title, SKU, brand" value="${esc(f.q || '')}">
@@ -100,7 +102,8 @@ r.get('/dashboard/inventory', S, (req, res) => {
     <td><a href="/dashboard/listings/${l.id}/edit">${esc(l.title)}</a><div class="muted small">${esc([l.brand, l.size].filter(Boolean).join(' · '))}</div></td><td>${esc(l.sku || '—')}</td>
     <td class="num">${money(l.price_cents)}</td><td class="num">${l.cost_cents == null ? '—' : money(l.cost_cents)}</td><td>${V.statusPill(l.status)}</td><td>${sale[l.status]}</td><td>${date(l.created_at)}</td>
     <td style="white-space:nowrap"><a class="btn ghost small" href="/dashboard/listings/${l.id}/edit">Edit</a> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/duplicate" data-redirect="/dashboard/listings/{id}/edit">Duplicate</button>
-      ${l.status === 'active' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/pause">Pause</button> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/mark-sold" data-confirm="Mark as sold? Use this only for an item you sold outside PairPlug. Buyers will no longer be able to buy it here.">Mark sold</button>` : ''}
+      ${l.status === 'active' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/pause">Pause</button> <a class="btn ghost small" href="/dashboard/listings/${l.id}/external-sale">Record external sale</a>` : ''}
+      ${l.status === 'sold' && !recorded.has(l.id) ? `<a class="btn small" href="/dashboard/listings/${l.id}/external-sale">Record sale</a>` : ''}
       ${l.status === 'archived' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/resume">Resume</button>` : ''}
       ${['draft', 'archived'].includes(l.status) ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}" data-method="DELETE" data-confirm="Delete this item permanently? (Items with orders or conversations can't be deleted.)">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
   ${V.pager(pg, Math.max(1, Math.ceil(total / per)), { q: f.q || '', status: f.status || '' })}`
@@ -161,7 +164,9 @@ r.get('/dashboard/listings/:id(\\d+)/edit', S, (req, res) => {
 // ---------- Listing APIs ----------
 r.post('/api/seller/listings', S, (req, res) => { const l = L.saveListing(req.user, null, req.body); res.json({ ok: true, id: l.id, status: l.status }); });
 r.put('/api/seller/listings/:id(\\d+)', S, (req, res) => { const l = L.saveListing(req.user, Number(req.params.id), req.body); res.json({ ok: true, id: l.id, status: l.status }); });
-r.post('/api/seller/listings/:id(\\d+)/:action(pause|resume|unpublish|mark-sold)', S, (req, res) => res.json({ ok: true, ...L.listingAction(req.user, req.params.id, req.params.action.replace('-', '_')) }));
+r.post('/api/seller/listings/:id(\\d+)/:action(pause|resume|unpublish)', S, (req, res) => res.json({ ok: true, ...L.listingAction(req.user, req.params.id, req.params.action) }));
+// "mark-sold" (kept for older clients) records an EXTERNAL sale with default details; the inventory page links to the full form instead.
+r.post('/api/seller/listings/:id(\\d+)/mark-sold', S, (req, res) => res.json({ ok: true, ...ES.record(req.user, req.params.id, req.body) }));
 r.delete('/api/seller/listings/:id(\\d+)', S, (req, res) => {
   const out = L.listingAction(req.user, req.params.id, 'delete');
   for (const f of out.files || []) require('../images').removeIfUnreferenced(f);
@@ -213,10 +218,14 @@ r.get('/dashboard/orders', S, (req, res) => {
     ['Cancelled, released and refunded', 'Never paid (or refunded). The item is only re-listed automatically if nothing else holds or has sold it.', (o) => ['cancelled', 'refunded'].includes(o.status)]];
   const head = '<thead><tr><th>Order</th><th>Items</th><th>Buyer</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th><th>Tracking</th><th>Actions</th></tr></thead>';
   const sections = GROUPS.map(([title, note, test]) => { const list = orders.filter(test); return list.length ? `<h2 style="margin-top:20px">${title} <span class="muted small">(${list.length})</span></h2>${note ? `<p class="small muted" style="margin:0 0 8px">${note}</p>` : ''}<div class="tablewrap"><table>${head}<tbody>${list.map(rowOf).join('')}</tbody></table></div>` : ''; }).join('');
-  const body = `<h1>Orders</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${FILTERS.map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s.replace('_', ' ')}</option>`).join('')}</select></form>
+  const extSales = st ? [] : ES.listFor(req.user), unrecorded = st ? [] : ES.unrecordedSold(req.user);
+  const extSections = (unrecorded.length ? `<h2 style="margin-top:24px">Sold items with no sales record <span class="muted small">(${unrecorded.length})</span></h2><p class="small muted" style="margin:0 0 8px">These listings are marked Sold but have no PairPlug order and no external-sale record. Nothing was converted automatically: if you sold one outside PairPlug, record it so it appears in your sales history.</p><div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Listed price</th><th></th></tr></thead><tbody>${unrecorded.map((l) => `<tr><td><a href="/dashboard/listings/${l.id}/edit">${esc(l.title)}</a></td><td class="num">${money(l.price_cents)}</td><td><a class="btn small" href="/dashboard/listings/${l.id}/external-sale">Record external sale</a></td></tr>`).join('')}</tbody></table></div>` : '')
+    + (extSales.length ? `<h2 style="margin-top:24px">External sales you recorded <span class="muted small">(${extSales.length})</span></h2><p class="small muted" style="margin:0 0 8px"><span class="pill s-pending_payment">External sale</span> Sold <strong>outside PairPlug</strong>. These are your own records: not PairPlug orders, and PairPlug has not verified the sale or any payment.</p><div class="tablewrap"><table><thead><tr><th>Item</th><th>Sold on</th><th class="num">Sale price</th><th>Where / reference</th><th>Note</th></tr></thead><tbody>${extSales.map((x) => `<tr><td><a href="/dashboard/listings/${x.listing_id}/edit">${esc(x.title)}</a></td><td>${esc(x.sold_on)}</td><td class="num">${x.price_cents == null ? '<span class="muted">not recorded</span>' : money(x.price_cents)}</td><td>${esc([x.channel, x.reference].filter(Boolean).join(' · ') || '—')}</td><td>${esc(x.note || '')}</td></tr>`).join('')}</tbody></table></div>` : '');
+  const body = `<h1>Orders &amp; sales</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${FILTERS.map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s.replace('_', ' ')}</option>`).join('')}</select></form>
   ${X.isExternal() ? '<p class="small muted">Direct checkout: buyers pay you through your own payment link. “Unconfirmed” orders are reserved but <strong>not paid</strong> until you confirm the payment arrived in your own account.</p>' : ''}
   <p class="small muted">${SHIPPO.enabled() ? 'Shipping labels are in <strong>test mode</strong>: open a paid order to try the Shippo label panel (test labels are not valid postage). For real shipments, buy a label with your carrier or a shipping service and enter the tracking number on the order.' : 'PairPlug does not buy shipping labels or pay postage. Buy postage from your own shipping account, then enter the carrier and tracking number on the order.'}</p>
-  ${orders.length ? sections : V.empty('No orders', st ? 'No orders with this status.' : 'Orders appear here as soon as a buyer starts checkout, including ones still waiting for your payment confirmation.')}`;
+  ${orders.length ? sections : (extSales.length || unrecorded.length) && !st ? '<p class="muted">No PairPlug orders yet. Orders appear here as soon as a buyer starts checkout, including ones still waiting for your payment confirmation.</p>' : V.empty('No orders', st ? 'No orders with this status.' : 'Orders appear here as soon as a buyer starts checkout, including ones still waiting for your payment confirmation.')}
+  ${st ? '' : extSections}`;
   page(req, res, { title: 'Orders', path: '/dashboard/orders', body, dash: true });
 });
 r.post('/api/seller/orders/:id(\\d+)/ship', S, (req, res) => {

@@ -39,6 +39,9 @@ Sellers are *expected* to reply to buyer messages within **48 hours**. This is s
 ## Stale link / double payment (manual procedure)
 A Payment Link can be paid more than once, or after the listing sold. PairPlug cannot see Stripe. If a seller reports a duplicate or late payment: the seller refunds the extra payment in Stripe, then (optionally) records it as a refund request on the relevant order; the founder can note it in a case. Always search Stripe for the `PP-<id>` reference before confirming.
 
+## Items sold outside PairPlug
+Use **Inventory → Record external sale** (not a PairPlug order). It marks the item Sold and logs the date, optional price and where it sold in **Orders & sales → External sales you recorded**, labelled as the seller's own, unverified record. Items already marked Sold by hand appear under **Sold items with no sales record** until you record them (nothing is converted automatically). Items sold through a PairPlug checkout are tracked as orders and can't be recorded this way. Records can't be edited or deleted.
+
 ## Admin tasks
 * **Invitations / Sellers**: slots used (suspended sellers still occupy a slot), revoke invitations, suspend/reactivate, *release slot* (audited; refused while the seller has open orders; archives their listings).
 * **Cases**: reply, internal note, status, *Pause listing*, *Suspend seller*, *Decide and close*; **View reported conversation** (only for reported messages, audited).

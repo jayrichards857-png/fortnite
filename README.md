@@ -47,7 +47,7 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 
 | Command | Purpose |
 |---|---|
-| `npm test` | 156 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
+| `npm test` | 162 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
 | `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
 | `npm run test:browser` | Five real-Chromium journeys (incl. `browser-shipping.js`, the label panel against a fake Shippo) on empty temp DBs: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile). Stripe is never contacted (redirect captured). |
 | `npm run backup` / `npm run restore -- <snapshot> [--force]` | Consistent DB snapshot + photos (owner-only perms) / integrity- and version-checked restore that keeps a `.pre-restore` copy |

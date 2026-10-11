@@ -247,7 +247,7 @@ function publishBlocker(user, l) {
  * Seller-driven listing state changes. Only legal transitions are allowed; sold/reserved items are owned by the order system
  * (a reserved item has a buyer mid-checkout and cannot be touched).
  *   pause: active -> archived     resume: archived -> active     unpublish: active -> draft
- *   mark_sold: active -> sold (sold elsewhere / offline; no order is created)     delete: unused draft/archived -> removed
+ *   (marking an item sold by hand is now `externalSales.record`: it also writes the seller's external-sale record)     delete: unused draft/archived -> removed
  */
 function listingAction(user, id, action) {
   return tx(() => {
@@ -264,7 +264,6 @@ function listingAction(user, id, action) {
         const why = publishBlocker(user, l); if (why) throw new HttpError(422, `Can't resume yet: ${why}`);
         q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, ?), updated_at = ? WHERE id = ?', 'active', t, t, l.id); break;
       }
-      case 'mark_sold': if (l.status !== 'active') bad('Only items for sale can be marked sold.'); set('sold'); audit(user, 'listing_marked_sold', { type: 'listing', id: l.id }); break;
       case 'delete': {
         if (!['draft', 'archived'].includes(l.status)) bad('Pause or unpublish the item before deleting it.');
         if (q.get('SELECT 1 x FROM order_items WHERE listing_id = ?', l.id) || q.get('SELECT 1 x FROM conversations WHERE listing_id = ?', l.id)) bad('This item has orders or conversations, so it is kept for the record. Leave it paused instead.');

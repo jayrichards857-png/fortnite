@@ -494,6 +494,24 @@ UPDATE orders SET payment_confirmed_by = (
   SELECT CAST(substr(e.actor, 8) AS INTEGER) FROM order_events e WHERE e.order_id = orders.id AND e.to_status = 'paid' AND e.actor LIKE 'seller:%' ORDER BY e.id LIMIT 1)
  WHERE payment_mode = 'external' AND payment_confirmed_at IS NOT NULL;
 `,
+// 8: external sales — items the seller sold OUTSIDE a PairPlug checkout (in person, another marketplace, ...). This is the seller's own record: it is not a
+// PairPlug order, has no buyer or payment status, and PairPlug has not verified it. One record per listing; append-only. Additive: no existing row is touched.
+`
+CREATE TABLE external_sales (
+  id INTEGER PRIMARY KEY,
+  listing_id INTEGER NOT NULL REFERENCES listings(id),
+  seller_id INTEGER NOT NULL REFERENCES users(id),
+  sold_on TEXT NOT NULL CHECK (sold_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  price_cents INTEGER CHECK (price_cents IS NULL OR (price_cents >= 0 AND price_cents <= 100000000)),
+  currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
+  channel TEXT, reference TEXT, note TEXT,
+  recorded_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_external_sales_listing ON external_sales(listing_id);
+CREATE INDEX idx_external_sales_seller ON external_sales(seller_id, sold_on DESC, id DESC);
+CREATE TRIGGER external_sales_no_delete BEFORE DELETE ON external_sales BEGIN SELECT RAISE(ABORT, 'external sale records cannot be deleted'); END;
+CREATE TRIGGER external_sales_no_update BEFORE UPDATE ON external_sales BEGIN SELECT RAISE(ABORT, 'external sale records cannot be changed'); END;
+`,
 ];
 
 function migrate() {

@@ -140,7 +140,7 @@ test('listing lifecycle: pause, resume, unpublish, mark sold, delete — ownersh
   assert.equal((await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 409, 'a sold listing cannot start an order');
   assert.match((await buyer.get(`/listing/${id}`)).text, /Sold/); assert.doesNotMatch((await buyer.get(`/listing/${id}`)).text, />Buy now</);
   assert.equal((await s.post(`/api/seller/listings/${id}/pause`)).status, 409); assert.equal((await s.req('DELETE', `/api/seller/listings/${id}`)).status, 409);
-  assert.equal(q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'listing_marked_sold'").n, 1);
+  assert.equal(q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'external_sale_recorded'").n, 1); assert.equal(q.get('SELECT COUNT(*) n FROM external_sales WHERE listing_id = ?', id).n, 1, 'marking sold records an external sale');
   // reserved items are untouchable by the seller
   const r = await H.makeListing(s, { payment_url: LINK }); assert.equal((await buyer.post('/api/purchases', { listingId: r, acknowledged: true, address: H.address })).status, 200);
   for (const a of ['pause', 'unpublish', 'mark-sold']) assert.equal((await s.post(`/api/seller/listings/${r}/${a}`)).status, 409, a);
@@ -151,7 +151,7 @@ test('listing lifecycle: pause, resume, unpublish, mark sold, delete — ownersh
   q.run('INSERT INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES((SELECT id FROM users WHERE email = ?), (SELECT id FROM users WHERE handle = ?), ?, 1)', buyer.email, s.handle, kept.json.id);
   assert.equal((await s.req('DELETE', `/api/seller/listings/${kept.json.id}`)).status, 409);
   await H.makeListing(s, { payment_url: LINK, title: 'Still for sale' });
-  assert.match((await s.get('/dashboard/inventory')).text, /Mark sold/);
+  assert.match((await s.get('/dashboard/inventory')).text, /Record external sale/);
 });
 
 test('listing validation & hybrid purchase UI: currency, prices, contact-only listings never show a checkout button', async () => {
