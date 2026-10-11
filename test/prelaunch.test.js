@@ -34,7 +34,7 @@ test('deploy env examples are valid for systemd (no inline comments) and pass th
   assert.ok(!('PAYMENTS_MODE' in kv) && !('RATE_LIMIT_SCALE' in kv));
   const c = cfgIn({ ...kv, PUBLIC_URL: 'https://beta.example.test' });
   assert.deepEqual(c.problems, []); assert.equal(c.prod, true); assert.equal(c.onb, 'invite'); assert.equal(c.mode, 'external'); assert.equal(c.host, '127.0.0.1');
-  assert.equal(c.signups, 'closed'); assert.match(c.release, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(c.signups, 'open', 'buyer sign-up open; sellers stay invitation-only'); assert.match(c.release, /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test('malformed settings can never widen access: inline comments, junk values, and production defaults', () => {
