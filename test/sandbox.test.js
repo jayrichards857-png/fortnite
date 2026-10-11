@@ -118,3 +118,40 @@ test('the sandbox refuses a database that holds real (non-sandbox) accounts or o
   q.run('DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)', real.email);
   assert.ok(!transcript.includes(KEY) && !transcript.includes('215 Clayton'), 'seeding logged nothing sensitive');
 });
+
+// ------------------------------------------------------------------ --manual-only: the sandbox as the exact live-beta seller experience
+test('--manual-only guards: needs no Shippo credential, cannot combine with --fake-shippo, and keeps every other refusal', () => {
+  const ok = { nodeEnv: 'development', shippoKey: '', manual: true, dbFile: '/x/sandbox.db', realDbFile: '/x/pairplug.db' };
+  assert.doesNotThrow(() => sb.assertSafeEnvironment(ok));
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, fake: true }), /either --fake-shippo or --manual-only/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, nodeEnv: 'production' }), /development-only/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, dbFile: '/x/pairplug.db' }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, manual: false }), /SHIPPO_API_KEY|--fake-shippo/, 'without the flag a key is still required');
+});
+
+test('--manual-only process: isolated test data, the exact beta order page (no label UI), Shippo credentials ignored and never printed', async () => {
+  const net = require('node:net'), os = require('node:os'), fs = require('node:fs'), { spawn } = require('node:child_process');
+  const port = await new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port: p } = s.address(); s.close(() => r(p)); }); });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-sbx-manual-')), realDb = path.join(ROOT, 'data', 'pairplug.db');
+  const before = fs.existsSync(realDb) ? fs.statSync(realDb).mtimeMs : null;
+  const child = spawn(process.execPath, ['scripts/shipping-sandbox.js', '--manual-only', '--data-dir', dir, '--port', String(port)], { cwd: ROOT, env: { PATH: process.env.PATH, SHIPPO_API_KEY: 'shippo_live_MUST_BE_IGNORED_999' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = ''; child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
+  try {
+    await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('sandbox did not start: ' + out.slice(0, 300))), 20000); const iv = setInterval(() => { if (out.includes('Press Ctrl+C')) { clearInterval(iv); clearTimeout(t); res(); } }, 100); });
+    assert.match(out, /Shippo: OFF \(manual-only/); assert.ok(!out.includes('MUST_BE_IGNORED') && !out.includes('shippo_live'), 'the credential is neither used nor echoed');
+    const pw = out.match(/TEST seller: \S+\s+one-time password: (\S+)/)[1], base = `http://127.0.0.1:${port}`, h = { 'X-Requested-With': 'pairplug', 'Content-Type': 'application/json' };
+    const lg = await fetch(base + '/api/login', { method: 'POST', headers: h, body: JSON.stringify({ email: 'seller@sandbox.invalid', password: pw }) }); assert.equal(lg.status, 200);
+    const cookie = lg.headers.get('set-cookie').split(';')[0], get = (u, o = {}) => fetch(base + u, { ...o, headers: { cookie, ...(o.headers || {}) } });
+    const page = await (await get('/dashboard/orders/1')).text();
+    assert.match(page, /SHIPPING SANDBOX — TEST DATA ONLY/); assert.match(page, /How to ship this order/); assert.match(page, /PairPlug does not buy labels or pay postage/); assert.match(page, /name="tracking"/); assert.match(page, /Mark shipped/);
+    assert.doesNotMatch(page, /Shipping label \(sandbox|Buy shipping label|Get shipping rates|id="ship-panel"|shipping\.js/, 'identical to the live beta: no label UI');
+    const st = await (await get('/api/seller/orders/1/shipping')).json(); assert.equal(st.enabled, false);
+    assert.equal((await get('/api/seller/orders/1/shipping/rates', { method: 'POST', headers: h, body: '{}' })).status, 503);
+    // the unpaid order has no shipping form; the real-database path was never created or touched
+    assert.ok(!(await (await get('/dashboard/orders/2')).text()).includes('Mark shipped'));
+    assert.ok(fs.existsSync(path.join(dir, 'shipping-sandbox.db')) && !fs.existsSync(path.join(dir, 'pairplug.db')));
+    assert.equal(fs.existsSync(realDb) ? fs.statSync(realDb).mtimeMs : null, before, 'your real database file is untouched');
+    // and the manual workflow itself works on the test order
+    const ship = await get('/api/seller/orders/1/ship', { method: 'POST', headers: h, body: JSON.stringify({ carrier: 'USPS', tracking: '9400111899223399', note: 'sandbox test' }) }); assert.equal(ship.status, 200);
+  } finally { child.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

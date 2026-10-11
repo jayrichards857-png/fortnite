@@ -51,7 +51,7 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 | `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
 | `npm run test:browser` | Five real-Chromium journeys (incl. `browser-shipping.js`, the label panel against a fake Shippo) on empty temp DBs: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile). Stripe is never contacted (redirect captured). |
 | `npm run backup` / `npm run restore -- <snapshot> [--force]` | Consistent DB snapshot + photos (owner-only perms) / integrity- and version-checked restore that keeps a `.pre-restore` copy |
-| `npm run sandbox:shipping` | Dev-only isolated **shipping sandbox** with TEST orders for the Shippo test-mode workflow (`-- --fake-shippo` for no Shippo, `-- --reset` to rebuild); see [docs/SHIPPING.md](docs/SHIPPING.md) |
+| `npm run sandbox:shipping` | Dev-only isolated **shipping sandbox** with TEST orders for the Shippo test-mode workflow (`-- --manual-only` previews the exact beta seller page with Shippo off, `-- --fake-shippo` for no Shippo token, `-- --reset` to rebuild); see [docs/SHIPPING.md](docs/SHIPPING.md) |
 | `npm run inventory:sellers` | Read-only report of seller accounts vs. the cap |
 | `node scripts/dump-schema.js` | Regenerates `docs/schema.sql` from the migrations |
 | `npm run seed:demo` / `npm run screenshots` | **Isolated fixture DB** for the older (platform-mode) screenshots. Never touches the live DB |

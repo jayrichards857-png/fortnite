@@ -55,6 +55,8 @@ $env:SHIPPO_API_KEY="shippo_test_xxxxxxxx"
 npm run sandbox:shipping
 # Option B: no Shippo at all, an in-process FAKE (UI and flow only; its label link is not a real file)
 npm run sandbox:shipping -- --fake-shippo
+# Option C: Shippo OFF — previews EXACTLY what a live-beta seller sees (manual shipping page, no label panel). No token needed; any SHIPPO_API_KEY in your terminal is ignored.
+npm run sandbox:shipping -- --manual-only
 # start over from scratch (deletes ONLY the sandbox files)
 npm run sandbox:shipping -- --reset
 ```

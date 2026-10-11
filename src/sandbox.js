@@ -14,10 +14,11 @@ const MARK = '[TEST DATA]';
 const FIXTURE_ADDRESS = { name: 'TEST Buyer (sandbox)', line1: '215 Clayton St', city: 'San Francisco', region: 'CA', postal: '94117', country: 'US' };   // a public Shippo documentation sample address
 
 /** Pure pre-flight checks. Throws Error with a safe message (never includes the key). */
-function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, dbFile, realDbFile }) {
+function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, manual = false, dbFile, realDbFile }) {
+  if (fake && manual) throw new Error('Choose either --fake-shippo or --manual-only, not both.');
   if (/^production\b/.test(String(nodeEnv).trim())) throw new Error('The shipping sandbox is development-only and refuses to run with NODE_ENV=production.');
   if (path.resolve(dbFile) === path.resolve(realDbFile)) throw new Error('Refusing to use the real PairPlug database. The sandbox has its own database file.');
-  if (!fake) {
+  if (!fake && !manual) {          // --manual-only never uses Shippo (any key in the environment is ignored and removed), so there is nothing to validate
     if (!shippoKey) throw new Error('Set SHIPPO_API_KEY to a Shippo TEST token (starts with shippo_test_) in this terminal, or run with --fake-shippo to try the UI without Shippo.');
     if (/^shippo_live_/.test(shippoKey)) throw new Error('A LIVE Shippo key was found. The sandbox only accepts shippo_test_ tokens and will not run with a live key.');
     if (!/^shippo_test_\S+$/.test(shippoKey)) throw new Error('SHIPPO_API_KEY is not a Shippo test token (it must start with shippo_test_).');
