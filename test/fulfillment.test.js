@@ -117,9 +117,9 @@ test('older orders without an address: shown as missing (never invented), shippi
 test('history stays intact and visible after refresh/fresh login: cancelled and shipped orders and external-sale records', async () => {
   const a = await scene(), cancelled = await scene({ confirm: false, title: 'Cancelled jacket' }); await cancelled.seller.post(`/api/seller/orders/${cancelled.o}/reject-payment`);
   await a.seller.post(`/api/seller/orders/${a.o}/ship`, { carrier: 'USPS', tracking: trk() });
-  const ext = await H.makeListing(a.seller, { payment_url: LINK, title: 'Sold elsewhere jacket' }); assert.equal((await a.seller.post(`/api/seller/listings/${ext}/external-sale`, { price: '20' })).status, 200);
+  const ext = await H.makeListing(a.seller, { payment_url: LINK, title: 'Sold elsewhere jacket' }); assert.equal((await a.seller.post(`/api/seller/listings/${ext}/record-sale`, { origin: 'in_person', fulfillment: 'pickup', price: '20' })).status, 200);
   const fresh = new H.Client(); await fresh.post('/api/login', { email: a.seller.email, password: 'correct-horse-9' });
-  const page = (await fresh.get('/dashboard/orders')).text; assert.match(page, /Shipped/); assert.match(page, /Sold elsewhere jacket/); assert.match(page, /Sold outside PairPlug/);
+  const page = (await fresh.get('/dashboard/orders')).text; assert.match(page, /Shipped/); assert.match(page, /Sold elsewhere jacket/); assert.match(page, /Recorded sales/);
   const cp = (await cancelled.seller.get('/dashboard/orders')).text; assert.match(cp, /Cancelled jacket/); assert.match(cp, /Cancelled, released and refunded/);
   assert.match((await cancelled.buyer.get('/orders')).text, /Cancelled jacket/);
   assert.match((await a.seller.get('/dashboard/inventory?status=sold')).text, /Fulfil jacket/);

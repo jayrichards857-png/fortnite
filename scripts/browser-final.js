@@ -136,11 +136,11 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     const o3 = await api(b.ctx, 'POST', '/api/purchases', { listingId: l3, acknowledged: true, address: { name: 'Bea', line1: '1 Main', city: 'Austin', region: 'TX', postal: '78701', country: 'US' } }); assert.equal(o3.status, 200);
     await api(s1.ctx, 'POST', `/api/seller/orders/${o3.json.orderId}/confirm-payment`);
     const again = await api(b.ctx, 'POST', '/api/purchases', { listingId: l3, acknowledged: true, address: { name: 'Bea', line1: '1 Main', city: 'Austin', region: 'TX', postal: '78701', country: 'US' } }); assert.equal(again.status, 409);
-    // a hand-sold item: the full "Record external sale" form, then the labelled sales-history entry (no fake order)
-    const l4 = await mkListing(s1.ctx, 'Sold at the pop-up'); await s1.pg.goto(`${B}/dashboard/listings/${l4}/external-sale`); assert.match(await s1.pg.textContent('main'), /sale made outside PairPlug/);
-    await s1.pg.fill('#pr', '55.00'); await s1.pg.fill('#ch', 'In person'); await Promise.all([s1.pg.waitForURL(`${B}/dashboard/orders`), s1.pg.click('button[type=submit]:has-text("Record external sale")')]);
-    t = await s1.pg.textContent('main'); assert.match(t, /External sales you recorded/); assert.match(t, /Sold at the pop-up/); assert.match(t, /PairPlug has not verified the sale or any payment/);
-    step('8. a sold listing cannot start another order; a hand-sold item is recorded as an EXTERNAL sale (no fake order, labelled unverified)');
+    // a sale made another way: the unified "Record sale" form (origin is a field), then the labelled entry in Orders & sales (no fake order)
+    const l4 = await mkListing(s1.ctx, 'Sold at the pop-up'); await s1.pg.goto(`${B}/dashboard/inventory`); assert.match(await s1.pg.textContent('main'), /Record sale/); await s1.pg.goto(`${B}/dashboard/listings/${l4}/record-sale`); assert.match(await s1.pg.textContent('main'), /Where did this sale originate\?/);
+    await s1.pg.selectOption('#or', 'in_person'); await s1.pg.selectOption('#fu', 'pickup'); await s1.pg.fill('#pr', '55.00'); await Promise.all([s1.pg.waitForURL(`${B}/dashboard/orders`), s1.pg.click('button[type=submit]:has-text("Record sale")')]);
+    t = await s1.pg.textContent('main'); assert.match(t, /Recorded sales/); assert.match(t, /Sold at the pop-up/); assert.match(t, /In person/); assert.match(t, /has not verified these sales or any payment/);
+    step('8. a sold listing cannot start another order; a sale recorded another way appears as a labelled sale record (no fake order, payment unverified)');
 
     // ---- 9. cross-seller access: seller 2 cannot see seller 1's order, case or listing editor
     assert.equal((await sellers.s2.ctx.request.get(`${B}/dashboard/orders/${o3.json.orderId}`)).status(), 404);

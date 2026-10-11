@@ -512,6 +512,51 @@ CREATE INDEX idx_external_sales_seller ON external_sales(seller_id, sold_on DESC
 CREATE TRIGGER external_sales_no_delete BEFORE DELETE ON external_sales BEGIN SELECT RAISE(ABORT, 'external sale records cannot be deleted'); END;
 CREATE TRIGGER external_sales_no_update BEFORE UPDATE ON external_sales BEGIN SELECT RAISE(ABORT, 'external sale records cannot be changed'); END;
 `,
+// 9: unified sale recording. The table keeps its name; existing rows are untouched: their new columns stay NULL (origin NULL = "earlier record, origin not captured"),
+// so their historical meaning is never relabelled. New rows carry the sale origin, the seller's payment attestation (never "verified"), fulfilment (ship / pickup),
+// the recipient address, shipment details, an optional buyer email (reference only; never emailed) and void fields. Corrections and voids are logged in sale_events.
+`
+ALTER TABLE external_sales ADD COLUMN origin TEXT CHECK (origin IS NULL OR origin IN ('pairplug','in_person','other_marketplace','social','other'));
+ALTER TABLE external_sales ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unconfirmed' CHECK (payment_status IN ('unconfirmed','confirmed_by_seller'));
+ALTER TABLE external_sales ADD COLUMN payment_confirmed_at INTEGER;
+ALTER TABLE external_sales ADD COLUMN fulfillment TEXT CHECK (fulfillment IS NULL OR fulfillment IN ('ship','pickup'));
+ALTER TABLE external_sales ADD COLUMN shipment_status TEXT CHECK (shipment_status IS NULL OR shipment_status IN ('not_shipped','shipped','not_applicable'));
+ALTER TABLE external_sales ADD COLUMN recipient_name TEXT;
+ALTER TABLE external_sales ADD COLUMN recipient_line1 TEXT;
+ALTER TABLE external_sales ADD COLUMN recipient_line2 TEXT;
+ALTER TABLE external_sales ADD COLUMN recipient_city TEXT;
+ALTER TABLE external_sales ADD COLUMN recipient_region TEXT;
+ALTER TABLE external_sales ADD COLUMN recipient_postal TEXT;
+ALTER TABLE external_sales ADD COLUMN recipient_country TEXT;
+ALTER TABLE external_sales ADD COLUMN carrier TEXT;
+ALTER TABLE external_sales ADD COLUMN tracking_number TEXT;
+ALTER TABLE external_sales ADD COLUMN ship_note TEXT;
+ALTER TABLE external_sales ADD COLUMN shipped_at INTEGER;
+ALTER TABLE external_sales ADD COLUMN buyer_email TEXT;
+ALTER TABLE external_sales ADD COLUMN voided_at INTEGER;
+ALTER TABLE external_sales ADD COLUMN void_reason TEXT;
+ALTER TABLE external_sales ADD COLUMN voided_by INTEGER REFERENCES users(id);
+ALTER TABLE external_sales ADD COLUMN updated_at INTEGER;
+DROP INDEX idx_external_sales_listing;
+CREATE UNIQUE INDEX idx_external_sales_listing_active ON external_sales(listing_id) WHERE voided_at IS NULL;
+CREATE UNIQUE INDEX idx_external_sales_tracking ON external_sales(carrier, tracking_number) WHERE tracking_number IS NOT NULL AND voided_at IS NULL;
+DROP TRIGGER external_sales_no_update;
+CREATE TRIGGER external_sales_identity_immutable BEFORE UPDATE OF listing_id, seller_id, recorded_at, origin ON external_sales
+  BEGIN SELECT RAISE(ABORT, 'a sale record''s listing, seller, origin and creation time cannot be changed'); END;
+CREATE TRIGGER external_sales_void_final BEFORE UPDATE ON external_sales WHEN OLD.voided_at IS NOT NULL
+  BEGIN SELECT RAISE(ABORT, 'voided sale records cannot be changed'); END;
+CREATE TABLE sale_events (
+  id INTEGER PRIMARY KEY,
+  sale_id INTEGER NOT NULL REFERENCES external_sales(id),
+  actor_id INTEGER NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL,
+  detail TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_sale_events ON sale_events(sale_id, id);
+CREATE TRIGGER sale_events_no_update BEFORE UPDATE ON sale_events BEGIN SELECT RAISE(ABORT, 'sale history is append-only'); END;
+CREATE TRIGGER sale_events_no_delete BEFORE DELETE ON sale_events BEGIN SELECT RAISE(ABORT, 'sale history is append-only'); END;
+`,
 ];
 
 function migrate() {
