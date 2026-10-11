@@ -11,7 +11,7 @@ const escrow = require('../escrow');
 const { transition } = require('../orderMachine');
 const { notify } = require('../notify');
 const { PricingEngine } = require('../pricing');
-const { getLabelProvider } = require('../shipping');
+const SHIPPO = require('../shippo');
 const { uploader } = require('./buyer');
 const X = require('../externalCheckout');
 
@@ -194,7 +194,6 @@ r.get('/dashboard/orders', S, (req, res) => {
   const st = ['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].includes(req.query.status) ? req.query.status : null;
   const orders = q.all(`SELECT o.*, b.display_name buyer_name, c.ship_city, c.ship_region FROM orders o JOIN users b ON b.id = o.buyer_id JOIN checkouts c ON c.id = o.checkout_id
     WHERE o.seller_id = ? AND (o.status NOT IN ('pending_payment','cancelled') OR (o.payment_mode = 'external' AND o.status = 'pending_payment')) ${st ? 'AND o.status = ?' : ''} ORDER BY o.created_at DESC LIMIT 100`, ...(st ? [req.user.id, st] : [req.user.id]));
-  const label = getLabelProvider();
   const rows = orders.map((o) => {
     const items = q.all('SELECT title FROM order_items WHERE order_id = ?', o.id);
     const ext = o.payment_mode === 'external';
@@ -208,7 +207,7 @@ r.get('/dashboard/orders', S, (req, res) => {
   }).join('');
   const body = `<h1>Orders</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s}</option>`).join('')}</select></form>
   ${X.isExternal() ? '<p class="small muted">Direct checkout: buyers pay you through your own payment link. “Unconfirmed” orders are reserved but <strong>not paid</strong> until you confirm the payment arrived in your own account.</p>' : ''}
-  <p class="small muted">${label ? 'Label purchasing is configured but not implemented yet.' : 'PairPlug does not buy shipping labels. Buy a label with your carrier or a shipping service, then enter the tracking number here.'}</p>
+  <p class="small muted">${SHIPPO.enabled() ? 'Shipping labels are in <strong>test mode</strong>: open a paid order to try the Shippo label panel (test labels are not valid postage). For real shipments, buy a label with your carrier or a shipping service and enter the tracking number on the order.' : 'PairPlug does not buy shipping labels yet. Buy a label with your carrier or a shipping service, then enter the tracking number on the order.'}</p>
   ${orders.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Items</th><th>Buyer</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th><th>Tracking</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : V.empty('No orders', st ? 'No orders with this status.' : 'Orders from buyers will appear here once paid.')}`;
   page(req, res, { title: 'Orders', path: '/dashboard/orders', body, dash: true });
