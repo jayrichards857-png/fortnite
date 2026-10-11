@@ -18,6 +18,7 @@ const { resolveLink } = require('../paymentLinks');
 
 const r = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const D = require('../discovery');
 const favSet = (user) => new Set(user ? q.all('SELECT listing_id FROM favorites WHERE user_id = ?', user.id).map((f) => f.listing_id) : []);
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
 const stars = (n) => `<span class="stars" aria-label="${n} out of 5">${'★'.repeat(Math.round(n))}${'☆'.repeat(5 - Math.round(n))}</span>`;
@@ -28,9 +29,13 @@ const place = (u) => [u.city || u.seller_city, u.region || u.seller_region, u.co
 r.get('/', (req, res) => {
   const latest = L.searchListings({ sort: 'newest' }).items.slice(0, 12);
   const cats = L.facets().categories;
-  const body = `<section class="hero"><h1>Buy and sell secondhand, shipped from North America.</h1>
+  const disc = D.withPreviews(D.discoverSellers({ per: 8 }).items), fol = D.followedSet(req.user);
+  const sellerStrip = disc.length ? `<section class="discover" aria-labelledby="disc-h"><div class="sechead"><h2 id="disc-h">Discover Sellers</h2><a href="/sellers" class="small">View all sellers →</a></div><p class="muted small" style="margin:-6px 0 10px">Real stores with items available now, most recently listed first.</p>
+    <div class="scroller" role="list">${disc.map((s) => `<div role="listitem" class="scroller-item">${D.sellerCard(s, { following: fol, user: req.user })}</div>`).join('')}</div></section>` : '';
+  const body = `<section class="hero"><h1>Discover secondhand finds <em>and</em> the people selling them.</h1><p class="hero-sub">Shop one-of-a-kind pieces, then follow the sellers you love.</p>
     <form action="/shop" role="search"><label class="sr" for="hq2">Search listings</label><input id="hq2" name="q" type="search" placeholder="Search brand, item or size"><button class="btn">Search</button></form></section>
     <div class="chips" aria-label="Categories">${config.categories.map(([s, n]) => `<a class="chip" href="/shop?category=${s}">${esc(n)}${cats[s] ? ` <span class="muted">${cats[s]}</span>` : ''}</a>`).join('')}</div>
+    ${sellerStrip}
     <div class="sechead"><h2>Just listed</h2><a href="/shop?sort=newest" class="small">View all →</a></div>
     ${latest.length ? V.grid(latest, { favs: favSet(req.user) }) : V.empty('No listings yet', 'The marketplace is empty right now. Check back soon.', ['/shop', 'Browse the shop'])}`;
   page(req, res, { title: 'Secondhand marketplace', body });
@@ -55,14 +60,33 @@ r.get('/shop', (req, res) => {
     <details open><summary>Condition</summary><div class="opts">${radio('condition', [['', 'Any'], ...Object.entries(config.conditions)], f.condition || '')}</div></details>
     <details open><summary>Price</summary><div class="row pair" style="margin-top:6px"><div><label class="sr" for="pmin">Min price</label><input id="pmin" name="min" inputmode="decimal" placeholder="Min $" value="${esc(f.min || '')}"></div><div><label class="sr" for="pmax">Max price</label><input id="pmax" name="max" inputmode="decimal" placeholder="Max $" value="${esc(f.max || '')}"></div></div></details>
     <div style="display:flex;gap:8px;margin-top:12px"><button class="btn small">Apply</button><a class="btn small ghost" href="/shop">Reset</a></div></form></aside>`;
-  const body = `<h1>${f.q ? `Results for “${esc(f.q)}”` : 'Shop'}</h1><p class="muted small">${result.total} item${result.total === 1 ? '' : 's'}</p>
+  const tab = f.tab === 'sellers' ? 'sellers' : 'products';
+  const spage = tab === 'sellers' ? f.page : 1;
+  let sellerRes = { items: [], total: 0, page: 1, pages: 1 };
+  if (f.q || tab === 'sellers') { try { sellerRes = D.searchSellers(f.q || '', { page: spage, per: tab === 'sellers' ? 12 : 3 }); } catch (e) { console.error(e); } }
+  if (f.q && !(parseInt(f.page, 10) > 1)) { try { D.recordSearch(f.q, req.ip); } catch (e) { console.error(e); } }       // genuine searches only; see src/discovery.js for privacy rules
+  const fol = D.followedSet(req.user), qs = (o) => '/shop?' + new URLSearchParams(o);
+  const tabs = f.q || tab === 'sellers' ? `<nav class="tabs" aria-label="Result type"><a href="${qs({ ...(f.q ? { q: f.q } : {}), })}"${tab === 'products' ? ' aria-current="page"' : ''}>Products <span class="muted">${result.total}</span></a><a href="${qs({ ...(f.q ? { q: f.q } : {}), tab: 'sellers' })}"${tab === 'sellers' ? ' aria-current="page"' : ''}>Sellers <span class="muted">${sellerRes.total}</span></a></nav>` : '';
+  if (tab === 'sellers') {
+    const cards = D.withPreviews(sellerRes.items, { term: f.q || '' });
+    return page(req, res, { title: f.q ? `Sellers: “${f.q}”` : 'Sellers', body: `<h1>${f.q ? `Sellers for “${esc(f.q)}”` : 'Sellers'}</h1>${tabs}
+      ${cards.length ? `<div class="sgrid">${cards.map((x) => D.sellerCard(x, { following: fol, user: req.user })).join('')}</div>${V.pager(sellerRes.page, sellerRes.pages, { ...(f.q ? { q: f.q } : {}), tab: 'sellers' })}`
+        : V.empty('No sellers match', f.q ? `No public seller matches “${f.q}” yet. Try another word, or see the products tab.` : 'No sellers yet.', [f.q ? qs({ q: f.q }) : '/shop', f.q ? 'See matching products' : 'Browse the shop'])}
+      <p><a class="small" href="/shop">← Back to all results</a> · <a class="small" href="/sellers">View all sellers</a></p>` });
+  }
+  const related = f.q ? D.relatedDiscoveries(f.q) : { brands: [], categories: [] }, popular = f.q ? D.relatedPopular(f.q) : [];
+  const sellerSec = f.q && sellerRes.items.length ? `<section class="sec-sellers" aria-labelledby="ss-h"><div class="sechead"><h2 id="ss-h">Seller profiles</h2><a class="small" href="${qs({ q: f.q, tab: 'sellers' })}">See all ${sellerRes.total} →</a></div><div class="sgrid">${D.withPreviews(sellerRes.items, { term: f.q }).map((x) => D.sellerCard(x, { following: fol, user: req.user })).join('')}</div></section>` : '';
+  const popSec = popular.length ? `<section aria-labelledby="pop-h"><h2 id="pop-h">Popular searches</h2><div class="chips">${popular.map((t) => `<a class="chip" href="${qs({ q: t })}">${esc(t)}</a>`).join('')}</div></section>` : '';
+  const relSec = related.brands.length || related.categories.length ? `<section aria-labelledby="rel-h"><h2 id="rel-h">Related discoveries</h2><div class="chips">${related.brands.map((b) => `<a class="chip" href="${qs({ q: f.q, brand: b.v })}">${esc(b.v)} <span class="muted">${b.n}</span></a>`).join('')}${related.categories.map((c) => `<a class="chip" href="${qs({ q: f.q, category: c.v })}">${esc(c.label)} <span class="muted">${c.n}</span></a>`).join('')}</div></section>` : '';
+  const body = `<h1>${f.q ? `Results for “${esc(f.q)}”` : 'Shop'}</h1>${tabs}<p class="muted small">${result.total} item${result.total === 1 ? '' : 's'}</p>
   <div class="shop">${filters}<section>
     <div class="toolbar"><div class="tags">${tags}${tags ? '<a class="small" href="/shop">Clear all</a>' : ''}</div>
     <form method="get">${Object.entries(params).filter(([k]) => k !== 'sort').map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join('')}
     <label class="sr" for="sort">Sort</label><select id="sort" name="sort" data-autosubmit>${[['newest', 'Newest'], ['price_asc', 'Price: low to high'], ['price_desc', 'Price: high to low']].map(([v, l]) => `<option value="${v}"${(f.sort || 'newest') === v ? ' selected' : ''}>${l}</option>`).join('')}</select><noscript><button>Sort</button></noscript></form></div>
     ${error ? `<div class="form-err" role="alert">${esc(error)}</div>` : ''}
     ${result.items.length ? V.grid(result.items, { favs: favSet(req.user) }) + V.pager(result.page, result.pages, params)
-      : V.empty(f.q || tags ? 'No matching items' : 'No listings yet', f.q || tags ? 'Try removing a filter or searching for something broader.' : 'Nothing has been listed yet.', tags ? ['/shop', 'Reset filters'] : ['/sell', 'List an item'])}
+      : V.empty(f.q || tags ? 'No matching items' : 'No listings yet', f.q || tags ? (sellerRes.total ? 'No products match, but matching sellers are shown below. Try removing a filter or searching for something broader.' : 'Try removing a filter or searching for something broader.') : 'Nothing has been listed yet.', tags ? ['/shop', 'Clear filters and see all results'] : ['/shop', 'Browse the shop'])}
+    ${sellerSec}${popSec}${relSec}
   </section></div>`;
   page(req, res, { title: f.q ? `“${f.q}”` : 'Shop', body });
 });
@@ -192,7 +216,7 @@ r.get('/notifications', auth.requireUser, (req, res) => {
   const ns = q.all('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 50', req.user.id);
   q.run('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL', now(), req.user.id);
   page(req, res, { title: 'Notifications', body: `<h1>Notifications</h1><p class="muted small">In-app only — email/SMS/push are not configured.</p>
-    ${ns.length ? ns.map((n) => `<div class="panel"><strong>${n.link ? `<a href="${esc(n.link)}">${esc(n.title)}</a>` : esc(n.title)}</strong>${n.read_at ? '' : ' <span class="pill s-active">new</span>'}<div class="small muted">${esc(n.body || '')} · ${date(n.created_at)}</div></div>`).join('') : V.empty('No notifications', 'Order updates, shipping updates and price drops on saved items show up here.')}` });
+    ${ns.length ? ns.map((n) => `<div class="panel notif">${n.image ? `<a href="${esc(n.link || '#')}" class="notif-img">${V.img(n.image, 'thumb', '')}</a>` : ''}<div><strong>${n.link ? `<a href="${esc(n.link)}">${esc(n.title)}</a>` : esc(n.title)}</strong>${n.read_at ? '' : ' <span class="pill s-active">new</span>'}<div class="small muted">${esc(n.body || '')} · ${date(n.created_at)}</div></div></div>`).join('') : V.empty('No notifications', 'Order updates, shipping updates and price drops on saved items show up here.')}` });
 });
 r.get('/favorites', auth.requireUser, (req, res) => {
   const items = q.all(`SELECT l.*, ${L.IMG_SQL}, ${L.SELLER_SQL} FROM favorites f JOIN listings l ON l.id = f.listing_id JOIN users u ON u.id = l.seller_id

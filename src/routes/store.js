@@ -10,6 +10,7 @@ const L = require('../listings');
 const SF = require('../storefront');
 const { isLocalShip } = require('../pricing');
 const { uploader } = require('./buyer');
+const D = require('../discovery');
 
 const r = express.Router();
 const stars = (n) => `<span class="stars" aria-label="${n.toFixed(1)} out of 5">${'★'.repeat(Math.round(n))}${'☆'.repeat(5 - Math.round(n))}</span>`;
@@ -43,7 +44,7 @@ r.get('/s/:handle', (req, res) => {
       <div class="store-title">${st.logo ? img(st.logo, 'logo-img', `${name} logo`) : ''}<h1>${esc(name)}</h1>${st.headline ? `<p class="headline">${esc(st.headline)}</p>` : ''}
         <div class="meta">@${esc(s.handle)}${st.showLocation && place ? ` · ${esc(place)}` : ''} ${isLocalShip(s.country) && st.showLocation ? '<span class="badge-local">Local ship</span>' : ''}</div>
         <div class="meta">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} (${rate.n})` : 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div>
-      <div class="store-actions">${owner ? '<a class="btn" href="/dashboard/storefront">Customize</a>' : `<button class="btn" data-chat-seller="${esc(s.handle)}">Contact seller</button><a class="btn ghost small" href="/support?seller=${esc(s.handle)}">Report</a>`}</div></div>
+      <div class="store-actions">${owner ? '<a class="btn" href="/dashboard/storefront">Customize</a>' : `${D.heartBtn(s.handle, req.user ? D.followedSet(req.user).has(s.id) : false, 'btn ghost')}<button class="btn" data-chat-seller="${esc(s.handle)}">Contact seller</button><a class="btn ghost small" href="/support?seller=${esc(s.handle)}">Report</a>`}</div></div>
     ${links ? `<div class="chips" aria-label="Seller links">${links}</div>` : ''}
     ${st.announcement ? `<div class="store-announce" role="note">${esc(st.announcement)}</div>` : ''}
     ${st.about || s.bio ? `<p class="store-about">${esc(st.about || s.bio)}</p>` : ''}

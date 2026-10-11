@@ -43,7 +43,7 @@ function header(user, path, counts, wide) {
   <div class="wrap${wide ? ' wide' : ''} bar">
     <a class="wordmark" href="/" aria-label="PairPlug home">PairPlug</a>
     <nav class="nav" aria-label="Main">
-      ${link('/', 'Home', '/')}${link('/shop', 'Shop', '/shop')}
+      ${link('/', 'Home', '/')}${link('/shop', 'Shop', '/shop')}${link('/sellers', 'Sellers', '/sellers')}
       <details class="dd"><summary>Categories</summary><div class="dd-menu">${cats}</div></details>
       ${link(user && user.is_seller ? '/dashboard' : '/sell', 'Sell', user && user.is_seller ? '/dashboard' : '/sell')}
       ${user ? link('/orders', 'Orders', '/orders') : ''}
@@ -58,7 +58,7 @@ function header(user, path, counts, wide) {
       <details class="dd right"><summary class="iconlink" aria-label="Account">${icon('user')}</summary><div class="dd-menu">
         <span class="dd-title">${esc(user.display_name)}</span>
         <a href="/account">Account</a>${user.is_seller ? '<a href="/dashboard">Seller dashboard</a>' : ''}${user.is_admin ? '<a href="/admin">Admin</a>' : ''}
-        <a href="/messages">Messages</a><a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
+        <a href="/messages">Messages</a><a href="/following">Following</a><a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
       : `<a class="btn small ghost" href="/login">Log in</a>${config.signups === 'open' ? '<a class="btn small" href="/register">Sign up</a>' : '<a class="btn small ghost soon-pill" href="/register">Coming soon</a>'}`}
       ${config.checkoutMode === 'platform' ? `<a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>` : ''}
       <details class="dd right mobile-only"><summary class="iconlink" aria-label="Menu">${icon('menu')}</summary><div class="dd-menu">

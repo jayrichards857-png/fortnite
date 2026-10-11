@@ -557,6 +557,32 @@ CREATE INDEX idx_sale_events ON sale_events(sale_id, id);
 CREATE TRIGGER sale_events_no_update BEFORE UPDATE ON sale_events BEGIN SELECT RAISE(ABORT, 'sale history is append-only'); END;
 CREATE TRIGGER sale_events_no_delete BEFORE DELETE ON sale_events BEGIN SELECT RAISE(ABORT, 'sale history is append-only'); END;
 `,
+// 10: seller discovery. Additive and backward compatible; nothing existing is rewritten except a backfill that marks ALREADY-published listings as announced
+// (so existing listings never produce new-drop notifications).
+//   seller_follows  who follows which public seller (private to the follower; no counts are shown)
+//   search_log      normalised search terms ONLY (no user id, no IP, no timestamps beyond the minute-level created_at), purged after 30 days; used for "Popular searches"
+//   listings.drop_notified_at  set exactly once when a listing's first publication has been announced to followers (retry-safe)
+//   notifications.image        optional thumbnail for in-app notifications
+`
+CREATE TABLE seller_follows (
+  follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  seller_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (follower_id, seller_id),
+  CHECK (follower_id <> seller_id)
+);
+CREATE INDEX idx_seller_follows_seller ON seller_follows(seller_id, created_at);
+CREATE TABLE search_log (
+  id INTEGER PRIMARY KEY,
+  term TEXT NOT NULL CHECK (length(term) BETWEEN 2 AND 60),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_search_log_recent ON search_log(created_at, term);
+ALTER TABLE listings ADD COLUMN drop_notified_at INTEGER;
+UPDATE listings SET drop_notified_at = published_at WHERE published_at IS NOT NULL;
+ALTER TABLE notifications ADD COLUMN image TEXT;
+CREATE INDEX idx_listings_seller_active ON listings(seller_id, status, published_at DESC);
+`,
 ];
 
 function migrate() {

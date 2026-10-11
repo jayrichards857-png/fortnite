@@ -6,6 +6,7 @@ const { ownedUploads } = require('./images');
 const { notify } = require('./notify');
 const { validatePaymentUrl, resolveLink } = require('./paymentLinks');
 const { audit } = require('./audit');
+const D = require('./discovery');
 
 const CATS = new Set(config.categories.map((c) => c[0]));
 const SELLER_STATUSES = new Set(['draft', 'active', 'archived']); // 'sold'/'reserved' are owned by the order system
@@ -95,7 +96,7 @@ function saveListing(user, id, body) {
   // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
   if (publish && !q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
   // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
-  return tx(() => {
+  const saved = tx(() => {
     const t = now();
     let cur = null;
     if (id) {
@@ -124,6 +125,8 @@ function saveListing(user, id, body) {
     files.forEach((f, i) => q.run('INSERT INTO listing_images(listing_id, file, position) VALUES(?,?,?)', listingId, f, i));
     return q.get('SELECT * FROM listings WHERE id = ?', listingId);
   });
+  if (saved.status === 'active') D.announceDrop(saved.id);        // after commit; announces only a FIRST publication, once (see discovery.announceDrop)
+  return saved;
 }
 
 function notifyPriceDrop(listingId, title, oldC, newC) {
@@ -151,7 +154,8 @@ function duplicateListing(user, id) {
 function bulkAction(user, { ids, action, status, price, percent }) {
   if (!Array.isArray(ids) || !ids.length || ids.length > 500) throw new HttpError(422, 'Select between 1 and 500 listings.');
   ids = ids.map(Number).filter(Number.isInteger);
-  return tx(() => {
+  const published = [];
+  const out = tx(() => {
     const result = { updated: 0, skipped: [] };
     for (const id of ids) {
       const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
@@ -165,6 +169,7 @@ function bulkAction(user, { ids, action, status, price, percent }) {
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
         }
         q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
+        if (status === 'active') published.push(id);
       } else if (action === 'price') {
         let np;
         if (percent != null) { const pc = Number(percent); if (!(pc >= -90 && pc <= 500)) throw new HttpError(422, 'Percent must be between -90 and 500'); np = Math.round(l.price_cents * (1 + pc / 100)); }
@@ -177,6 +182,8 @@ function bulkAction(user, { ids, action, status, price, percent }) {
     }
     return result;
   });
+  for (const id of published) D.announceDrop(id);
+  return out;
 }
 
 /** Minimal RFC4180 CSV parser (quotes, escaped quotes, CRLF). */
@@ -250,7 +257,7 @@ function publishBlocker(user, l) {
  *   (marking an item sold by hand is now `externalSales.record`: it also writes the seller's external-sale record)     delete: unused draft/archived -> removed
  */
 function listingAction(user, id, action) {
-  return tx(() => {
+  const out = tx(() => {
     const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(id), user.id);
     if (!l) throw new HttpError(404, 'Listing not found');
     if (l.status === 'reserved') throw new HttpError(409, 'A buyer is checking out this item right now. Try again after their reservation ends.');
@@ -276,6 +283,8 @@ function listingAction(user, id, action) {
     }
     return { status: q.get('SELECT status FROM listings WHERE id = ?', l.id).status };
   });
+  if (action === 'resume' && out && out.status === 'active') D.announceDrop(id);
+  return out;
 }
 
 module.exports = { publishBlocker, listingAction, searchListings, facets, getListing, saveListing, duplicateListing, bulkAction, importCsv, parseCsv, validateListing, IMG_SQL, SELLER_SQL };

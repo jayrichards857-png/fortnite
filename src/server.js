@@ -45,6 +45,7 @@ app.use((req, res, next) => {
 app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
 app.use(require('./routes/store').router);   // storefronts + editor (takes over /s/:handle)
 app.use(require('./routes/shipping').router);  // seller shipping labels (test mode)
+app.use(require('./routes/discovery').router);   // seller discovery + following
 app.use(require('./routes/support').router);  // cases, refunds, reports, admin case tools
 app.use(require('./routes/direct').router);   // direct (seller-owned) checkout; must precede the legacy routers
 app.use(require('./routes/buyer').router);
@@ -77,7 +78,7 @@ function startJobs() {
   // Background sweeps. Both are idempotent and also safe if several app instances run them.
   let last = 0;
   const tick = () => { try { payments.expireStaleCheckouts(); escrow.autoReleaseDue();
-    if (Date.now() - last > 3600e3) { last = Date.now(); require('./images').cleanupOrphanUploads(); require('./db').q.run('DELETE FROM sessions WHERE expires_at < ?', Math.floor(Date.now() / 1000)); } } catch (e) { console.error('job error', e); } };
+    if (Date.now() - last > 3600e3) { last = Date.now(); require('./images').cleanupOrphanUploads(); require('./discovery').purgeSearchLog(); require('./db').q.run('DELETE FROM sessions WHERE expires_at < ?', Math.floor(Date.now() / 1000)); } } catch (e) { console.error('job error', e); } };
   tick(); return setInterval(tick, 60 * 1000).unref();
 }
 

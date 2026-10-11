@@ -47,6 +47,16 @@
         toast(on ? 'Saved to favorites' : 'Removed from favorites');
       } catch (e) { if (e.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); else toast(e.message, true); }
     }
+    const fb = t.closest('[data-follow]');
+    if (fb) {                                  // follow / unfollow a seller: optimistic update, rolled back if the server says no
+      ev.preventDefault(); if (fb.dataset.busy) return; fb.dataset.busy = '1';
+      const handle = fb.dataset.follow, on = fb.getAttribute('aria-pressed') !== 'true';
+      const paint = (state) => $$(`[data-follow="${handle}"]`).forEach((b) => { b.classList.toggle('on', state); b.setAttribute('aria-pressed', state ? 'true' : 'false'); b.setAttribute('aria-label', (state ? 'Unfollow' : 'Follow') + ' @' + handle); const l = b.querySelector('.follow-label'); if (l) l.textContent = state ? 'Following' : 'Follow'; });
+      paint(on);
+      try { await api(on ? 'POST' : 'DELETE', `/api/sellers/${encodeURIComponent(handle)}/follow`); toast(on ? 'Following @' + handle : 'Unfollowed @' + handle); }
+      catch (e) { paint(!on); if (e.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); else toast(e.message, true); }
+      finally { delete fb.dataset.busy; }
+    }
     const add = t.closest('[data-cart-add]');
     if (add) {
       try { await api('POST', '/api/cart', { listingId: Number(add.dataset.cartAdd) }); if (add.dataset.buy !== undefined) location.href = '/cart'; else { toast('Added to cart'); location.reload(); } }

@@ -97,6 +97,14 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     await b.pg.goto(B + '/s/store-s1'); assert.match(await b.pg.textContent('body'), /Shipping Fridays/); assert.match(await b.pg.textContent('body'), /48 hours/); await shot(b.pg, 'final-05-storefront.png');
     step('5. storefront draft is private, preview works for owner only, publish makes it public');
 
+    // ---- 5b. seller discovery: homepage strip, follow heart (optimistic, persists), search tabs, following page
+    const f0 = await upload(s1.ctx); const r0 = await api(s1.ctx, 'POST', '/api/seller/listings', { title: 'Discover jacket', description: 'x', category: 'outerwear', size: 'M', condition: 'good', price: '30.00', shipping: '5.00', shipping_payer: 'buyer', weight_oz: 16, images: [f0], status: 'active' }); assert.equal(r0.status, 200, JSON.stringify(r0.json)); const l0 = r0.json.id;
+    await b.pg.goto(B + '/'); await b.pg.waitForSelector('.discover'); assert.match(await b.pg.textContent('.discover'), /Discover Sellers/); await shot(b.pg, 'final-05b-discover-sellers.png');
+    const heart = b.pg.locator('.discover [data-follow="store-s1"]'); assert.equal(await heart.getAttribute('aria-pressed'), 'false'); await heart.click(); assert.equal(await heart.getAttribute('aria-pressed'), 'true'); await b.pg.waitForTimeout(500);
+    await b.pg.reload(); assert.equal(await b.pg.locator('.discover [data-follow="store-s1"]').getAttribute('aria-pressed'), 'true', 'follow state persists');
+    await b.pg.goto(B + '/shop?q=Discover&tab=sellers'); assert.match(await b.pg.textContent('main'), /Store s1/); await b.pg.goto(B + '/following'); assert.match(await b.pg.textContent('main'), /Store s1/); void l0;
+    step('5b. Discover Sellers strip, follow heart (persists across reload), seller search tab, Following page');
+
     // ---- 6. contact-first listing (no payment link): no Buy now, Contact seller works; then add link -> Buy now
     const file = await upload(s1.ctx);
     const mkListing = async (ctx, title, extra = {}) => { const r = await api(ctx, 'POST', '/api/seller/listings', { title, description: 'Worn twice', category: 'outerwear', brand: 'Acme', size: 'M', condition: 'good', price: '48.00', shipping: '7.00', shipping_payer: 'buyer', weight_oz: 16, images: [file], status: 'active', ...extra }); assert.equal(r.status, 200, JSON.stringify(r.json)); return r.json.id; };
@@ -159,7 +167,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
 
     // ---- 11. mobile: key pages have no horizontal overflow
     const m = await mk({ width: 375, height: 760 }); await login(m.pg, 'buyer@example.test', 'a-long-password-2');
-    for (const p of ['/', '/shop', `/listing/${l2}`, '/s/store-s1', '/messages', `/orders/${orderId}`, '/support', '/account']) {
+    for (const p of ['/', '/sellers', '/following', '/shop', `/listing/${l2}`, '/s/store-s1', '/messages', `/orders/${orderId}`, '/support', '/account']) {
       await m.pg.goto(B + p); const over = await m.pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth); assert.ok(over <= 1, `${p} overflows by ${over}px`);
     }
     await shot(m.pg, 'final-11-mobile-store.png'); step('11. mobile layout (375px): no horizontal overflow on 8 key pages');
