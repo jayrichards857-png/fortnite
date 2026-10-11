@@ -28,6 +28,7 @@ const cookieObj = (c) => { const [name, value] = c.split('='); return { name, va
   // --- data via the real API (throwaway DB) ---
   let s = await api('', 'POST', '/api/register', { email: 'sam@example.test', display_name: 'Sam Seller', password: 'a-long-password-1' });
   const sellerCookie = (await api(s.cookie, 'POST', '/api/sell/onboard', { store_name: 'Sam Resale', handle: 'samresale', country: 'US', region: 'OR', city: 'Portland', agree: true })).cookie || s.cookie;
+  require('./verify-email-helper')(path.join(tmp, 'c.db'));
   const file = (await api(sellerCookie, 'POST', '/api/uploads', png(240, 300, (x, y) => [150 - (y >> 4), 120, 90 + (x >> 4)]), 'image/png')).json.file;
   const listing = (await api(sellerCookie, 'POST', '/api/seller/listings', { title: 'Waxed field jacket', category: 'outerwear', brand: 'Test', size: 'M', condition: 'good', price: '95', shipping: '9', weight_oz: '40', images: [file], status: 'active' })).json.id;
   const b = await api('', 'POST', '/api/register', { email: 'bea@example.test', display_name: 'Bea Buyer', password: 'a-long-password-2' });

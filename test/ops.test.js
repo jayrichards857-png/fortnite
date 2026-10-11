@@ -105,3 +105,41 @@ test('uploads: only real images, size-limited, and files are served inert', asyn
   assert.equal((await fetch(H.base + '/uploads/..%2f..%2fpackage.json')).status, 404);
   assert.equal((await new H.Client().post('/api/uploads', {})).status, 401);
 });
+
+test('migration 4 on a populated v3 database with MORE sellers than the cap: nothing is deleted, new sellers are blocked', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-mig4-')), file = path.join(dir, 'v3.db');
+  const old = new DatabaseSync(file);
+  for (let i = 0; i < 3; i++) old.exec(MIGRATIONS[i]);
+  old.exec('PRAGMA user_version = 3');
+  const t = 1700000000;
+  for (let i = 1; i <= 5; i++) old.exec(`INSERT INTO users(id, email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES (${i},'s${i}@x.test','h','S${i}',1,'s${i}','Store ${i}','US',${t})`);
+  old.exec(`INSERT INTO users(id, email, password_hash, display_name, is_seller, created_at) VALUES (6,'b@x.test','h','B',0,${t})`);
+  old.close();
+  const out = JSON.parse(execFileSync(process.execPath, ['-e', `
+    const {q}=require('./src/db');
+    let blocked='no'; try{q.run("INSERT INTO users(email,password_hash,display_name,is_seller,handle,store_name,country,created_at) VALUES('n@x.test','h','N',1,'nn','NN','US',1)")}catch(e){blocked=e.message}
+    let upgrade='no'; try{q.run('UPDATE users SET is_seller=1, handle=?, store_name=?, country=? WHERE id=6','bb','BB','US')}catch(e){upgrade=e.message}
+    console.log(JSON.stringify({v:q.get('PRAGMA user_version').user_version, sellers:q.get('SELECT COUNT(*) n FROM users WHERE is_seller=1').n, users:q.get('SELECT COUNT(*) n FROM users').n, cap:q.get("SELECT value FROM settings WHERE key='seller_cap'").value, blocked, upgrade}))`],
+    { cwd: path.resolve(__dirname, '..'), env: { ...process.env, PAIRPLUG_DB: file, PAIRPLUG_UPLOADS: path.join(dir, 'up') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
+  assert.equal(out.v, MIGRATIONS.length); assert.equal(out.sellers, 5, 'existing sellers preserved'); assert.equal(out.users, 6); assert.equal(out.cap, '3');
+  assert.match(out.blocked, /seller/i, 'a new seller is refused while over the cap'); assert.match(out.upgrade, /seller/i, 'a buyer cannot become a seller while over the cap');
+});
+
+test('backup files are owner-only; restore verifies integrity and schema version, refuses to overwrite without --force, keeps a pre-restore copy', () => {
+  const { restore } = require('../scripts/restore');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-rst-'));
+  const a = backup({ dir, stamp: '2031-01-01-00-00-00' });
+  assert.equal(fs.statSync(a.database).mode & 0o777, 0o600); assert.equal(fs.statSync(path.join(dir, 'db')).mode & 0o777, 0o700);
+  const target = path.join(dir, 'restored', 'pp.db'), up = path.join(dir, 'restored', 'uploads');
+  const r = restore({ snapshot: a.database, dbFile: target, uploadDir: up, photosDir: path.join(dir, 'uploads'), supportedVersion: MIGRATIONS.length });
+  assert.equal(r.integrity, 'ok'); assert.equal(r.schemaVersion, MIGRATIONS.length); assert.ok(r.photosRestored >= 0);
+  const back = new DatabaseSync(target, { readOnly: true });
+  assert.equal(back.prepare('SELECT COUNT(*) n FROM users').get().n, q.get('SELECT COUNT(*) n FROM users').n); back.close();
+  assert.throws(() => restore({ snapshot: a.database, dbFile: target, uploadDir: up, supportedVersion: MIGRATIONS.length }), /refusing to overwrite/);
+  const forced = restore({ snapshot: a.database, dbFile: target, uploadDir: up, force: true, supportedVersion: MIGRATIONS.length });
+  assert.ok(fs.existsSync(forced.preRestore), 'previous database kept');
+  assert.throws(() => restore({ snapshot: a.database, dbFile: path.join(dir, 'x.db'), supportedVersion: MIGRATIONS.length - 1 }), /newer than this code/);
+  const bad = path.join(dir, 'corrupt.db'); fs.writeFileSync(bad, 'this is not a database'.repeat(200));
+  assert.throws(() => restore({ snapshot: bad, dbFile: path.join(dir, 'y.db'), supportedVersion: MIGRATIONS.length }));
+  assert.ok(!fs.existsSync(path.join(dir, 'y.db')), 'a failed restore writes nothing');
+});

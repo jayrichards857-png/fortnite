@@ -86,3 +86,22 @@ pending_payment ──seller confirms──▶ paid ──seller ships──▶ 
 * **Stats:** direct sales are reported separately (`stats.directOverview`): item sales, shipping collected, cost-based margin — no fees, payouts, escrow or balance are claimed for them.
 
 Schema additions (migration 3): `users.checkout_url[_any_amount]`, `listings.payment_url/shipping_payer`, `checkouts.mode`, `orders.payment_mode/shipping_payer/snapshot_json/pay_clicked_at/buyer_claimed_paid_at/payment_confirmed_at/payment_reference`, plus the triggers above.
+
+
+## Access control, invitations and the seller cap
+* `config.signups` (`open|closed`; production default **closed**) and `SELLER_ONBOARDING` (`open|invite`; production **invite**). Closed: `/register`, `/api/register`, `/sell`, `/api/sell/onboard` refuse (403 / “Coming soon”).
+* **Invitations** (`src/invitations.js`): token `pp_inv_…` shown once, only its SHA-256 stored; single-use, 7-day expiry, bound to an email; accepting is one transaction (create/upgrade user + take slot + consume token); every failure returns the same generic error. Unique live invitation per (email, kind).
+* **Seller cap** (`settings.seller_cap`, default 3) is enforced by SQLite triggers `sellers_cap_insert/update`, so application bugs and concurrent requests cannot exceed it. Every `is_seller=1` account (including suspended) occupies a slot; live seller invitations reserve one at creation; only an audited admin `releaseSellerSlot` frees one. Buyers never use slots. If a database already holds more sellers than the cap, nothing is removed and only new sellers are blocked.
+* **Email** (`src/email.js`): `email_outbox` records every message; no provider ⇒ status `not_configured` (nothing is claimed sent). Verification / email-change / reset tokens (`email_tokens`) are hashed, single-use and throttled. Seller verification gates publishing and new orders.
+* **Audit** (`audit_log`, append-only by trigger): invitations, slot release, bans/suspensions, listing removals, settings, case notes/decisions, refund resolutions, outbox views, reported-conversation views.
+
+## Storefronts
+`storefronts(seller_id, draft_json, published_json)`. Only curated enums (themes, accents, layouts, sort orders, link kinds) and bounded text are accepted; there is no user CSS/JS/HTML. `/storefront.css` is generated from one palette (contrast-tested). Images must be uploads owned by the seller; dimension and size limits apply; unreferenced uploads are cleaned up hourly (`isReferenced` checks listings, orders, evidence, case events, storefronts).
+
+## Cases and refunds (founder-managed)
+* `cases` (`order_issue | seller_issue | message_report`) + append-only `case_events` (report/response/evidence/status/decision/action; `internal=1` events are admin-only by trigger and never rendered to users). Non-members get **404**, not 403. Seller sees only order issues about them.
+* `refund_requests` record who *said* what: `requested → seller_reported_refunded → buyer_confirmed_refund`, or `buyer_disputes_refund` (escalates to a case), `seller_declined`, `admin_verified_refund`, `admin_closed`. The order moves to `refunded` **only** on buyer confirmation or admin verification — never on the seller's say-so. PairPlug cannot verify Stripe.
+* Admins read a conversation only through a case that references it (`cases.adminConversation`), each view audited.
+
+## Threat assumptions
+Single trusted founder-admin; 1–3 vetted sellers; hostile or careless buyers/visitors; no PCI scope (card data never touches PairPlug); Stripe-link validity is format/host only (ownership and amount are **not** verifiable); the VM, reverse proxy and email provider are outside this repo's tests. Known limitations: CSP allows inline scripts; in-memory rate limits and chat hub (single process); user enumeration is limited to the invitation flow (generic errors) but the open-sign-up mode used in development reveals registered emails.

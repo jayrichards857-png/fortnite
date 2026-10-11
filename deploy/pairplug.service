@@ -21,6 +21,13 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/pairplug /var/backups/pairplug
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# keep a runaway process from taking down a small VM
+MemoryMax=400M
+TasksMax=200
 
 [Install]
 WantedBy=multi-user.target

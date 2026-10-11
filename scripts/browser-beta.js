@@ -37,6 +37,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await s.pg.goto(B + '/sell'); assert.match(await s.pg.textContent('main'), /no PairPlug fees/i); assert.doesNotMatch(await s.pg.textContent('main'), /escrow/i);
     await s.pg.fill('#sn', 'Riley Resale'); await s.pg.fill('#sh', 'riley'); await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); await s.pg.check('input[name=agree]');
     await Promise.all([s.pg.waitForURL(B + '/dashboard'), s.pg.click('button[type=submit]')]); step('seller onboarded (no fees/escrow language)');
+    require('./verify-email-helper')(path.join(tmp, 'b.db'));
     await s.pg.goto(B + '/dashboard/settings');
     await s.pg.fill('#cu', 'http://evil.example/pay'); await s.pg.click('button[type=submit]'); await s.pg.locator('.err').first().waitFor(); step('unsafe checkout link rejected: "' + (await s.pg.locator('.err').first().textContent()) + '"');
     await shot(s.pg, 'beta-01-seller-settings.png');

@@ -11,8 +11,10 @@
     "create-admin": "node scripts/create-admin.js",
     "seed:demo": "node scripts/seed-demo.js",
     "screenshots": "node scripts/screenshots.js",
-    "test:browser": "node scripts/browser-journey.js && node scripts/browser-chat.js && node scripts/browser-beta.js",
+    "test:browser": "node scripts/browser-journey.js && node scripts/browser-chat.js && node scripts/browser-beta.js && node scripts/browser-final.js",
     "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
+    "inventory:sellers": "node scripts/inventory-sellers.js",
     "start:beta": "NODE_ENV=production CHECKOUT_MODE=external node src/server.js"
   },
   "repository": {

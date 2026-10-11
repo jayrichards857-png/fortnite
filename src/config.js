@@ -53,7 +53,7 @@ module.exports = {
   checkoutMode: modeRaw === 'platform' ? 'platform' : 'external',
   // Only HTTPS links on these exact hostnames may be saved as a seller checkout link. Extend deliberately, one host at a time.
   paymentLinkHosts: String(env.PAYMENT_LINK_HOSTS || 'buy.stripe.com').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
-  // 'open' = anyone can open a store; 'invite' = only emails in SELLER_ALLOWED_EMAILS (private beta).
+  // 'open' = anyone can open a store (development only); 'invite' = only through admin-issued invitations (private beta, max seller cap).
   sellerOnboarding: onboardingRaw === 'open' ? 'open' : onboardingRaw === '' ? (isProd ? 'invite' : 'open') : 'invite',   // production default and any unrecognised value => invite-only
   // Public account creation. 'closed' (production default) shows "Coming soon" and creates no accounts; people join only through an admin-issued
   // invitation. 'open' (development/test default) allows self-registration. Anything unrecognised => closed.

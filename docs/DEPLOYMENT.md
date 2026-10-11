@@ -41,7 +41,7 @@ sudo npm ci --omit=dev
 sudo chown -R pairplug:pairplug /opt/pairplug /var/lib/pairplug /var/backups/pairplug
 # 3. Config (no secrets in beta mode)
 sudo cp deploy/pairplug.env.example /etc/pairplug.env && sudo chown root:pairplug /etc/pairplug.env && sudo chmod 640 /etc/pairplug.env
-sudo nano /etc/pairplug.env   # set PUBLIC_URL + SELLER_ALLOWED_EMAILS. No trailing '# comments' after values (the app refuses to start if it sees one)
+sudo nano /etc/pairplug.env   # set PUBLIC_URL, PUBLIC_RELEASE_DATE (confirm the real date), SUPPORT_EMAIL. No trailing '# comments' after values (the app refuses to start if it sees one)
 # 4. Service, proxy, backups
 sudo cp deploy/pairplug.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now pairplug
 sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo nano /etc/caddy/Caddyfile && sudo systemctl reload caddy      # set your hostname
@@ -51,20 +51,39 @@ curl -s https://YOUR-SITE-ADDRESS/healthz
 # 6. Create the admin account (as the service user so DB file ownership stays correct; type the password, don't paste it into shared logs)
 sudo -u pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; cd /opt/pairplug; ADMIN_EMAIL=you@example.com ADMIN_PASSWORD="CHOOSE-A-LONG-PASSWORD" node scripts/create-admin.js'
 ```
-In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `PAYMENTS_MODE=sandbox` is set, if `CHECKOUT_MODE=platform` has no payment provider, if `SELLER_ONBOARDING`/`CHECKOUT_MODE` hold an unrecognised value, or if any setting contains an inline ` # comment`. Seller sign-up is **invite-only by default in production** (an empty allow-list means nobody can open a store).
+In production the server **refuses to start** if `PUBLIC_URL` isn't https, if `PAYMENTS_MODE=sandbox` is set, if `CHECKOUT_MODE=platform` has no payment provider, if `SELLER_ONBOARDING`/`CHECKOUT_MODE` hold an unrecognised value, or if any setting contains an inline ` # comment`. Public sign-ups are **closed by default in production** (`SIGNUPS=closed`, visitors see “Coming soon”), seller onboarding is invitation-only, `HOST` defaults to 127.0.0.1, and requests whose `Host` header isn't the `PUBLIC_URL` host are rejected (421).
 
 ## 4. Backups and recovery
-* Daily cron runs `scripts/backup.js`: a transactionally-consistent `VACUUM INTO` snapshot (integrity-checked), new photos copied incrementally, newest 14 snapshots kept, in `/var/backups/pairplug`.
-* **Those backups live on the same VM disk.** If the VM is lost, so are they. Weekly, copy them somewhere else at $0 (e.g. `scp -r pairplug@HOST:/var/backups/pairplug ~/pairplug-backups` to a laptop, or `rclone` to a free cloud drive). Nothing here automates off-site copies.
-* **Restore (verified locally):** `sudo systemctl stop pairplug` → copy a snapshot over `/var/lib/pairplug/pairplug.db` (delete `pairplug.db-wal` / `-shm`) → copy photos back into `/var/lib/pairplug/uploads/` → `sudo systemctl start pairplug` → `curl /healthz`.
-* Always run `node scripts/backup.js` immediately **before** every update (migrations are automatic and additive, but a fresh snapshot is your rollback).
+* Daily cron runs `scripts/backup.js`: a transactionally-consistent `VACUUM INTO` snapshot (integrity-checked, files `0600`, directories `0700`), new photos copied incrementally, newest 14 snapshots kept, in `/var/backups/pairplug`.
+* **Those backups live on the same VM disk.** If the VM is lost, so are they. Off-site copies are **recommended but not configured**: weekly copy them elsewhere (e.g. `scp -r` to a laptop, or `rclone` to storage you control). Nothing here automates it.
+* **Restore:** `sudo systemctl stop pairplug` → `sudo -u pairplug node scripts/restore.js /var/backups/pairplug/db/<snapshot>.db --force` (checks integrity and that the snapshot's schema is not newer than the code, keeps `pairplug.db.pre-restore-<time>`, removes stale WAL/SHM, copies photos back without overwriting; pass `--db`, `--uploads`, `--photos` for non-default paths) → `sudo systemctl start pairplug` → `curl /healthz`. Without `--force` it refuses to overwrite an existing database.
+* The restore script and a backup→restore round trip are **tested here against disposable data only**; it has not been run on a real VM.
+* Always take a backup immediately **before** every update.
 
 ## 5. Updating
 ```bash
 cd /opt/pairplug && sudo -u pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; BACKUP_DIR=/var/backups/pairplug node scripts/backup.js'
 sudo -u pairplug git pull && sudo -u pairplug npm ci --omit=dev && sudo systemctl restart pairplug && curl -s https://YOUR-SITE-ADDRESS/healthz
 ```
-Roll back = checkout the previous commit and restore the pre-update snapshot (a newer database must not be opened by older code).
+Roll back = checkout the previous commit and restore the pre-update snapshot (a newer database must not be opened by older code; `restore.js` refuses a snapshot newer than the code it runs with). Migrations are append-only and run automatically at start-up; take the backup first.
 
 ## 6. Monitoring
 Point any free uptime monitor at `https://YOUR-SITE-ADDRESS/healthz` (not verified which free plans exist). Logs: `journalctl -u pairplug -f`.
+
+## 7. Google Cloud plan (DOCUMENTED ONLY — nothing was created, enabled or billed)
+No project, VM, disk, IP, bucket or billing account was created while preparing this. Everything below is a plan for **you** to run in **your own** account. Rules for credentials: never share your Google password or card number with anyone (including an assistant); use the console/`gcloud` yourself.
+
+**Cost and safety.** The “Always Free” e2-micro is free only inside the limits in §2 (one e2-micro in us-west1/us-central1/us-east1, ≤30 GB-month *standard* persistent disk, ≤1 GB/month North-America egress; a billing account with a card is required; other regions, the Balanced disk, extra snapshots or a reserved/unused static IP can bill). **Free-tier terms change — re-check Google's pages before you start.** Do not promise “$0”: promise “$0 if you stay within the limits”. **Budget alerts only notify; they do not cap spending** — a budget does not stop resources. Check the Billing → Reports page weekly during the beta. Set an alert at a small amount (e.g. $1) so the first charge is visible.
+
+**Plan (each item needs a real account — NONE of these were executed or validated here):**
+1. Create a project; link billing; create a $1 budget alert. *(needs real account)*
+2. Compute Engine: 1 × e2-micro in us-central1, Debian 12, **Standard persistent disk (not Balanced), ≤30 GB**, default ephemeral external IP (a static IP that is not attached to a running VM is billed). *(needs real account)*
+3. Firewall: allow tcp:80 and tcp:443 from anywhere (Caddy), tcp:22 only from your own IP (or use IAP/OS Login); the app itself binds 127.0.0.1. *(needs real account)*
+4. Install Node ≥ 22.13, Caddy, git; follow §3. Secrets live only in `/etc/pairplug.env` (`chmod 640 root:pairplug`); beta mode needs none unless you enable an email provider key. *(needs real VM)*
+5. DNS: point a hostname at the VM IP; Caddy obtains the certificate automatically. *(needs real DNS/HTTPS; not tested)*
+6. Health check: `curl https://HOST/healthz`; add a free uptime monitor. Logs: `journalctl -u pairplug`; keep journald size limited (`SystemMaxUse=200M` in `/etc/systemd/journald.conf`). *(needs real VM)*
+7. Upgrade / rollback: §5. Restore drill: restore the latest snapshot into a scratch path on the VM and boot a second instance on another port before relying on backups. *(needs real VM)*
+
+**What WAS validated in this repo (not on a VM):** production start-up refusals and Host validation (`test/prelaunch.test.js`, `test/ops.test.js`), `/healthz`, backup → restore → integrity (`test/ops.test.js`), migration v3→v4 on a populated database, the whole beta journey in Chromium. **NOT validated:** systemd unit, Caddy config, HTTPS/DNS, GCP provisioning, real email, real Stripe, off-site backups.
+
+**Cleanup checklist (stop all charges):** delete the VM; delete its disk(s) and any snapshots; release any static IPs; delete the DNS records; remove the budget alert if no longer needed; delete the project (Resource Manager → Shut down); confirm the billing account shows no active resources and $0 usage next day.

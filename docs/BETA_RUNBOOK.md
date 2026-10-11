@@ -5,29 +5,43 @@
 |---|---|
 | Takes the buyer's payment | **The seller**, through the seller's own Stripe Payment Link. PairPlug never sees card details and never holds funds. |
 | Confirms the payment arrived | **The seller**, on PairPlug (`/dashboard/orders/<id>`). PairPlug can't verify it. Until then the order reads *Awaiting payment confirmation*. |
-| Refunds, returns, chargebacks, payment disputes, sales tax, Stripe fees | **The seller and their payment provider.** PairPlug does not refund, mediate or guarantee payments. Buyers are told this on the listing, purchase page and order page. |
-| Buys the shipping label | **The seller**, outside PairPlug (PairPlug links to services but integrates with none). Seller enters carrier + tracking. |
-| Photos, listings, messaging, order records | PairPlug (records are append-only/immutable where noted in ARCHITECTURE.md). |
-| Escrow / “payment protection” | **Not provided.** (The old escrow code is disabled for new orders.) |
+| Refunds, returns, chargebacks, payment disputes, sales tax, Stripe fees | **The seller and their payment provider.** PairPlug does not refund or guarantee payments. It records the request, what each side *says*, and the founder can review evidence and act on listings/accounts. |
+| Buys the shipping label | **The seller**, outside PairPlug. Seller enters carrier + tracking (+ optional note). Tracking is not proof of delivery or contents. |
+| Account creation | **The founder**, by invitation only. Nobody can sign up on their own; the public site says “Coming soon”. |
+| Escrow / “payment protection” | **Not provided.** |
 
-## One-time seller setup (founding reseller)
-1. Admin: put the seller's email in `SELLER_ALLOWED_EMAILS` and restart. The seller registers at `/register`, then `/sell` → store name, handle, ships-from.
-2. In **Stripe**: create a **Payment Link per listing** for exactly *item price + shipping fee* (Payment Links have a fixed price). For free-shipping items the link is the item price only.
-3. In PairPlug **Settings** (optional): a default link is only used for listings without their own link **and only** if you tick “lets the buyer enter any amount”.
-4. **Listings → New listing**: photos (real ones), title, size, condition, price, shipping terms (*buyer pays a flat fee* **or** *free shipping, I cover the label*), and paste the item's Payment Link. Publishing is refused without a usable link.
-5. **Do a real test purchase** of a cheap item with a friend before announcing. Stripe link behavior with PairPlug's `client_reference_id` parameter has **not** been tested live.
+## Response expectation (policy)
+Sellers are *expected* to reply to buyer messages within **48 hours**. This is shown to buyers and sellers as an expectation, **not a guarantee**. Conversations whose last message is from a buyer and older than 48h appear on **Admin → Response times** (seller and elapsed time only, no message text). Use it to check in with a seller. Nothing is penalised automatically.
+
+## Onboarding the first seller (step by step)
+1. Confirm `PUBLIC_RELEASE_DATE` and `SUPPORT_EMAIL` in `/etc/pairplug.env`, restart. Create your admin account (DEPLOYMENT.md §3).
+2. **Admin → Invitations**: role *Seller*, their email → copy the link **once** (only a hash is stored) and send it to them yourself. It is single-use, bound to that email, expires in 7 days, and reserves one of the 3 seller slots.
+3. The seller opens the link, picks a password, store name, handle, and agrees to the terms → logged in.
+4. **Email verification.** Without an email provider nothing is sent. Open **Admin → Email outbox**, copy the seller's verification link and give it to them (the page is audited). They open it and press *Confirm email*. Sellers who are not verified can't publish or receive new orders.
+5. Seller: **Storefront** → add images/theme/announcement → *Save draft* → *Preview* → *Publish*.
+6. Seller: **New listing**. A payment link is optional: without one, buyers can only **Contact seller**. To enable **Buy now**, create a Stripe Payment Link for exactly *item price + shipping* (Payment Links have a fixed price) and paste it. Links are validated for format and host only — **PairPlug cannot tell who owns a link or whether its amount matches**. Check it yourself before announcing; if the seller later changes or deletes the link, existing orders keep the link they were created with (see stale-link note below).
+7. **Test contact**: from a second account (buyer invitation) message the seller from the listing and confirm they see it with the “Awaiting your reply” indicator.
+8. **Test checkout destination**: as the buyer press *Buy now → Go to seller checkout* and confirm the Stripe page shows the right item and amount. **Do a real, cheap test purchase with a friend** — this has never been run against live Stripe.
+9. **Record the order**: seller confirms payment (only after the money is in their Stripe dashboard, reference `PP-<order id>`), ships with tracking.
+10. **Support issue drill**: as the buyer open *Report a problem* on the test order; as admin open **Admin → Cases**, reply, add an internal note, close with a decision. Check **Admin → Audit**.
 
 ## Daily seller routine
-1. Dashboard → *awaiting your payment check*. For each order open your Stripe dashboard, find a payment of the **total** with reference `PP-<order id>`.
-2. Money is there → **Payment received — confirm order** (item becomes Sold; address is shown). Not there → **No payment received — release item**.
-3. Buy a label yourself → enter carrier + tracking → **Mark shipped**. The buyer sees a tracking link.
-4. Refund needed → refund in **Stripe first**, then **Refund or cancel this order → Record refund** (this only records it).
+1. Dashboard → awaiting your payment check: find a payment of the **total** with reference `PP-<order id>` in Stripe → *Payment received — confirm order*, otherwise *release item*.
+2. Buy a label, enter carrier + tracking → *Mark shipped*.
+3. Reply to messages within 48 hours.
+4. Refund requested → refund in **Stripe first**, then *Report refund sent*. The order shows *refunded* only after the buyer confirms receipt (or the founder verifies).
 
-## Reservation rules (what protects against double sales)
-* “Reserve item & continue” holds the item for **60 minutes** (one buyer wins a race; others see *Reserved*).
-* If the buyer clicks **I've completed payment**, the hold extends to **72 hours** so the seller can verify. This is a claim, never proof.
-* No confirmation by the deadline → the order is cancelled and the item re-listed automatically. If a buyer pays *after* that, the seller must refund them in Stripe (the order can't be revived).
+## Reservation rules (double-sale protection)
+* “Reserve item & continue” holds the item for **60 minutes**; if the buyer presses *I've completed payment* the hold extends to **72 hours** (a claim, never proof).
+* No confirmation by the deadline → order cancelled, item re-listed. **If a buyer pays after that, the seller must refund them in Stripe.**
 * A buyer can hold at most 3 unpaid reservations.
 
+## Stale link / double payment (manual procedure)
+A Payment Link can be paid more than once, or after the listing sold. PairPlug cannot see Stripe. If a seller reports a duplicate or late payment: the seller refunds the extra payment in Stripe, then (optionally) records it as a refund request on the relevant order; the founder can note it in a case. Always search Stripe for the `PP-<id>` reference before confirming.
+
 ## Admin tasks
-`/admin` (users, listings removal, ban). Legacy dispute/withdrawal/fee pages still exist for historical PairPlug-processed orders only.
+* **Invitations / Sellers**: slots used (suspended sellers still occupy a slot), revoke invitations, suspend/reactivate, *release slot* (audited; refused while the seller has open orders; archives their listings).
+* **Cases**: reply, internal note, status, *Pause listing*, *Suspend seller*, *Decide and close*; **View reported conversation** (only for reported messages, audited).
+* **Orders**: overview of direct orders (no addresses). **Response times**, **Audit**, **Email outbox**.
+* If more than 3 seller accounts ever exist (e.g. a restored older database), nothing is deleted; the admin sees a warning and new seller onboarding stays blocked. `npm run inventory:sellers` prints the situation (read-only).
+* Legacy dispute/withdrawal/fee pages remain for historical PairPlug-processed orders only.

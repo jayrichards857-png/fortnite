@@ -27,6 +27,7 @@ const step = (m) => console.log('•', m);
     await Promise.all([s.waitForURL(B + '/'), s.click('button[type=submit]')]); step('seller registered');
     await s.goto(B + '/sell'); await s.fill('#sn', 'Riley Resale'); await s.fill('#sh', 'riley'); await s.fill('#sr', 'OR'); await s.fill('#sy', 'Portland'); await s.check('input[name=agree]');
     await Promise.all([s.waitForURL(B + '/dashboard'), s.click('button[type=submit]')]); step('seller onboarded → dashboard');
+    require('./verify-email-helper')(path.join(tmp, 'j.db'));
     assert.match(await s.textContent('body'), /No orders yet/); // honest empty state
 
     await s.goto(B + '/dashboard/listings/new');
