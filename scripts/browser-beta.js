@@ -76,7 +76,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     step('"Go to seller checkout" redirected to the seller\'s own link ' + dest.origin + dest.pathname + ' with reference ' + dest.searchParams.get('client_reference_id') + ' (external site not contacted)'); await popup.close();
     await b.pg.reload(); assert.match(await b.pg.textContent('h1'), /Awaiting payment confirmation/);
     await b.pg.click("button:has-text(\"I've completed payment\")"); await b.pg.locator('text=You told us you paid').waitFor(); assert.match(await b.pg.textContent('h1'), /Awaiting payment confirmation/); step('after "I\'ve completed payment" the order is STILL awaiting the seller\'s confirmation');
-    await b.pg.goto(B + '/listing/' + listingId); assert.match(await b.pg.textContent('main'), /Reserved/); step('listing shows reserved to other buyers');
+    await b.pg.waitForLoadState('networkidle'); await b.pg.goto(B + '/listing/' + listingId); assert.match(await b.pg.textContent('main'), /Reserved/); step('listing shows reserved to other buyers');
     await b.pg.goto(B + '/shop'); await b.pg.click('[data-chat-start]').catch(() => {});  // (shop cards have no chat button; chat is exercised below)
 
     // ---- seller: sees unconfirmed order, address hidden, confirms, ships
@@ -88,7 +88,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     assert.match(await s.pg.textContent('main'), /1 Test Way/); step('after the SELLER confirmed, status is paid and the address is revealed');
     assert.match(await s.pg.textContent('main'), /does not<\/?[a-z]*>? buy labels|does not buy labels|does\s+not\s+buy/i);
     await s.pg.fill('#tn', '9400111899223344'); await s.pg.click('button:has-text("Mark shipped")'); await s.pg.waitForSelector('text=Shipped'); step('seller recorded carrier + tracking'); await shot(s.pg, 'beta-06-seller-order-shipped.png');
-    await s.pg.goto(B + '/listing/' + listingId); assert.match(await s.pg.textContent('main'), /Sold/);
+    await s.pg.waitForLoadState('networkidle'); await s.pg.goto(B + '/listing/' + listingId); assert.match(await s.pg.textContent('main'), /Sold/);
 
     // ---- buyer: tracking link, received, review; messaging
     await b.pg.goto(orderUrl); const href = await b.pg.getAttribute('a:has-text("Track package")', 'href'); assert.match(href, /^https:\/\/tools\.usps\.com\/go\/TrackConfirmAction\?tLabels=9400111899223344$/); step('buyer sees a safe tracking link: ' + href);
