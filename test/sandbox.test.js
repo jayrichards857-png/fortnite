@@ -20,8 +20,8 @@ const login = async (email, password) => { const c = new H.Client(); const r = a
 const row = (id) => q.get('SELECT * FROM shipments WHERE order_id = ? ORDER BY id DESC LIMIT 1', id);
 let transcript = '';
 
-test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 'test' }; SH.setTransport(sb.fakeTransport()); });
-test.after(() => { SH.setTransport(null); config.shippo = { apiKey: '', mode: 'off' }; return H.stop(); });
+test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 'test' }; config.sandbox = true; SH.setTransport(sb.fakeTransport()); });
+test.after(() => { SH.setTransport(null); config.shippo = { apiKey: '', mode: 'off' }; config.sandbox = false; return H.stop(); });
 
 test('pre-flight guards: production, live keys, missing/invalid keys and the real database are all refused (the key is never echoed)', () => {
   const ok = { nodeEnv: 'development', shippoKey: KEY, fake: false, dbFile: '/x/sandbox.db', realDbFile: '/x/pairplug.db' };
@@ -69,7 +69,7 @@ test('seeding creates only clearly-marked test data, one paid and one unpaid ord
 test('the whole Shippo TEST workflow on the sandbox order: validation, rates, confirmed test label, persistence, errors; real checks still apply', async () => {
   const s = globalThis.__sbx, { c: seller } = await login(s.email.seller, s.password.seller), { c: buyer } = await login(s.email.buyer, s.password.buyer);
   const base = `/api/seller/orders/${s.paidOrder}/shipping`;
-  config.sandbox = true; try { assert.match((await seller.get('/')).text, /SHIPPING SANDBOX — TEST DATA ONLY/, 'banner marks the data as test data'); } finally { config.sandbox = false; }
+  assert.match((await seller.get('/')).text, /SHIPPING SANDBOX — TEST DATA ONLY/, 'banner marks the data as test data');
   // missing ship-from, then an invalid one, then a valid one
   const miss = await seller.post(`${base}/rates`, {}); assert.equal(miss.status, 409); assert.equal(miss.json.fields.missing, 'ship_from');
   assert.equal((await seller.put('/api/seller/ship-from', { name: 'TEST Seller', line1: '965 Mission St', city: 'San Francisco', region: 'CA', postal: 'BAD', country: 'US' })).status, 422);

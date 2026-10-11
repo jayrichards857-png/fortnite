@@ -12,6 +12,7 @@ const SH = require('../src/shippo');
 
 const SHOTS = process.argv.includes('--screenshots'), OUT = path.resolve(__dirname, '..', 'artifacts', 'screenshots');
 config.shippo = { apiKey: 'shippo_test_BROWSER_FAKE', mode: 'test' };
+config.sandbox = true;                    // label purchase exists only in the isolated sandbox; this script uses a throwaway DB + fake transport
 const rates = [{ object_id: 'rate_a', provider: 'USPS', servicelevel: { name: 'Priority Mail' }, amount: '7.58', currency: 'USD', estimated_days: 2 }, { object_id: 'rate_b', provider: 'UPS', servicelevel: { name: 'Ground' }, amount: '10.20', currency: 'USD', estimated_days: 4 }];
 let bought = 0;
 SH.setTransport(async (r) => {

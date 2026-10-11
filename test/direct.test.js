@@ -227,7 +227,7 @@ test('seller confirmation: authorization, state, inventory, no wallet movement; 
   assert.equal(count('SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?', `order:${o}:confirmed`), 1);
   // fulfilment: bad carrier / tracking rejected, label providers are plain external links, no label is bought for them
   const page = (await seller.get(`/dashboard/orders/${o}`)).text;
-  assert.match(page, /does <strong>not<\/strong> buy labels/); assert.match(page, /rel="noopener noreferrer"/);
+  assert.match(page, /PairPlug does not buy labels or pay postage/); assert.match(page, /rel="noopener noreferrer"/);
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'Sketchy Courier', tracking: '9400111899223344' })).status, 422);
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: 'x<script>' })).status, 422);
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: '9400111899223344' })).status, 200);

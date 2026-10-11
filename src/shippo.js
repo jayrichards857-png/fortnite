@@ -12,13 +12,11 @@ const setTransport = (fn) => { transport = fn; };
 class ShippoError extends Error { constructor(kind, message, status) { super(message); this.kind = kind; this.status = status || 502; } }
 
 const mode = () => config.shippo.mode;
-const enabled = () => mode() === 'test' && !config.isProd;
-function disabledReason() {
-  if (config.isProd) return 'Shipping labels are disabled in production until postage billing has been verified.';
-  if (mode() === 'live-blocked') return 'A live Shippo key is configured, but real label purchasing is deliberately disabled in this release.';
-  if (mode() === 'invalid') return 'SHIPPO_API_KEY is not a valid Shippo token.';
-  return 'Shipping labels are not set up on this server.';
-}
+// Label purchase is available ONLY in the isolated development sandbox (scripts/shipping-sandbox.js sets config.sandbox) and ONLY with a test token.
+// In the live beta (production, or any normal run) it is unavailable: sellers buy postage from their own shipping account and enter the tracking number.
+// A real customer address is therefore never sent to Shippo outside the sandbox's TEST data.
+const enabled = () => mode() === 'test' && !config.isProd && config.sandbox === true;
+const disabledReason = () => 'PairPlug does not buy shipping labels or pay postage in the beta. Buy postage from your own shipping account (for example Shippo, Pirate Ship or USPS) and enter the tracking number on the order.';
 
 async function realTransport({ method, path, body }) {
   const res = await fetch(BASE + path, {

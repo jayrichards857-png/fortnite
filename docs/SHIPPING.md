@@ -1,6 +1,20 @@
-# Shipping labels (Shippo) — test mode only
+# Shipping in the live beta, and the Shippo test-mode integration
 
-**Status:** implemented and tested against a *fake* Shippo transport. **Not yet exercised against Shippo's servers** (this build environment could not reach `docs.goshippo.com`/`api.goshippo.com`, and no key was used). **Real postage purchasing is disabled** and cannot be switched on by configuration; see “Who pays for postage”.
+## Live beta workflow (manual shipping — what sellers actually do)
+**Sellers buy their own postage; PairPlug never buys labels or pays postage.** After the seller confirms the buyer's payment, the seller order page (`/dashboard/orders/<id>`) shows *How to ship this order*:
+1. **Buy postage yourself** in your own account (Shippo, Pirate Ship, USPS, Canada Post, any carrier).
+2. **Ship to the address under “Ship to”** (visible only after payment is confirmed).
+3. **Enter the carrier and tracking number**, an optional note for the buyer, and press **Mark shipped** (the buyer is notified).
+
+Buyer-paid shipping is money the buyer already paid *directly to the seller* as part of the total; it is not a prepaid label. Entering tracking *records* it in PairPlug and shows it to the buyer; it does not buy postage or guarantee delivery. Ownership, payment-confirmation, carrier/tracking validation and refund handling are unchanged.
+
+**Shippo label purchasing is unavailable in the live beta.** `SH.enabled()` is true only when *all* hold: a `shippo_test_` token, `NODE_ENV` is not production, **and** the isolated sandbox flag (`PAIRPLUG_SANDBOX=1`, set only by `scripts/shipping-sandbox.js`). A test token on a normal run, a live token, an invalid token or production all leave the label API returning 503 with a neutral message, the order page without any label UI, and **no call to Shippo (so no customer address is ever sent to it)**. The integration code, its tests and the sandbox remain for future work.
+
+---
+
+# Shippo integration (test mode, sandbox only)
+
+**Status:** implemented and tested against a *fake* Shippo transport; reachable only in the sandbox (see above). **Not yet exercised against Shippo's servers** (this build environment could not reach `docs.goshippo.com`/`api.goshippo.com`, and no key was used). **Real postage purchasing is disabled** and cannot be switched on by configuration; see “Who pays for postage”.
 
 ## What it does
 On a seller's order page (`/dashboard/orders/<id>`, orders that are *paid* and not yet shipped) a **Shipping label** panel lets the seller:

@@ -39,9 +39,9 @@ function reset() {
 const txCalls = () => calls.filter((c) => c.path === '/transactions/' && c.method === 'POST').length;
 const row = (id) => q.get('SELECT * FROM shipments WHERE order_id = ? ORDER BY id DESC LIMIT 1', id);
 
-test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 'test' }; reset(); });
+test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 'test' }; config.sandbox = true; reset(); });
 test.beforeEach(() => reset());
-test.after(() => { SH.setTransport(null); config.shippo = { apiKey: '', mode: 'off' }; return H.stop(); });
+test.after(() => { SH.setTransport(null); config.shippo = { apiKey: '', mode: 'off' }; config.sandbox = false; return H.stop(); });
 
 async function paidOrder() {
   const seller = await H.newSeller('Ship'), buyer = await H.newUser('Buyer');
@@ -62,7 +62,7 @@ test('disabled states: no key, a LIVE key, and production never reach the provid
     await seller.put('/api/seller/ship-from', FROM);
     assert.equal((await rates_(seller, o)).status, 503); assert.equal((await buy(seller, o, { confirm: true })).status, 503);
   }
-  assert.match((await seller.get(`/api/seller/orders/${o}/shipping`)).json.disabledReason, /live Shippo key.*disabled|not set up/);
+  assert.match((await seller.get(`/api/seller/orders/${o}/shipping`)).json.disabledReason, /does not buy shipping labels/);
   config.shippo = { apiKey: KEY, mode: 'test' };
   config.isProd = true; try { assert.equal(SH.enabled(), false, 'production'); } finally { config.isProd = false; }
   assert.equal(calls.length, 0, 'no provider call was made');

@@ -6,7 +6,7 @@
 | Takes the buyer's payment | **The seller**, through the seller's own Stripe Payment Link. PairPlug never sees card details and never holds funds. |
 | Confirms the payment arrived | **The seller**, on PairPlug (`/dashboard/orders/<id>`). PairPlug can't verify it. Until then the order reads *Awaiting payment confirmation*. |
 | Refunds, returns, chargebacks, payment disputes, sales tax, Stripe fees | **The seller and their payment provider.** PairPlug does not refund or guarantee payments. It records the request, what each side *says*, and the founder can review evidence and act on listings/accounts. |
-| Buys the shipping label | **The seller**, outside PairPlug. Seller enters carrier + tracking (+ optional note). Tracking is not proof of delivery or contents. |
+| Buys the shipping label / pays postage | **The seller**, in their own Shippo, Pirate Ship or USPS account. **PairPlug never buys labels or pays postage.** Buyer-paid shipping is money the buyer paid the seller directly, not a prepaid label. The seller enters carrier + tracking (+ optional note) and presses *Mark shipped*: this records the tracking in PairPlug; it does not buy postage or guarantee delivery. |
 | Account creation | **Buyers** sign up themselves (buyer rights only). **Sellers** exist only by the founder's invitation (max 3); everyone else sees “Coming Soon!” on the Sell page. |
 | Escrow / “payment protection” | **Not provided.** |
 
@@ -27,7 +27,7 @@ Sellers are *expected* to reply to buyer messages within **48 hours**. This is s
 
 ## Daily seller routine
 1. Dashboard → awaiting your payment check: find a payment of the **total** with reference `PP-<order id>` in Stripe → *Payment received — confirm order*, otherwise *release item*.
-2. Buy a label, enter carrier + tracking → *Mark shipped*.
+2. Buy postage in your own shipping account, then enter carrier + tracking → *Mark shipped* (the order page lists these steps).
 3. Reply to messages within 48 hours.
 4. Refund requested → refund in **Stripe first**, then *Report refund sent*. The order shows *refunded* only after the buyer confirms receipt (or the founder verifies).
 
