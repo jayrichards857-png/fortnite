@@ -240,7 +240,7 @@ test('race: confirm / reject / buyer-cancel / expiry-sweep fired together leave 
     const order = q.get('SELECT status, payment_confirmed_at FROM orders WHERE id = ?', o), l = q.get('SELECT status, reserved_checkout_id r FROM listings WHERE id = ?', id), c = q.get('SELECT status FROM checkouts WHERE id = ?', ck);
     outcomes[order.status] = (outcomes[order.status] || 0) + 1;
     assert.ok(['paid', 'cancelled', 'pending_payment'].includes(order.status), order.status);
-    if (order.status === 'paid') { assert.equal(l.status, 'sold'); assert.equal(c.status, 'paid'); assert.ok(order.payment_confirmed_at); assert.equal(results.slice(0, 2).filter((r) => r.status === 200).length, 1, 'exactly one confirm wins'); }
+    if (order.status === 'paid') { assert.equal(l.status, 'sold'); assert.equal(c.status, 'paid'); assert.ok(order.payment_confirmed_at); assert.equal(results.slice(0, 2).filter((r) => r.status === 200 && !r.json.alreadyConfirmed).length, 1, 'exactly one confirm does the work (the repeat is reported as already confirmed)'); }
     else if (order.status === 'cancelled') { assert.equal(l.status, 'active'); assert.equal(l.r, null); assert.notEqual(c.status, 'paid'); assert.equal(order.payment_confirmed_at, null); }
     else { assert.equal(l.status, 'reserved'); assert.equal(c.status, 'pending'); }
     assert.equal(q.get('SELECT COUNT(*) n FROM order_events WHERE order_id = ? AND to_status IN (\'paid\',\'cancelled\')', o).n, order.status === 'pending_payment' ? 0 : 1, 'exactly one terminal transition recorded');

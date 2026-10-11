@@ -62,7 +62,7 @@ function startPurchase(user, { listingId, address, acknowledged }) {
   const addr = validateAddress(address);
   rateLimit(`buy:${user.id}`, 12, 3600);
   expireStaleCheckouts(); // free any expired holds first so a stale reservation can't block a real buyer
-  return tx(() => {
+  const out = tx(() => {
     const l = q.get('SELECT * FROM listings WHERE id = ?', Number(listingId));
     if (!l) throw new HttpError(404, 'Listing not found');
     if (l.seller_id === user.id) throw new HttpError(403, "You can't buy your own listing.");
@@ -93,6 +93,9 @@ function startPurchase(user, { listingId, address, acknowledged }) {
     notify(seller.id, `order:${orderId}:initiated`, 'Someone started checkout', `Order #${orderId}: "${l.title}" is reserved. Watch for the payment in your Stripe dashboard (reference PP-${orderId}), then confirm it in PairPlug.`, `/dashboard/orders/${orderId}`);
     return { orderId, existing: false };
   });
+  // The response is only built after the transaction committed; read the row back so we never report an order that is not durably stored.
+  if (!q.get('SELECT 1 x FROM orders WHERE id = ?', out.orderId)) throw new HttpError(500, 'The order could not be saved. Nothing was reserved; please try again.');
+  return { ...out, reference: `PP-${out.orderId}` };
 }
 
 function buyerOrder(user, orderId) {
@@ -155,10 +158,12 @@ function buyerCancel(user, orderId) {
 function sellerConfirmPayment(user, orderId, { reference } = {}) {
   return tx(() => {
     const o = sellerOrder(user, orderId);
+    // Repeated request (double click / retry) by the seller who already confirmed: nothing changes, and it is reported honestly.
+    if (['paid', 'shipped', 'delivered', 'released'].includes(o.status) && o.payment_confirmed_by === user.id) return { ok: true, alreadyConfirmed: true };
     if (o.status !== 'pending_payment') throw new HttpError(409, o.status === 'cancelled' ? 'This reservation expired or was cancelled, so the item may have been released. Refund the buyer in your payment dashboard if they paid.' : 'This order is already confirmed.');
     const held = q.get("SELECT id FROM listings WHERE reserved_checkout_id = ? AND status = 'reserved'", o.checkout_id);
     if (!held) throw new HttpError(409, 'The item is no longer reserved for this order.');
-    transition(o.id, 'paid', { actor: `seller:${user.id}`, note: 'Seller confirmed payment received in their own payment account', set: { paid_at: now(), payment_confirmed_at: now(), payment_reference: cleanLine(reference, 80) || null } });
+    transition(o.id, 'paid', { actor: `seller:${user.id}`, note: 'Seller confirmed payment received in their own payment account', set: { paid_at: now(), payment_confirmed_at: now(), payment_confirmed_by: user.id, payment_reference: cleanLine(reference, 80) || null } });
     q.run("UPDATE checkouts SET status = 'paid' WHERE id = ?", o.checkout_id);
     q.run("UPDATE listings SET status = 'sold', reserved_until = NULL WHERE id = ?", held.id);
     notify(o.buyer_id, `order:${o.id}:confirmed`, 'Payment confirmed by the seller', `Order #${o.id}: the seller confirmed your payment and will ship soon.`, `/orders/${o.id}`);
@@ -170,6 +175,7 @@ function sellerConfirmPayment(user, orderId, { reference } = {}) {
 function sellerRejectPayment(user, orderId) {
   return tx(() => {
     const o = sellerOrder(user, orderId);
+    if (o.status === 'cancelled' && !o.payment_confirmed_at) return { ok: true, alreadyReleased: true };      // repeated request: already released; the item is never re-opened twice
     if (o.status !== 'pending_payment') throw new HttpError(409, 'Only orders waiting for payment can be rejected.');
     transition(o.id, 'cancelled', { actor: `seller:${user.id}`, note: 'Seller did not receive payment' });
     q.run("UPDATE checkouts SET status = 'failed' WHERE id = ?", o.checkout_id); releaseListing(o.checkout_id);

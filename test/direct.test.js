@@ -219,7 +219,7 @@ test('seller confirmation: authorization, state, inventory, no wallet movement; 
   assert.equal((await seller.post(`/api/seller/orders/${o}/confirm-payment`, { reference: 'ch_3Abc12' })).status, 200);
   const paid = row(o);
   assert.equal(paid.status, 'paid'); assert.ok(paid.payment_confirmed_at); assert.equal(paid.payment_reference, 'ch_3Abc12'); assert.equal(listingRow(id).status, 'sold');
-  assert.equal((await seller.post(`/api/seller/orders/${o}/confirm-payment`)).status, 409, 'cannot confirm twice');
+  { const again = await seller.post(`/api/seller/orders/${o}/confirm-payment`); assert.equal(again.status, 200, 'a repeated confirmation is idempotent'); assert.equal(again.json.alreadyConfirmed, true); }
   assert.equal(count('SELECT COUNT(*) n FROM ledger'), 0, 'direct orders never touch the wallet ledger');
   assert.equal((await seller.get(`/dashboard/orders/${o}`)).text.includes('1 Main St'), true, 'address visible after confirmation');
   assert.match((await seller.get('/dashboard/orders')).text, /Confirmed by you/);

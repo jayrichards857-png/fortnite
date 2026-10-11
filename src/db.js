@@ -486,6 +486,14 @@ CREATE TRIGGER shipments_no_delete BEFORE DELETE ON shipments BEGIN SELECT RAISE
 CREATE TRIGGER shipments_label_immutable BEFORE UPDATE OF order_id, seller_id, test, price_cents, currency, carrier, service, label_url, tracking_number, provider_transaction_id ON shipments
   WHEN OLD.status = 'success' BEGIN SELECT RAISE(ABORT, 'a purchased label cannot be changed'); END;
 `,
+// 7: record WHICH seller confirmed payment (the timestamp already exists as payment_confirmed_at). Additive; existing paid direct orders are
+// backfilled from their immutable order_events history (actor 'seller:<id>'). No money columns are touched.
+`
+ALTER TABLE orders ADD COLUMN payment_confirmed_by INTEGER REFERENCES users(id);
+UPDATE orders SET payment_confirmed_by = (
+  SELECT CAST(substr(e.actor, 8) AS INTEGER) FROM order_events e WHERE e.order_id = orders.id AND e.to_status = 'paid' AND e.actor LIKE 'seller:%' ORDER BY e.id LIMIT 1)
+ WHERE payment_mode = 'external' AND payment_confirmed_at IS NOT NULL;
+`,
 ];
 
 function migrate() {

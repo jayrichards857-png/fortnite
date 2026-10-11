@@ -191,10 +191,11 @@ r.get('/api/seller/payout-preview', S, (req, res) => {
 // ---------- Orders ----------
 const FULFIL = { paid: 'Awaiting shipment', shipped: 'Shipped', delivered: 'Delivered — awaiting buyer', released: 'Completed', disputed: 'In dispute', refunded: 'Refunded', pending_payment: 'Awaiting payment', cancelled: 'Cancelled' };
 r.get('/dashboard/orders', S, (req, res) => {
-  const st = ['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].includes(req.query.status) ? req.query.status : null;
+  const FILTERS = ['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded', 'cancelled'];
+  const st = FILTERS.includes(req.query.status) ? req.query.status : null;
   const orders = q.all(`SELECT o.*, b.display_name buyer_name, c.ship_city, c.ship_region FROM orders o JOIN users b ON b.id = o.buyer_id JOIN checkouts c ON c.id = o.checkout_id
-    WHERE o.seller_id = ? AND (o.status NOT IN ('pending_payment','cancelled') OR (o.payment_mode = 'external' AND o.status = 'pending_payment')) ${st ? 'AND o.status = ?' : ''} ORDER BY o.created_at DESC LIMIT 100`, ...(st ? [req.user.id, st] : [req.user.id]));
-  const rows = orders.map((o) => {
+    WHERE o.seller_id = ? AND (o.payment_mode = 'external' OR o.status NOT IN ('pending_payment','cancelled')) ${st ? 'AND o.status = ?' : ''} ORDER BY o.created_at DESC, o.id DESC LIMIT 200`, ...(st ? [req.user.id, st] : [req.user.id]));
+  const rowOf = (o) => {
     const items = q.all('SELECT title FROM order_items WHERE order_id = ?', o.id);
     const ext = o.payment_mode === 'external';
     const act = ext ? `<a class="btn ${o.status === 'pending_payment' || o.status === 'paid' ? '' : 'ghost'} small" href="/dashboard/orders/${o.id}">${o.status === 'pending_payment' ? 'Confirm payment' : o.status === 'paid' ? 'Ship' : 'Details'}</a>` : o.status === 'paid' ? `<form data-api="/api/seller/orders/${o.id}/ship" data-reload style="display:flex;gap:4px;flex-wrap:wrap"><label class="sr" for="c${o.id}">Carrier</label><select id="c${o.id}" name="carrier" style="width:auto"><option>USPS</option><option>UPS</option><option>FedEx</option><option>Canada Post</option><option>Other</option></select>
@@ -203,13 +204,19 @@ r.get('/dashboard/orders', S, (req, res) => {
       : o.status === 'disputed' ? `<a class="btn ghost small" href="/orders/${o.id}">View dispute</a>` : `<a class="btn ghost small" href="/orders/${o.id}">Details</a>`;
     return `<tr><td class="nowrap"><a href="${o.payment_mode === 'external' ? '/dashboard/orders/' : '/orders/'}${o.id}">#${o.id}</a><div class="muted small">${date(o.created_at)}</div></td><td>${items.map((i) => esc(i.title)).join('<br>')}</td>
       <td>${esc(o.buyer_name.split(' ')[0])}${ext && !o.payment_confirmed_at ? '' : `<div class="muted small">${esc(o.ship_city)}, ${esc(o.ship_region)}</div>`}</td><td class="num">${money(o.total_cents)}<div class="muted small">${ext ? 'paid direct to you' : 'payout ' + money(o.seller_payout_cents)}</div></td>
-      <td>${ext ? (o.status === 'pending_payment' ? '<span class="pill s-pending_payment">Unconfirmed</span>' : o.status === 'refunded' ? V.statusPill('refunded') : '<span class="pill s-paid">Confirmed by you</span>') : V.statusPill(o.status === 'refunded' ? 'refunded' : 'paid')}</td><td>${ext && o.status === 'pending_payment' ? 'Awaiting your payment check' : FULFIL[o.status]}</td><td>${o.tracking_number ? `${esc(o.carrier)} ${esc(o.tracking_number)}` : '—'}</td><td>${act}</td></tr>`;
-  }).join('');
-  const body = `<h1>Orders</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded'].map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s}</option>`).join('')}</select></form>
+      <td>${ext ? (o.status === 'pending_payment' ? '<span class="pill s-pending_payment">Unconfirmed</span>' : o.status === 'cancelled' ? '<span class="pill s-cancelled">Not paid</span>' : o.status === 'refunded' ? V.statusPill('refunded') : '<span class="pill s-paid">Confirmed by you</span>') : V.statusPill(o.status === 'refunded' ? 'refunded' : 'paid')}</td><td>${ext && o.status === 'pending_payment' ? 'Awaiting your payment check' : FULFIL[o.status]}</td><td>${o.tracking_number ? `${esc(o.carrier)} ${esc(o.tracking_number)}` : '—'}</td><td>${act}</td></tr>`;
+  };
+  const GROUPS = [['Awaiting your payment confirmation', 'Reserved for a buyer but <strong>not paid</strong> until you confirm the money arrived in your own account.', (o) => o.status === 'pending_payment'],
+    ['Paid — ready to ship', 'You confirmed payment. Buy postage yourself and record the tracking number.', (o) => o.status === 'paid'],
+    ['Shipped and completed', '', (o) => ['shipped', 'delivered', 'released'].includes(o.status)],
+    ['In dispute', '', (o) => o.status === 'disputed'],
+    ['Cancelled, released and refunded', 'Never paid (or refunded). The item is only re-listed automatically if nothing else holds or has sold it.', (o) => ['cancelled', 'refunded'].includes(o.status)]];
+  const head = '<thead><tr><th>Order</th><th>Items</th><th>Buyer</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th><th>Tracking</th><th>Actions</th></tr></thead>';
+  const sections = GROUPS.map(([title, note, test]) => { const list = orders.filter(test); return list.length ? `<h2 style="margin-top:20px">${title} <span class="muted small">(${list.length})</span></h2>${note ? `<p class="small muted" style="margin:0 0 8px">${note}</p>` : ''}<div class="tablewrap"><table>${head}<tbody>${list.map(rowOf).join('')}</tbody></table></div>` : ''; }).join('');
+  const body = `<h1>Orders</h1><form class="filterbar" method="get"><label class="sr" for="os">Status</label><select id="os" name="status" data-autosubmit><option value="">All orders</option>${FILTERS.map((s) => `<option value="${s}"${st === s ? ' selected' : ''}>${s.replace('_', ' ')}</option>`).join('')}</select></form>
   ${X.isExternal() ? '<p class="small muted">Direct checkout: buyers pay you through your own payment link. “Unconfirmed” orders are reserved but <strong>not paid</strong> until you confirm the payment arrived in your own account.</p>' : ''}
   <p class="small muted">${SHIPPO.enabled() ? 'Shipping labels are in <strong>test mode</strong>: open a paid order to try the Shippo label panel (test labels are not valid postage). For real shipments, buy a label with your carrier or a shipping service and enter the tracking number on the order.' : 'PairPlug does not buy shipping labels or pay postage. Buy postage from your own shipping account, then enter the carrier and tracking number on the order.'}</p>
-  ${orders.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Items</th><th>Buyer</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th><th>Tracking</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : V.empty('No orders', st ? 'No orders with this status.' : 'Orders from buyers will appear here once paid.')}`;
+  ${orders.length ? sections : V.empty('No orders', st ? 'No orders with this status.' : 'Orders appear here as soon as a buyer starts checkout, including ones still waiting for your payment confirmation.')}`;
   page(req, res, { title: 'Orders', path: '/dashboard/orders', body, dash: true });
 });
 r.post('/api/seller/orders/:id(\\d+)/ship', S, (req, res) => {

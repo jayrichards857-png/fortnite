@@ -115,8 +115,13 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     const orderId = Number(b.pg.url().match(/orders\/(\d+)/)[1]);
     assert.match(await b.pg.textContent('main'), /Awaiting payment confirmation/i);
     await b.pg.click('text=Go to seller checkout'); await b.pg.waitForTimeout(400); assert.ok(external.some((u) => u.startsWith(LINK) && u.includes(`PP-${orderId}`)), 'redirect target: ' + external);
+    // the persisted order is visible to BOTH users while still unpaid, and is listed under the right heading
+    await s1.pg.goto(`${B}/dashboard/orders`); t = await s1.pg.textContent('main'); assert.match(t, /Awaiting your payment confirmation/); assert.match(t, new RegExp(`#${orderId}`)); assert.doesNotMatch(t, /No orders/);
+    await b.pg.goto(`${B}/orders`); t = await b.pg.textContent('main'); assert.match(t, new RegExp(`PP-${orderId}`)); assert.match(t, /Awaiting payment confirmation/i);
     await s1.pg.goto(`${B}/dashboard/orders/${orderId}`); await s1.pg.click('text=Payment received'); await s1.pg.waitForLoadState('networkidle');
     assert.match(await s1.pg.textContent('main'), /How to ship this order/i);
+    await s1.pg.goto(`${B}/dashboard/orders`); assert.match(await s1.pg.textContent('main'), /Paid — ready to ship/); await s1.pg.goto(`${B}/dashboard/inventory?status=sold`); assert.match(await s1.pg.textContent('main'), /Buyable jacket/);
+    await s1.pg.goto(`${B}/dashboard/orders/${orderId}`);
     await s1.pg.fill('#tn', '9400111899223344'); await s1.pg.fill('#sn2', 'Left with front desk'); await s1.pg.click('button:has-text("Mark shipped")'); await s1.pg.waitForLoadState('networkidle');
     await b.pg.goto(`${B}/orders/${orderId}`); t = await b.pg.textContent('main'); assert.match(t, /not proof of delivery/i); assert.match(t, /Left with front desk/);
     await b.pg.click('summary:has-text("Request a refund")'); await b.pg.fill('#rr', 'Item is smaller than described.'); await b.pg.click('text=Send request'); await b.pg.waitForLoadState('networkidle');

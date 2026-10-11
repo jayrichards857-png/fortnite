@@ -64,7 +64,7 @@ r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
 
 r.post('/api/purchases', auth.requireUser, (req, res) => {
   const out = X.startPurchase(req.user, { listingId: req.body.listingId, address: req.body.address, acknowledged: req.body.acknowledged === true });
-  res.json({ ok: true, orderId: out.orderId, existing: out.existing, redirect: `/orders/${out.orderId}` });
+  res.json({ ok: true, orderId: out.orderId, reference: out.reference, existing: out.existing, redirect: `/orders/${out.orderId}` });
 });
 
 // ---------- Buyer: the order page for a direct order (everything else falls through to the legacy page) ----------

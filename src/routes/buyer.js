@@ -290,10 +290,10 @@ r.get('/checkout/:id(\\d+)', auth.requireUser, (req, res) => {
 
 // ---------- Buyer orders ----------
 r.get('/orders', auth.requireUser, (req, res) => {
-  const orders = q.all(`SELECT o.*, u.store_name, u.handle FROM orders o JOIN users u ON u.id = o.seller_id WHERE o.buyer_id = ? AND o.status <> 'cancelled' ORDER BY o.created_at DESC LIMIT 100`, req.user.id);
+  const orders = q.all(`SELECT o.*, u.store_name, u.handle FROM orders o JOIN users u ON u.id = o.seller_id WHERE o.buyer_id = ? AND (o.status <> 'cancelled' OR o.payment_mode = 'external') ORDER BY o.created_at DESC, o.id DESC LIMIT 200`, req.user.id);
   const rows = orders.map((o) => {
     const items = q.all('SELECT * FROM order_items WHERE order_id = ?', o.id);
-    return `<tr><td><a href="/orders/${o.id}">#${o.id}</a><div class="muted small">${date(o.created_at)}</div></td>
+    return `<tr><td><a href="/orders/${o.id}">#${o.id}</a><div class="muted small">${o.payment_mode === 'external' ? `PP-${o.id} · ` : ''}${date(o.created_at)}</div></td>
       <td><div style="display:flex;gap:8px;align-items:center">${V.img(items[0] && items[0].image, 'thumb')}<div>${items.map((i) => esc(i.title)).join('<br>')}<div class="muted small">${esc(o.store_name || o.handle)}</div></div></div></td>
       <td class="num">${money(o.total_cents)}</td><td>${V.orderPill(o)}</td><td>${o.tracking_number ? `${esc(o.carrier || '')} ${esc(o.tracking_number)}` : '<span class="muted">—</span>'}</td></tr>`;
   }).join('');
