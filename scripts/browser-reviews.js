@@ -41,7 +41,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     assert.equal((await api(b.ctx, 'POST', '/api/register', { email: 'buyer@example.test', display_name: 'Bea Buyer', password: 'a-long-password-2', terms: true })).status, 200);
     const o = await api(b.ctx, 'POST', '/api/purchases', { listingId, acknowledged: true, address: { name: 'Bea Buyer', line1: '1 Main St', city: 'Austin', region: 'TX', postal: '78701', country: 'US' } }); const orderId = Number(String(o.json.redirect).match(/(\d+)/)[1]);
     assert.equal((await api(s.ctx, 'POST', `/api/seller/orders/${orderId}/confirm-payment`, {})).status, 200); assert.equal((await api(s.ctx, 'POST', `/api/seller/orders/${orderId}/ship`, { carrier: 'USPS', tracking: '9400111899223344' })).status, 200);
-    { const [row] = await dbq('SELECT quantity, status FROM listings WHERE id = $1', listingId); assert.deepEqual({ ...row }, { quantity: 1, status: 'active' }); step('listing with quantity 2: one unit reserved by the order -> 1 left, still for sale'); }
+    { const [row] = await dbq('SELECT quantity, status FROM listings WHERE id = $1', listingId); assert.deepEqual({ quantity: Number(row.quantity), status: row.status }, { quantity: 1, status: 'active' }); step('listing with quantity 2: one unit reserved by the order -> 1 left, still for sale'); }
 
     // ---- buyer leaves a review through the UI
     await b.pg.goto(B + `/orders/${orderId}`); await b.pg.click('button[data-post$="/received"]'); await b.pg.waitForLoadState('networkidle'); await b.pg.reload();

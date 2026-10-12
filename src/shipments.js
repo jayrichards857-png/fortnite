@@ -135,16 +135,13 @@ async function finish(s, t) {
   return 'purchasing';
 }
 
-async function buy(user, orderId, body = {}) {
-  rateLimit(`ship-buy:${user.id}`, 10, 3600);
-  if (!SH.enabled()) throw new HttpError(503, SH.disabledReason());
-  const o = await orderFor(user, orderId), t = isTest();
-  const existing = await latest(o.id, t);
-  if (existing && existing.status === 'success') return { ...await state(user, o.id), duplicate: true };           // a retry/double click returns the label we already bought
-  if (existing && existing.status === 'purchasing') throw new HttpError(409, 'A label purchase is already in progress for this order. Use “Check status” instead of buying again.');
-  if (body.confirm !== true) fail({ confirm: 'Confirm the purchase to continue.' }, 'Please confirm the label purchase.');
-  const el = eligibility(o); if (!el.ok) throw new HttpError(409, el.reason);
-  const claimed = await tx(async () => {
+/**
+ * The exactly-once gate for buying a label: inside one transaction, lock the order's current quote, validate it and flip it from
+ * rates_ready to purchasing. Concurrent calls queue on the row lock and only one can win (the others find no rates_ready quote);
+ * the UPDATE's row count is checked as well, so a lost race can never reach the carrier. Exported for the concurrency tests.
+ */
+async function claimQuote(user, o, t, body) {
+  return await tx(async () => {
     // FOR UPDATE + the checked UPDATE below: concurrent buy requests queue here and exactly one can claim the quote (the others find no rates_ready row)
     const s = await q.get("SELECT * FROM shipments WHERE order_id = ? AND test = ? AND status = 'rates_ready' ORDER BY id DESC LIMIT 1 FOR UPDATE", o.id, t);
     if (!s) throw new HttpError(409, 'Get shipping rates first.');
@@ -157,9 +154,22 @@ async function buy(user, orderId, body = {}) {
     try {
       const claim = await q.run("UPDATE shipments SET status = 'purchasing', selected_rate_id = ?, carrier = ?, service = ?, price_cents = ?, currency = ?, confirmed_at = ?, error_message = NULL, updated_at = ? WHERE id = ? AND status = 'rates_ready'", rate.id, rate.carrier, rate.service, rate.amountCents, rate.currency, now(), now(), s.id);
       if (claim.changes !== 1) throw new HttpError(409, 'A label purchase is already in progress or complete for this order.');
+
     } catch (e) { if (isUnique(e)) throw new HttpError(409, 'A label purchase is already in progress or complete for this order.'); throw e; }
     return { s, rate };
   });
+}
+
+async function buy(user, orderId, body = {}) {
+  rateLimit(`ship-buy:${user.id}`, 10, 3600);
+  if (!SH.enabled()) throw new HttpError(503, SH.disabledReason());
+  const o = await orderFor(user, orderId), t = isTest();
+  const existing = await latest(o.id, t);
+  if (existing && existing.status === 'success') return { ...await state(user, o.id), duplicate: true };           // a retry/double click returns the label we already bought
+  if (existing && existing.status === 'purchasing') throw new HttpError(409, 'A label purchase is already in progress for this order. Use “Check status” instead of buying again.');
+  if (body.confirm !== true) fail({ confirm: 'Confirm the purchase to continue.' }, 'Please confirm the label purchase.');
+  const el = eligibility(o); if (!el.ok) throw new HttpError(409, el.reason);
+  const claimed = await claimQuote(user, o, t, body);
   await audit(user, 'label_purchase_started', { type: 'order', id: o.id, detail: { test: Boolean(t), carrier: claimed.rate.carrier, service: claimed.rate.service, price_cents: claimed.rate.amountCents, currency: claimed.rate.currency } });
   try {
     const tr = await SH.purchaseLabel({ rateId: claimed.rate.id, ref: `PP-${o.id}-S${claimed.s.id}` });
@@ -208,4 +218,4 @@ async function labelUrl(user, orderId) {
 /** Only REAL (non-test) labels ever surface to buyers or prefill the shipping form. Test labels are not valid postage. */
 const realLabel = async (orderId) => await q.get("SELECT carrier, service, tracking_number, tracking_url, tracking_status FROM shipments WHERE order_id = ? AND test = 0 AND status = 'success' ORDER BY id DESC LIMIT 1", orderId) || null;
 
-module.exports = { state, saveShipFrom, quote, buy, refresh, release, labelUrl, realLabel, address, parcel };
+module.exports = { state, saveShipFrom, quote, buy, claimQuote, orderFor, refresh, release, labelUrl, realLabel, address, parcel };

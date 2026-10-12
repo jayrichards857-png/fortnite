@@ -136,6 +136,14 @@ test('purchase requires explicit confirmation and an exact price; success stores
   assert.equal((await rates_(seller, o)).status, 409, 'no second quote once a label exists');
 });
 
+test('the label-purchase claim is an exactly-once gate even when requests reach it at the same instant (row lock + checked UPDATE)', async () => {
+  const { seller, o } = await quoted(); const user = await q.get('SELECT * FROM users WHERE email = ?', seller.email), ord = await ship.orderFor(user, o);
+  const body = { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true };
+  const rs = await Promise.allSettled(Array.from({ length: 10 }, () => ship.claimQuote(user, ord, 1, body)));
+  assert.equal(rs.filter((r) => r.status === 'fulfilled').length, 1, 'exactly one claim succeeds: ' + rs.map((r) => r.status === 'rejected' ? r.reason.message : 'ok').join(' | ')); assert.ok(rs.filter((r) => r.status === 'rejected').every((r) => r.reason.status === 409), 'every other claim is a clean 409');
+  assert.equal((await q.get("SELECT COUNT(*) n FROM shipments WHERE order_id = ? AND status = 'purchasing'", o)).n, 1);
+});
+
 test('duplicates: double-click, concurrent requests and retries buy exactly one label', async () => {
   const { seller, o } = await quoted(); const body = { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true };
   let release; const gate = new Promise((r) => { release = r; });

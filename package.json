@@ -1,12 +1,12 @@
 {
   "name": "pairplug",
   "version": "1.0.0",
-  "description": "PairPlug - secondhand marketplace for North America with escrow and a reseller dashboard",
+  "description": "PairPlug - clothing marketplace (private beta) on Node.js + PostgreSQL",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "PAYMENTS_MODE=sandbox node --watch src/server.js",
-    "test": "node --test test/*.test.js",
+    "test": "node scripts/run-tests.js",
     "check": "node scripts/check.js",
     "create-admin": "node scripts/create-admin.js",
     "admin:status": "node scripts/create-admin.js status",
@@ -19,7 +19,11 @@
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "inventory:sellers": "node scripts/inventory-sellers.js",
-    "start:beta": "NODE_ENV=production CHECKOUT_MODE=external node src/server.js"
+    "start:beta": "NODE_ENV=production CHECKOUT_MODE=external node src/server.js",
+    "test:pg:start": "scripts/pg-test.sh start",
+    "test:pg:stop": "scripts/pg-test.sh stop",
+    "db:import-sqlite": "node scripts/sqlite-to-pg.js",
+    "db:schema": "node scripts/dump-schema.js"
   },
   "repository": {
     "type": "git",
