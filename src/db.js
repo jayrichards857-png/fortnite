@@ -672,6 +672,60 @@ CREATE INDEX idx_moderation_target ON moderation_actions(target_id, id DESC);
 CREATE TRIGGER moderation_actions_no_update BEFORE UPDATE ON moderation_actions BEGIN SELECT RAISE(ABORT, 'moderation log is append-only'); END;
 CREATE TRIGGER moderation_actions_no_delete BEFORE DELETE ON moderation_actions BEGIN SELECT RAISE(ABORT, 'moderation log is append-only'); END;
 `,
+// 14: listing quantity, checkout-amount attestation, order-linked seller reviews, suggested names on invitations. Additive.
+//   listings.quantity                units still available to reserve (reserving a unit takes one off; releasing gives it back). Backfill: reserved/sold -> 0, everything else 1.
+//   listings.payment_total_ack_cents the total (item + buyer-paid shipping) the SELLER confirmed their payment link charges; NULL = not confirmed (online checkout is paused until they do)
+//   seller_reviews                   one per order, tied to the buyer's own delivered order (also enforced by triggers); thumbs-up flag + optional text; moderators can only hide/restore
+//   review_reports / review_events   reports on reviews; append-only history of every create/edit/remove/report/hide/restore
+`
+ALTER TABLE listings ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 0 AND quantity <= 999);
+UPDATE listings SET quantity = 0 WHERE status IN ('reserved','sold');
+ALTER TABLE listings ADD COLUMN payment_total_ack_cents INTEGER;
+ALTER TABLE invitations ADD COLUMN suggested_name TEXT;
+ALTER TABLE moderator_invites ADD COLUMN suggested_name TEXT;
+CREATE TABLE seller_reviews (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL UNIQUE REFERENCES orders(id),
+  buyer_id INTEGER NOT NULL REFERENCES users(id),
+  seller_id INTEGER NOT NULL REFERENCES users(id),
+  thumbs_up INTEGER NOT NULL CHECK (thumbs_up IN (0,1)),
+  body TEXT CHECK (body IS NULL OR length(body) BETWEEN 1 AND 1000),
+  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published','hidden','removed')),
+  created_at INTEGER NOT NULL,
+  edited_at INTEGER,
+  CHECK (buyer_id <> seller_id)
+);
+CREATE INDEX idx_seller_reviews_seller ON seller_reviews(seller_id, status, created_at DESC);
+CREATE TRIGGER seller_reviews_eligible BEFORE INSERT ON seller_reviews
+  WHEN NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = NEW.order_id AND o.buyer_id = NEW.buyer_id AND o.seller_id = NEW.seller_id AND o.status IN ('delivered','released'))
+  BEGIN SELECT RAISE(ABORT, 'review requires the buyer''s own completed order'); END;
+CREATE TRIGGER seller_reviews_identity_immutable BEFORE UPDATE OF order_id, buyer_id, seller_id, created_at ON seller_reviews BEGIN SELECT RAISE(ABORT, 'review identity is immutable'); END;
+CREATE TRIGGER seller_reviews_no_delete BEFORE DELETE ON seller_reviews BEGIN SELECT RAISE(ABORT, 'reviews are never deleted'); END;
+CREATE TABLE review_reports (
+  id INTEGER PRIMARY KEY,
+  review_id INTEGER NOT NULL REFERENCES seller_reviews(id),
+  reporter_id INTEGER NOT NULL REFERENCES users(id),
+  reason TEXT NOT NULL CHECK (length(reason) BETWEEN 5 AND 500),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','actioned','dismissed')),
+  created_at INTEGER NOT NULL,
+  resolved_by INTEGER REFERENCES users(id),
+  resolved_at INTEGER,
+  UNIQUE (review_id, reporter_id)
+);
+CREATE INDEX idx_review_reports_open ON review_reports(status, created_at);
+CREATE TABLE review_events (
+  id INTEGER PRIMARY KEY,
+  review_id INTEGER NOT NULL REFERENCES seller_reviews(id),
+  actor_id INTEGER NOT NULL REFERENCES users(id),
+  actor_role TEXT NOT NULL CHECK (actor_role IN ('buyer','seller','moderator','admin','user')),
+  kind TEXT NOT NULL CHECK (kind IN ('created','edited','removed','reinstated','reported','hidden','restored','report_dismissed')),
+  detail TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_review_events ON review_events(review_id, id);
+CREATE TRIGGER review_events_no_update BEFORE UPDATE ON review_events BEGIN SELECT RAISE(ABORT, 'review history is append-only'); END;
+CREATE TRIGGER review_events_no_delete BEFORE DELETE ON review_events BEGIN SELECT RAISE(ABORT, 'review history is append-only'); END;
+`,
 ];
 
 function migrate() {

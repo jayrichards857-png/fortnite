@@ -51,7 +51,7 @@ function seed({ q, now, hashPassword, setSetting, listings, images, checkout, pn
   const makeOrder = (label, confirm) => {
     const file = images.saveUpload(sellerId, png(240, 300, (x, y) => [150 - (y >> 4), 120, 90 + (x >> 4)]));
     const saved = listings.saveListing(user(sellerId), null, { title: `${MARK} ${label}`, description: 'Sandbox listing. Not a real item.', category: 'outerwear', brand: 'Sandbox', size: 'M', condition: 'good', price: '40.00', shipping: '6.00', shipping_payer: 'buyer',
-      weight_oz: 20, length_in: 12, width_in: 9, height_in: 4, payment_url: 'https://buy.stripe.com/test_sandbox_not_a_real_link', images: [file], status: 'active' });
+      weight_oz: 20, length_in: 12, width_in: 9, height_in: 4, payment_url: 'https://buy.stripe.com/test_sandbox_not_a_real_link', payment_amount_ack: true, images: [file], status: 'active' });
     const listingId = typeof saved === 'object' ? saved.id : saved;
     const { orderId } = checkout.startPurchase(user(buyerId), { listingId, address: FIXTURE_ADDRESS, acknowledged: true });
     if (confirm) checkout.sellerConfirmPayment(user(sellerId), orderId, { reference: 'SANDBOX-TEST-NO-REAL-PAYMENT' });

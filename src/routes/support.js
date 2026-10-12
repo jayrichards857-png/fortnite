@@ -83,7 +83,7 @@ const eventLine = (e, admin) => {
 
 r.get('/support', (req, res) => {
   const mine = req.user ? cases.mine(req.user) : [];
-  const contact = `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, concerns about a buyer or seller, account issues and appeals, safety concerns and general questions.</p><p class="small muted">Email is read by the operator. It does not create a case automatically and there is no guaranteed response time; to attach photos and screenshots to a tracked case, use the report forms on this page.</p>`;
+  const contact = `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, concerns about a buyer or seller, account issues and appeals, safety concerns and general questions. <a href="/contact">Open the Contact page</a> for one-click email options.</p><p class="small muted">Email is read by the operator. It does not create a case automatically and there is no guaranteed response time; to attach photos and screenshots to a tracked case, use the report forms on this page.</p>`;
   const body = `<h1>Help &amp; reporting</h1><div class="two"><section>
     <div class="panel"><h3>How problems are handled</h3><ul class="plain"><li><strong>Message the seller first.</strong> Most problems are solved in a conversation. Sellers are expected to reply within <strong>48 hours</strong>. That is an expectation, not a guarantee.</li>
       <li>Buyers pay sellers directly through the seller's own payment link. <strong>PairPlug does not hold, move, freeze or refund money</strong> and cannot reverse a payment. Refunds are issued by the seller in their own payment provider; <strong>your payment provider or card issuer handles chargebacks and payment disputes</strong>, so contact them yourself if you were charged and did not get what you paid for.</li>
@@ -94,6 +94,7 @@ r.get('/support', (req, res) => {
       <label for="sr">What happened?</label><textarea id="sr" name="reason" maxlength="2000" required></textarea>
       <label>Screenshots or photos <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}
       <p class="small muted">The seller is not notified of a seller report. If you paid, keep your receipt and also contact your payment provider.</p><button class="btn danger" type="submit" style="margin-top:10px">Send report</button></form>` : `<p><a href="/login?next=/support">Log in</a> to send a report.</p>`}</div>
+    <div class="panel"><h3>Report a review</h3><p class="small muted" style="margin:0">Open the seller's store, log in, and use <strong>Report this review</strong> under it. Moderators can hide a review that breaks the rules and the reason is recorded.</p></div>
     <div class="panel"><h3>Report a message</h3><p class="small muted">Open the conversation and use <strong>Report</strong> on the message. Only reported conversations can be read by PairPlug support, and each view is logged.</p></div></section>
     <aside class="panel"><h3>Your cases</h3>${mine.length ? `<ul class="plain">${mine.map((c) => `<li><a href="/cases/${c.id}">Case #${c.id}</a> · ${label(c.kind)} · ${label(c.status)}</li>`).join('')}</ul>` : '<p class="muted small">No cases yet.</p>'}</aside></div>`;
   userPage(req, res, { title: 'Help & reporting', body, scripts: UP });

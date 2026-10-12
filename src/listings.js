@@ -77,6 +77,14 @@ function validateListing(body, { publish }) {
   if (body.payment_url != null && String(body.payment_url).trim() !== '') {
     try { payment_url = validatePaymentUrl(body.payment_url); } catch (e) { errors.payment_url = (e.fields && e.fields.payment_url) || e.message; }
   }
+  // Quantity: how many identical units are for sale. Direct checkout reserves/sells one unit per order; the platform (legacy) checkout is single-unit only.
+  let quantity = 1;
+  if (body.quantity !== undefined && body.quantity !== null && body.quantity !== '') {
+    const n = /^\d{1,3}$/.test(String(body.quantity).trim()) ? Number(body.quantity) : NaN;
+    if (!Number.isInteger(n) || n < 1 || n > 999) errors.quantity = 'Enter a whole number of units from 1 to 999.';
+    else if (config.checkoutMode !== 'external' && n !== 1) errors.quantity = 'Only one unit per listing is supported in this checkout mode.';
+    else quantity = n;
+  }
   const num = (k, max) => { const v = body[k]; if (v === '' || v == null) return null; const n = Number(v); if (!(n > 0 && n <= max)) { errors[k] = 'Enter a positive number.'; return null; } return n; };
   const weight_oz = num('weight_oz', 2400), length_in = num('length_in', 120), width_in = num('width_in', 120), height_in = num('height_in', 120);
   const sku = cleanLine(body.sku, 60) || null;
@@ -85,7 +93,7 @@ function validateListing(body, { publish }) {
   if (publish && !(weight_oz > 0)) errors.weight_oz = 'Add a shipping weight so buyers can be charged correctly.';
   if (Object.keys(errors).length) throw new HttpError(422, 'Please fix the highlighted fields.', errors);
   return { title, description: clean(body.description, 4000), category, brand: cleanLine(body.brand, 60) || null, size: cleanLine(body.size, 30) || null,
-    condition, price_cents: price, cost_cents: cost, shipping_cents: shipping, shipping_payer, payment_url, sku, weight_oz, length_in, width_in, height_in, images };
+    condition, price_cents: price, cost_cents: cost, shipping_cents: shipping, shipping_payer, payment_url, sku, weight_oz, length_in, width_in, height_in, images, quantity };
 }
 
 function saveListing(user, id, body) {
@@ -110,7 +118,11 @@ function saveListing(user, id, body) {
       if (dup) throw new HttpError(422, 'Please fix the highlighted fields.', { sku: 'You already use this SKU on another listing.' });
     }
     const status = body.status || (cur ? cur.status : 'draft');
-    const cols = ['title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'shipping_payer', 'payment_url', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
+    // The seller's confirmation that their fixed-price payment link charges exactly item + buyer-paid shipping. It is tied to that total, so any later price/shipping change un-confirms it.
+    const total = v.price_cents + (v.shipping_payer === 'buyer' ? v.shipping_cents : 0);
+    const given = body.payment_amount_ack, unchanged = cur && cur.payment_url === v.payment_url && cur.payment_total_ack_cents === total;
+    v.payment_total_ack_cents = v.payment_url && (given === true || (given === undefined && unchanged)) ? total : null;       // an explicit false (box unticked) clears it; silence keeps it only if link and total are unchanged
+    const cols = ['quantity', 'payment_total_ack_cents', 'title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'shipping_payer', 'payment_url', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
     const vals = cols.map((c) => v[c]);
     let listingId = id;
     if (id) {

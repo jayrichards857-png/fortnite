@@ -17,7 +17,7 @@ const link = (key, text) => { const p = PAGES.find((x) => x.key === key); return
 /** How to reach PairPlug. Only values the operator has configured are shown; nothing is invented. */
 function contactBlock() {
   const V = require('./views');
-  return `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, buyer and seller concerns, account issues and appeals, marketplace safety, privacy requests and general questions. You can also use the <a href="/support">Help &amp; reporting page</a> (log in to send an in-app report with photos, which creates a tracked case).</p>
+  return `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, buyer and seller concerns, account issues and appeals, marketplace safety, privacy requests and general questions. See also the <a href="/contact">Contact page</a> and the <a href="/support">Help &amp; reporting page</a> (log in to send an in-app report with photos, which creates a tracked case).</p>
 <p class="small muted">Emails are read by the operator. They do not create a case or ticket automatically, and there is no guaranteed response time. For a scam report, the in-app report form is the way to attach evidence to your order. Say "privacy request" in the subject for privacy-related help.</p>`;
 }
 function operatorBlock() {
@@ -30,7 +30,7 @@ function operatorBlock() {
 const S = {};
 S.terms = () => `
 <h2>1. What PairPlug is</h2>
-<p>PairPlug is an online marketplace where independent sellers list secondhand clothing, sneakers and streetwear, and buyers find, follow and contact them. <strong>PairPlug is not the seller of the items.</strong> Each sale is an agreement between the buyer and the seller. PairPlug provides the website, accounts, messaging, order tracking and reporting tools.</p>
+<p>PairPlug is an online marketplace where independent sellers list clothing, streetwear, sneakers and accessories (new and pre-owned), and buyers find, follow and contact them. <strong>PairPlug is not the seller of the items.</strong> Each sale is an agreement between the buyer and the seller. PairPlug provides the website, accounts, messaging, order tracking and reporting tools.</p>
 ${operatorBlock()}
 <h2>2. What PairPlug controls, and what it doesn't</h2>
 <ul>
@@ -51,6 +51,8 @@ ${operatorBlock()}
 <li>Your delivery address is shared with the seller so they can ship. Do not use another person's payment method without permission.</li></ul>
 <h2>6. Selling</h2>
 <p>If you are invited to sell, you also agree to the ${link('rules')}. In short: list only items you own and may lawfully sell; describe them honestly with real photos; ship what you sell promptly, with tracking where you can; answer buyers; confirm payments only when you actually received the money; and handle your own refunds, taxes and payment-provider obligations. Sellers are independent; they are not employees or agents of PairPlug.</p>
+<h2>6a. Reviews</h2>
+<p>After a buyer marks a PairPlug order <em>received</em>, they can give that seller a thumbs-up and write an optional review (up to 1,000 characters). Each order can have one review, only from the buyer of that order. Reviews are shown on the seller's store with the buyer's first name and are labelled <strong>order-linked</strong>, not "verified": buyers pay sellers outside PairPlug and PairPlug does not independently verify those payments or that an item arrived as described. Counts shown are simple tallies (thumbs-up, written reviews, reviews), not a rating or ranking. Be honest and relevant: no fake, paid-for or retaliatory reviews, and no ads, personal data or abuse. Anyone logged in can report a review; moderators can hide or restore a review with a recorded reason, but cannot edit what it says. You can edit or remove your own review unless a moderator has hidden it.</p>
 <h2>7. Content you post</h2>
 <p>You keep ownership of your listings, photos, profile text and messages. You give PairPlug permission to store and display them on the service (for example in search, on your storefront and to the people you message) so that the service can work. Only post what you have the right to post.</p>
 <h2>8. Acceptable use</h2>
@@ -77,6 +79,7 @@ ${operatorBlock()}
 <tr><td><strong>Messages:</strong> text of messages between a buyer and a seller</td><td>When you message</td><td>The two people in the conversation. PairPlug staff can read a conversation <em>only</em> when one of you reports it, and each view is logged.</td></tr>
 <tr><td><strong>Orders and shipping:</strong> items, prices, status, payment-confirmation notes, delivery name and address, carrier and tracking number</td><td>When a buyer starts a direct purchase</td><td>The buyer and the seller of that order. The seller sees the delivery address after they confirm payment. Not shown in public profiles, search, analytics or admin summaries.</td></tr>
 <tr><td><strong>Recorded sales:</strong> sales a seller records themselves (including optional recipient address and buyer email they typed in)</td><td>When a seller records one</td><td>That seller only. The seller is responsible for having a reason to hold that person's details.</td></tr>
+<tr><td><strong>Reviews:</strong> your thumbs-up, optional review text, the order it relates to, edit and removal history, and any reports on it</td><td>When you review an order, or report a review</td><td>Public: your first name, thumbs-up, review text and date appear on the seller's store (not your email, address or the order details). Staff (administrators and moderators) see your full display name and the history; moderators can hide or restore but not edit it.</td></tr>
 <tr><td><strong>Follows, favorites, notifications:</strong> which sellers you follow, items you saved, in-app notifications</td><td>When you use them</td><td>You. We do not show how many followers a seller has, and nobody sees who you follow. A seller's follower list is not shown to them. We use follows to send you in-app "new from…" notices; no email is sent for those.</td></tr>
 <tr><td><strong>Reports and cases:</strong> reasons, category, evidence photos, replies, decisions, internal notes, any account restriction and any report PairPlug sent to a payment provider</td><td>When you report or open a case, or when we act on one</td><td>You, the other party to an <em>order</em> case (not to a general seller report), and PairPlug staff (administrators and moderators). Internal notes and restriction reasons are staff-only. A seller you report is not told who reported them, though an order case necessarily involves the buyer.</td></tr>
 <tr><td><strong>Search terms:</strong> only the words searched, with the time</td><td>When someone searches on /shop</td><td>Staff with database access. Not linked to your account or IP address (see section 3).</td></tr>
@@ -101,6 +104,7 @@ ${operatorBlock()}
 <ul><li>Login sessions: expire after 14 days without use; expired sessions are deleted.</li>
 <li>Search terms: deleted after 30 days.</li>
 <li>Email verification and reset links: expire after 48 hours / 1 hour.</li>
+<li>Reviews you remove stay in our records (marked removed, not shown); hidden reviews stay with the moderation history.</li>
 <li>Accounts, listings, messages, orders, shipping details, reports, notifications and the audit log: <strong>kept until we delete them on request or when we clean up; we have not set an automatic deletion schedule yet.</strong> Order and report records may be kept after an account closes so that the other party's records, dispute handling, fraud prevention and any legal or tax obligations still work.</li></ul>
 <h2>7. Your choices and requests</h2>
 <ul><li>You can edit your name in your account, unfollow sellers, remove favorites and manage your storefront at any time.</li>
@@ -120,11 +124,14 @@ S.payments = () => `
 <li>The seller checks their own payment account, then marks the order <em>payment confirmed</em> on PairPlug and ships. Until then the order says "awaiting payment confirmation".</li>
 <li>The seller adds a carrier and tracking number when they ship. You mark the order received when it arrives.</li></ol>
 <p><strong>If you paid and the seller does not confirm, never ships, or you think it is a scam,</strong> you can report it from the order page even before the seller confirms payment (once you have opened the seller's payment link or said you paid). Keep your receipt and screenshots.</p>
+<h2>1a. Does the amount match? Please check.</h2>
+<p>PairPlug shows the item price and shipping before you reserve an item, and records them on your order. But <strong>the seller's payment page is a separate service that PairPlug cannot set, read or verify</strong>: a payment link has its own fixed price. To reduce mismatches, sellers must confirm that their link charges exactly item price plus shipping, and online checkout is paused for a listing until they do (and again whenever they change the price or shipping). That confirmation is the seller's statement; it is not checked by PairPlug. <strong>Before you pay, make sure the seller's page shows the same total as your order.</strong> If it shows a different amount, a different item, or a "test mode" or "sandbox" notice, do not pay: cancel the purchase and report it. If you already paid a wrong amount, contact the seller and your payment provider; PairPlug cannot correct or refund it.</p>
 <h2>2. What PairPlug does not do</h2>
 <ul><li><strong>PairPlug does not hold or process the payment</strong> and is not an escrow, bank or payment institution. We take no commission during the beta.</li>
 <li><strong>An order on PairPlug is not proof of payment.</strong> Creating an order, clicking "pay", or telling us you paid does not make it paid. PairPlug cannot see the seller's payment account.</li>
 <li><strong>A seller's "payment confirmed" is the seller's statement, not a check by PairPlug.</strong> Sellers can also record sales made elsewhere; those records are the seller's statements too.</li>
-<li>We do not guarantee delivery, authenticity or condition, and we do not offer a buyer-protection programme.</li></ul>
+<li>We do not guarantee delivery, authenticity or condition, and we do not offer a buyer-protection programme.</li>
+<li>Reviews on a seller's store are opinions from buyers who marked an order received. They are not verified payments or guarantees.</li></ul>
 <h2>3. Refunds</h2>
 <ul><li><strong>The seller decides and issues refunds</strong>, using their own payment provider. PairPlug cannot send or reverse a payment.</li>
 <li>After the seller has confirmed your payment you can ask for a refund or (before shipping) a cancellation from your order page. The seller is notified and can respond. When the seller says they refunded you, PairPlug records that statement and asks you to confirm; PairPlug does not verify the money moved.</li>
@@ -159,13 +166,15 @@ S.rules = () => `
 <li><strong>Items that are illegal</strong> to sell or ship where you or the buyer are, recalled items, and items containing hazardous materials.</li>
 <li><strong>Personal data or accounts</strong>: gift cards, codes, accounts, or other people's information.</li>
 <li><strong>Anything hateful, sexually explicit or that exploits people</strong>, and items that promote violence.</li>
-<li><strong>Services, tickets or digital goods.</strong> PairPlug is for physical secondhand clothing, shoes, bags and accessories.</li>
+<li><strong>Services, tickets or digital goods.</strong> PairPlug is for physical clothing, shoes, bags and accessories, new or pre-owned.</li>
 </ul>
 <h2>2. Honest listings</h2>
 <ul><li>Use real photos of the actual item; show flaws. Do not use another seller's photos.</li>
 <li>State brand, size and condition accurately. Say if there are no tags, repairs or odours.</li>
 <li>Do not claim authentication or PairPlug endorsement you do not have. PairPlug does not authenticate items and sellers may not say or imply that it does, or that PairPlug guarantees, escrows or protects a purchase.</li>
-<li>Set a fair, honest price and shipping charge. Do not change the price after a buyer has started to buy.</li></ul>
+<li>Set a fair, honest price and shipping charge. Do not change the price after a buyer has started to buy.</li>
+<li><strong>Make your payment link match.</strong> Your Stripe (or other) link must charge exactly item price plus shipping. You confirm that when you save a listing, and have to confirm again after changing the price or shipping.</li>
+<li><strong>Quantity.</strong> Set the number of units you really have. Each order takes one unit, an unpaid reservation gives it back, and the item shows as sold when none is left.</li></ul>
 <h2>3. Seller responsibilities</h2>
 <ul><li><strong>Own it, ship it.</strong> Only list items you own and have in hand. Ship within the time you promise (and within a reasonable time if you promise none), packed so it arrives in good shape.</li>
 <li><strong>Use tracking</strong> where you can. Enter the real carrier and tracking number on the order. Don't enter a made-up number.</li>
@@ -175,6 +184,8 @@ S.rules = () => `
 <li><strong>Protect buyer information.</strong> Use buyers' names, addresses and emails only to complete that sale. Do not share them, use them for marketing, or keep them longer than you need to for records.</li>
 <li><strong>Follow the law</strong> including tax, consumer-protection, import/export and shipping rules in your country.</li>
 <li><strong>No off-platform pressure</strong>, fake reviews, or tricks to avoid the dispute process.</li></ul>
+<h2>3a. Reviews</h2>
+<p>Only review orders you actually placed and received. Do not write, trade or pay for fake or incentivised reviews, do not review your own or a friend's store, and do not use reviews for ads, threats or personal information. Sellers must not pressure buyers for positive reviews. Report a review from the seller's store if it breaks these rules; moderators can hide it and the reason is recorded.</p>
 <h2>4. Fraud and abuse</h2>
 <p>Do not run scams: taking payment without shipping, fake tracking, fake "payment confirmed" or "refunded" statements, phishing links, asking buyers to pay somewhere other than your approved checkout, or opening multiple accounts to evade a ban. Buyers must not make false claims or false payment statements either.</p>
 <h2>5. Reporting a violation</h2>

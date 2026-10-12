@@ -169,8 +169,8 @@ test('full buyer journey + escrow: checkout → paid → shipped → delivered �
   assert.equal((await buyer.post(`/api/orders/${o.id}/confirm`)).status, 409, 'cannot release twice');
   assert.equal(bal(s.handle).availableCents, o.seller_payout_cents);
   // review
-  assert.equal((await buyer.post(`/api/orders/${o.id}/review`, { rating: 5, body: 'Great' })).status, 200);
-  assert.equal((await buyer.post(`/api/orders/${o.id}/review`, { rating: 5 })).status, 409);
+  assert.equal((await buyer.post(`/api/orders/${o.id}/review`, { thumbsUp: true, body: 'Great' })).status, 200);
+  assert.equal((await buyer.post(`/api/orders/${o.id}/review`, { thumbsUp: true })).status, 409);
   assert.match((await new H.Client().get(`/s/${s.handle}`)).text, /Great/);
   // dashboard numbers come from the records
   const ov = require('../src/stats').overview(q.get('SELECT id FROM users WHERE handle = ?', s.handle).id);

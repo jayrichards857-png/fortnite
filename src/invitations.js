@@ -26,7 +26,7 @@ function slots() {
 const capError = () => new HttpError(409, 'All seller slots are in use during the private beta.');
 function mapCap(e) { if (/seller cap reached/.test(String(e.message))) throw capError(); throw e; }
 
-function create(admin, { kind, email, note }) {
+function create(admin, { kind, email, note, suggestedName }) {
   const addr = cleanLine(email, 200).toLowerCase();
   if (!['buyer', 'seller'].includes(kind)) throw new HttpError(422, 'Choose buyer or seller.');
   if (!EMAIL_RE.test(addr)) throw new HttpError(422, 'Enter a valid email address.');
@@ -39,7 +39,7 @@ function create(admin, { kind, email, note }) {
     if (q.get('SELECT 1 x FROM invitations WHERE email = ? AND kind = ? AND used_at IS NULL AND revoked_at IS NULL', addr, kind)) throw new HttpError(409, 'A live invitation for that email already exists. Revoke it first.');
     const raw = 'pp_inv_' + crypto.randomBytes(24).toString('base64url');
     const expires = now() + config.inviteTtlHours * 3600;
-    const r = q.run('INSERT INTO invitations(token_hash, kind, email, note, created_by, created_at, expires_at) VALUES(?,?,?,?,?,?,?)', sha(raw), kind, addr, clean(note, 200) || null, admin.id, now(), expires);
+    const r = q.run('INSERT INTO invitations(token_hash, kind, email, note, suggested_name, created_by, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?)', sha(raw), kind, addr, clean(note, 200) || null, cleanLine(suggestedName, 80) || null, admin.id, now(), expires);
     audit(admin, 'invitation_created', { type: 'invitation', id: r.lastInsertRowid, detail: { kind, email: addr, expiresAt: expires } });
     return { id: Number(r.lastInsertRowid), token: raw, expiresAt: expires, link: `${config.publicUrl.replace(/\/$/, '')}/invite/${raw}` };
   });

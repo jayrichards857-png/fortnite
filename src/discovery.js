@@ -5,6 +5,7 @@ const config = require('./config');
 const { q, tx, now } = require('./db');
 const { HttpError, clean, esc, money } = require('./util');
 const V = require('./views');
+const RV = require('./reviews');
 
 const PUBLIC = 'u.is_seller = 1 AND u.banned = 0 AND u.selling_restricted_at IS NULL';
 const SF = "LEFT JOIN (SELECT seller_id, json_extract(published_json,'$.headline') headline, json_extract(published_json,'$.about') about, json_extract(published_json,'$.avatar') avatar FROM storefronts) sf ON sf.seller_id = u.id";
@@ -138,7 +139,7 @@ function sellerCard(s, { following = new Set(), user = null } = {}) {
   const name = s.store_name || s.handle, bio = String(s.headline || s.about || s.bio || '').trim().slice(0, 140);
   const avatar = s.avatar ? `<img class="scard-av" src="/uploads/${esc(s.avatar)}" alt="" loading="lazy">` : `<div class="scard-av scard-av-fb" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`;
   return `<article class="scard"><a class="scard-head" href="/s/${esc(s.handle)}">${avatar}<span><strong>${esc(name)}</strong><span class="muted small">@${esc(s.handle)}</span></span></a>
-    ${bio ? `<p class="scard-bio">${esc(bio)}</p>` : ''}
+    ${bio ? `<p class="scard-bio">${esc(bio)}</p>` : ''}${RV.line(s.id) ? `<p class="scard-rep small muted">${RV.line(s.id)}</p>` : ''}
     ${(s.previews || []).length ? `<div class="scard-prev">${s.previews.map((l) => `<a href="/listing/${l.id}" title="${esc(l.title)}">${V.img(l.image, 'thumb', l.title)}</a>`).join('')}</div>` : '<p class="muted small scard-empty">No listings yet — check back for their next drop.</p>'}
     <div class="scard-foot">${user && user.id === s.id ? '<span class="muted small">Your store</span>' : heartBtn(s.handle, following.has(s.id))}<a class="small" href="/s/${esc(s.handle)}">View storefront →</a></div></article>`;
 }

@@ -17,6 +17,12 @@ const ICONS = {
 };
 /** The official contact address as a mailto: link. One place, used by every page. */
 const contactLink = (text) => `<a href="mailto:${esc(config.supportEmail)}">${esc(text || config.supportEmail)}</a>`;
+const SUBJECT = 'PairPlug Support';
+/** mailto: draft in the visitor's default email app, and Gmail's web composer for visitors who use Gmail in a browser. Both only OPEN a draft; nothing is sent until the visitor sends it. */
+const mailtoHref = (subject = SUBJECT) => `mailto:${config.supportEmail}?subject=${encodeURIComponent(subject)}`;
+const gmailHref = (subject = SUBJECT) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(config.supportEmail)}&su=${encodeURIComponent(subject)}`;
+/** The Contact page link used by every "Contact" button/link (header, footer, sign-in, sign-up, help, policies). */
+const contactPageLink = (text = 'Contact') => `<a href="/contact">${esc(text)}</a>`;
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
 const img = (file, cls = '', alt = '') => (file ? `<img class="${cls}" src="/uploads/${esc(file)}" alt="${esc(alt)}" loading="lazy">` : `<div class="${cls} noimg" aria-label="No photo"></div>`);
@@ -45,7 +51,7 @@ function header(user, path, counts, wide) {
   <div class="wrap${wide ? ' wide' : ''} bar">
     <a class="wordmark" href="/" aria-label="PairPlug home">PairPlug</a>
     <nav class="nav" aria-label="Main">
-      ${link('/', 'Home', '/')}${link('/shop', 'Shop', '/shop')}${link('/sellers', 'Sellers', '/sellers')}
+      ${link('/', 'Home', '/')}${link('/shop', 'Shop', '/shop')}${link('/sellers', 'Sellers', '/sellers')}${link('/contact', 'Contact', '/contact')}
       <details class="dd"><summary>Categories</summary><div class="dd-menu">${cats}</div></details>
       ${link(user && user.is_seller ? '/dashboard' : '/sell', 'Sell', user && user.is_seller ? '/dashboard' : '/sell')}
       ${user ? link('/orders', 'Orders', '/orders') : ''}
@@ -64,7 +70,7 @@ function header(user, path, counts, wide) {
       : `<a class="btn small ghost" href="/login">Log in</a>${config.signups === 'open' ? '<a class="btn small" href="/register">Sign up</a>' : '<a class="btn small ghost soon-pill" href="/register">Coming soon</a>'}`}
       ${config.checkoutMode === 'platform' ? `<a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>` : ''}
       <details class="dd right mobile-only"><summary class="iconlink" aria-label="Menu">${icon('menu')}</summary><div class="dd-menu">
-        <a href="/">Home</a><a href="/shop">Shop</a>${user && user.is_seller ? '<a href="/dashboard">Sell</a>' : '<a href="/sell">Sell</a>'}${user ? '<a href="/orders">Orders</a>' : ''}
+        <a href="/">Home</a><a href="/shop">Shop</a><a href="/contact">Contact</a>${user && user.is_seller ? '<a href="/dashboard">Sell</a>' : '<a href="/sell">Sell</a>'}${user ? '<a href="/orders">Orders</a>' : ''}
         <span class="dd-title">Categories</span>${cats}</div></details>
     </div>
   </div>
@@ -81,12 +87,12 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
   const testData = config.sandbox ? '<div class="banner warn-banner" role="status"><strong>SHIPPING SANDBOX — TEST DATA ONLY.</strong> Nothing here is a real customer, payment or order. Labels are Shippo test labels and are not valid postage.</div>' : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'Buy and sell secondhand clothing, sneakers and streetwear across North America.')}">
+<title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'PairPlug — The Clothing Marketplace. Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.')}">
 <link rel="stylesheet" href="/app.css">${head}</head><body>
 <a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.selling_restricted_at ? '<div class="banner warn-banner" role="alert"><strong>Selling is paused on your account</strong> while PairPlug reviews a report. You can still log in, reply to PairPlug and handle existing orders. <a href="/support">Help &amp; reporting</a></div>' : ''}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
-<footer class="site-footer"><div class="wrap"><span>PairPlug · North American secondhand marketplace</span>
-<span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a> · ${contactLink('Contact')}</span>
+<footer class="site-footer"><div class="wrap"><span>PairPlug · The Clothing Marketplace</span>
+<span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a> · ${contactPageLink('Contact')}</span>
 <nav class="legal-links" aria-label="Legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/payments">Payments &amp; refunds</a> · <a href="/rules">Seller rules</a></nav></div></footer>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/app.js" defer></script>${scripts}</body></html>`;
@@ -99,7 +105,7 @@ function card(l, { favs = new Set(), user = null } = {}) {
   <a class="card-img" href="/listing/${l.id}">${img(l.image, '', l.title)}</a>
   <button class="fav${fav ? ' on' : ''}" data-fav="${l.id}" aria-pressed="${fav}" aria-label="${fav ? 'Remove from favorites' : 'Save to favorites'}">${icon('heart')}</button>
   <div class="card-body">
-    <div class="price">${money(l.price_cents)}</div>
+    <div class="price">${money(l.price_cents)}${l.status === 'active' && l.quantity > 1 ? ` <span class="qty-badge">${l.quantity} left</span>` : ''}</div>
     <a class="title" href="/listing/${l.id}">${esc(l.title)}</a>
     <div class="muted small">${l.brand ? esc(l.brand) + (meta ? ' · ' : '') : ''}${meta}</div>
     ${l.seller_handle ? `<a class="muted small seller" href="/s/${esc(l.seller_handle)}">${esc(l.seller_name || l.seller_handle)}</a>` : ''}
@@ -128,4 +134,4 @@ function dashNav(path) {
     <a class="btn small push" href="/dashboard/listings/new">${icon('plus')} New listing</a></nav>`;
 }
 
-module.exports = { contactLink, releaseText, comingSoon, layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };
+module.exports = { mailtoHref, gmailHref, contactPageLink, contactLink, releaseText, comingSoon, layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };

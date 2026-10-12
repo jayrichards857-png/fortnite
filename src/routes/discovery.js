@@ -11,7 +11,7 @@ const page = (req, res, o) => res.send(V.layout({ user: req.user, ...o }));
 
 r.get('/sellers', (req, res) => {
   const result = D.discoverSellers({ page: req.query.page, per: 12 }), cards = D.withPreviews(result.items), fol = D.followedSet(req.user);
-  page(req, res, { title: 'Sellers', path: '/sellers', body: `<h1>Discover sellers</h1><p class="muted small">Public seller profiles — stores with items available now come first, then newer stores that haven't listed anything yet. ${result.total} seller${result.total === 1 ? '' : 's'}.</p>
+  page(req, res, { title: 'Sellers', path: '/sellers', body: `<h1>Discover sellers</h1><p class="muted small" style="margin-top:-4px">Independent stores on PairPlug — The Clothing Marketplace.</p><p class="muted small">Public seller profiles — stores with items available now come first, then newer stores that haven't listed anything yet. ${result.total} seller${result.total === 1 ? '' : 's'}.</p>
     ${cards.length ? `<div class="sgrid">${cards.map((s) => D.sellerCard(s, { following: fol, user: req.user })).join('')}</div>${V.pager(result.page, result.pages, {})}` : V.empty('No sellers to show yet', 'Approved sellers appear here as soon as their store is open.', ['/shop', 'Browse the shop'])}` });
 });
 r.get('/following', auth.requireUser, (req, res) => {

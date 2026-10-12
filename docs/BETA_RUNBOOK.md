@@ -58,3 +58,9 @@ Moderators are dedicated accounts with their own passwords and personal, single-
 4. They open it, choose their name and a 12+ character password, accept the terms, and land on `/moderation`. Check `node scripts/moderator.js status` to see slots.
 5. Lost or leaked link: `node scripts/moderator.js revoke --id <n>` (or Revoke on the Moderators page), then create a new one. To remove a moderator, use Deactivate (frees the slot, ends their sessions).
 Moderators can ban/unban/restrict with a reason, and work cases; only administrators can create/deactivate moderators, change roles, send provider packets, resolve refunds, or lift bans an administrator placed.
+
+## Account management, quantity and payment-link confirmation (new)
+* **Create seller / moderator accounts yourself:** log in as the owner/admin → **Admin → Accounts**. Choose the role, enter the person's email (and an optional suggested display name), press *Review & create*, confirm. A single-use setup link is shown once; copy it and send it to that person privately. PairPlug does not email it. They choose their own password. Cancel an unused link from the same page. Sellers use seller slots (cap 3), moderators use moderator slots (cap 5). Nothing is generated for you: no fake accounts, listings, orders or reviews exist.
+* **Quantity:** sellers set "Quantity" in the listing editor. Each order takes one unit; unpaid reservations give it back after the hold time.
+* **Payment links:** every listing with its own link needs the seller to tick *"I confirm this link charges exactly item price + shipping"* when saving. Listings created before this release must be re-saved once, or online checkout stays paused for them. Test-mode Stripe links are refused in production.
+* **Reviews:** buyers can review after marking an order received; moderators handle reports at **Moderation → Reviews**.

@@ -32,7 +32,7 @@ const slotError = () => new HttpError(409, 'All moderator slots are in use (acti
 const mapCap = (e) => { if (/moderator (cap reached|slots exhausted)/.test(String(e.message))) throw slotError(); throw e; };
 
 /** actor: an admin user object, or a string label ('cli:root') for the local setup command. Returns the one-time link; only its hash is stored. */
-function invite(actor, { email, note }) {
+function invite(actor, { email, note, suggestedName }) {
   const addr = cleanLine(email, 200).toLowerCase();
   if (!EMAIL_RE.test(addr)) throw new HttpError(422, 'Enter a valid email address.');
   if (actor && typeof actor === 'object' && !actor.is_admin) throw new HttpError(403, 'Administrator access required');
@@ -41,8 +41,8 @@ function invite(actor, { email, note }) {
     if (q.get('SELECT 1 x FROM moderator_invites WHERE email = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?', addr, now())) throw new HttpError(409, 'A live setup link for that email already exists. Revoke it first.');
     const raw = 'pp_mod_' + crypto.randomBytes(24).toString('base64url'), expires = now() + TTL_HOURS * 3600;
     let id;
-    try { id = q.run('INSERT INTO moderator_invites(token_hash, email, note, created_by, created_via, created_at, expires_at) VALUES(?,?,?,?,?,?,?)',
-      sha(raw), addr, clean(note, 200) || null, typeof actor === 'object' ? actor.id : null, typeof actor === 'object' ? 'admin' : String(actor), now(), expires).lastInsertRowid; } catch (e) { mapCap(e); }
+    try { id = q.run('INSERT INTO moderator_invites(token_hash, email, note, suggested_name, created_by, created_via, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?)',
+      sha(raw), addr, clean(note, 200) || null, cleanLine(suggestedName, 80) || null, typeof actor === 'object' ? actor.id : null, typeof actor === 'object' ? 'admin' : String(actor), now(), expires).lastInsertRowid; } catch (e) { mapCap(e); }
     audit(actor, 'moderator_setup_link_created', { type: 'moderator_invite', id, detail: { email: addr, expiresAt: expires } });     // never the token
     return { id: Number(id), expiresAt: expires, link: `${config.publicUrl.replace(/\/$/, '')}/moderator/setup/${raw}` };
   });

@@ -28,7 +28,7 @@ r.get('/moderator/setup/:token', (req, res) => {
     : `<div class="narrow panel form-wide" style="max-width:520px"><h1>Set up your moderator account</h1>
     <p class="muted small">For <strong>${esc(inv.email)}</strong> · link expires ${when(inv.expires_at)} UTC. You choose your own password; nobody else sees it. This is a personal account: do not share it.</p>
     <form data-api="/api/moderator/setup" data-redirect="/moderation"><input type="hidden" name="token" value="${esc(req.params.token)}">
-      <label for="n">Your name</label><input id="n" name="display_name" autocomplete="name" required>
+      <label for="n">Your name</label><input id="n" name="display_name" autocomplete="name" value="${esc(inv.suggested_name || '')}" required>
       <label for="p">Password <span class="opt">(${M.MIN_PASSWORD}+ characters)</span></label><input id="p" name="password" type="password" autocomplete="new-password" minlength="${M.MIN_PASSWORD}" required>
       <label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="terms" required> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and have read the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
       <button class="btn block" style="margin-top:14px" type="submit">Create moderator account</button></form></div>`;
@@ -115,5 +115,43 @@ r.post('/api/admin/moderators/invite', A, (req, res) => {
 r.post('/api/admin/moderators/invites/:id(\\d+)/revoke', A, (req, res) => { M.revokeInvite(req.user, req.params.id); res.json({ ok: true }); });
 r.post('/api/admin/moderators/:id(\\d+)/deactivate', A, (req, res) => { auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600); M.deactivate(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
 
-void config; void HttpError;
+// ------------------------------------------------------------------ administrator-only: Account Management (one place for seller / moderator / buyer invitations)
+const inviteStatus = (i) => (i.used_at ? 'used' : i.revoked_at ? 'revoked' : i.expires_at <= now() ? 'expired' : 'pending');
+r.get('/admin/accounts', A, (req, res) => {
+  const inv = require('../invitations'), sl = inv.slots(), ms = M.slots();
+  const rows = [
+    ...q.all('SELECT i.id, i.kind role, i.email, i.created_at, i.expires_at, i.used_at, i.revoked_at, i.suggested_name, c.display_name creator FROM invitations i LEFT JOIN users c ON c.id = i.created_by ORDER BY i.id DESC LIMIT 100'),
+    ...q.all("SELECT m.id, 'moderator' role, m.email, m.created_at, m.expires_at, m.used_at, m.revoked_at, m.suggested_name, COALESCE(c.display_name, m.created_via) creator FROM moderator_invites m LEFT JOIN users c ON c.id = m.created_by ORDER BY m.id DESC LIMIT 100"),
+  ].sort((a, b) => b.created_at - a.created_at).slice(0, 100);
+  const accounts = q.all('SELECT id, email, display_name, is_admin, is_moderator, is_seller, banned, created_at FROM users WHERE is_admin = 1 OR is_moderator = 1 OR is_seller = 1 ORDER BY id');
+  const roleOf = (u) => [u.is_admin && 'owner/admin', u.is_moderator && 'moderator', u.is_seller && 'seller'].filter(Boolean).join(' + ');
+  adminPage(req, res, { title: 'Account management', body: `<h1>Account management</h1>
+    <p class="small muted">Create real seller and moderator accounts on purpose, one at a time. Nothing is generated or seeded. Each person gets an individual, single-use, expiring setup link and chooses their <strong>own</strong> password; PairPlug stores only a hash of the link and never a password you typed for someone else. Links are <strong>not emailed</strong> (${require('../email').isConfigured() ? 'an email provider is configured, but invitations are still not sent automatically' : 'no email provider is configured'}): you copy the link and send it yourself.</p>
+    <div class="stats">${stat('Seller slots used', `${sl.used + sl.liveInvites} / ${sl.cap}`, 'accounts + unused seller links')}${stat('Moderator slots used', `${ms.active + ms.pending} / ${ms.cap}`, 'accounts + unused links')}</div>
+    <div class="panel form-wide" style="margin-top:16px"><h3>Create a setup link</h3>
+      <form id="acform"><div class="row" style="align-items:end"><div><label for="ar">Role</label><select id="ar" name="role"><option value="seller">Seller (uses a seller slot)</option><option value="moderator">Moderator (uses a moderator slot)</option><option value="buyer">Buyer</option></select></div>
+        <div><label for="ae">Email</label><input id="ae" name="email" type="email" required autocomplete="off"></div>
+        <div><label for="an">Display name <span class="opt">(suggested; they can change it)</span></label><input id="an" name="name" maxlength="80"></div></div>
+      <label for="ano">Private note <span class="opt">(only you see it)</span></label><input id="ano" name="note" maxlength="200">
+      <p class="small muted">Only an owner/admin can do this. A seller or moderator account never gets admin access. The invitation is bound to that email and role.</p>
+      <button class="btn" type="submit">Review &amp; create…</button></form><div id="acout" aria-live="polite"></div></div>
+    <h2>Setup links</h2>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created (UTC)</th><th>Expires (UTC)</th><th>By</th><th></th></tr></thead><tbody>${rows.map((i) => `<tr><td>${esc(i.email)}${i.suggested_name ? `<div class="muted small">${esc(i.suggested_name)}</div>` : ''}</td><td>${esc(i.role)}</td><td>${inviteStatus(i)}</td><td>${when(i.created_at)}</td><td>${when(i.expires_at)}</td><td>${esc(i.creator || '—')}</td><td>${inviteStatus(i) === 'pending' ? `<button class="btn ghost small" data-post="${i.role === 'moderator' ? `/api/admin/moderators/invites/${i.id}/revoke` : `/api/admin/invitations/${i.id}/revoke`}" data-confirm="Cancel this pending invitation?">Cancel</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">None yet.</p>'}
+    <h2>Staff and seller accounts</h2><div class="tablewrap"><table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>State</th><th>Created</th></tr></thead><tbody>${accounts.map((u) => `<tr><td>${esc(u.email)}</td><td>${esc(u.display_name)}</td><td>${roleOf(u)}</td><td>${u.banned ? 'banned' : 'active'}</td><td>${date(u.created_at)}</td></tr>`).join('')}</tbody></table></div>
+    <script>document.getElementById('acform').addEventListener('submit',async function(e){e.preventDefault();var f=e.target,o=document.getElementById('acout'),d=Object.fromEntries(new FormData(f));o.textContent='';
+      if(!confirm('Create a single-use '+d.role+' setup link for '+d.email+'?\\n\\nIt expires in '+(d.role==='moderator'?'72 hours':'${config.inviteTtlHours / 24} days')+' and is bound to that email. You will send it yourself.'))return;
+      d.confirm=true;try{var r=await pp.api('POST','/api/admin/accounts/invite',d);o.innerHTML='<div class="panel notice strong" style="margin-top:12px"><strong>Copy this link now — it will not be shown again, and it is not emailed:</strong><p style="word-break:break-all;user-select:all"></p></div>';o.querySelector('p').textContent=r.link;f.reset()}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>` });
+});
+r.post('/api/admin/accounts/invite', A, (req, res) => {
+  auth.rateLimit(`acctinvite:${req.user.id}`, 30, 3600);
+  const b = req.body || {};
+  if (b.confirm !== true) throw new HttpError(422, 'Please confirm before creating a setup link.');
+  let out;
+  if (b.role === 'moderator') out = M.invite(req.user, { email: b.email, note: b.note, suggestedName: b.name });
+  else if (b.role === 'seller' || b.role === 'buyer') out = require('../invitations').create(req.user, { kind: b.role, email: b.email, note: b.note, suggestedName: b.name });
+  else throw new HttpError(422, 'Choose seller, moderator or buyer.');
+  require('../audit').audit(req.user, 'admin_account_invite', { type: 'account', detail: { role: b.role, email: String(b.email).toLowerCase().slice(0, 200) } });      // never the link
+  res.set('Cache-Control', 'no-store').json({ ok: true, link: out.link, expiresAt: out.expiresAt });
+});
+
+void config;
 module.exports = { router: r };

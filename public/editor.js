@@ -7,7 +7,7 @@
 
   async function save(status) {
     form.querySelectorAll('.err,.form-err').forEach((e) => e.remove());
-    const body = Object.fromEntries(new FormData(form)); body.status = status;
+    const body = Object.fromEntries(new FormData(form)); body.status = status; if (form.elements.payment_amount_ack) body.payment_amount_ack = form.elements.payment_amount_ack.checked;
     body.images = JSON.parse($('[data-uploader-value="images"]').value || '[]'); delete body.images_json;
     form.querySelectorAll('[data-save]').forEach((b) => (b.disabled = true));
     try {

@@ -16,6 +16,8 @@ function validatePaymentUrl(raw, hosts = config.paymentLinkHosts) {
   if (u.port && u.port !== '443') throw bad('Payment links must use the standard HTTPS port.');
   const host = u.hostname.toLowerCase();
   if (!hosts.includes(host)) throw bad(`Only links from ${hosts.join(', ')} are accepted in this beta.`);
+  // Stripe test-mode links show sandbox branding and cannot take real money; a live site must never send a buyer to one.
+  if (config.isProd && /^\/test_/i.test(u.pathname)) throw bad('That is a Stripe TEST-mode link. Create the Payment Link in live mode so buyers are charged for real.');
   if (u.pathname.length < 3) throw bad('That looks like a homepage, not a payment link. Paste the full link from your Stripe dashboard.');
   u.hash = ''; u.port = '';
   return u.toString();

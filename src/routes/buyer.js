@@ -19,6 +19,7 @@ const { resolveLink } = require('../paymentLinks');
 const r = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const D = require('../discovery');
+const RV = require('../reviews');
 const LEGAL = require('../legal');
 const favSet = (user) => new Set(user ? q.all('SELECT listing_id FROM favorites WHERE user_id = ?', user.id).map((f) => f.listing_id) : []);
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
@@ -33,13 +34,13 @@ r.get('/', (req, res) => {
   const disc = D.withPreviews(D.discoverSellers({ per: 8 }).items), fol = D.followedSet(req.user);
   const sellerStrip = disc.length ? `<section class="discover" aria-labelledby="disc-h"><div class="sechead"><h2 id="disc-h">Discover Sellers</h2><a href="/sellers" class="small">View all sellers →</a></div><p class="muted small" style="margin:-6px 0 10px">Real stores, most recently listed first.</p>
     <div class="scroller" role="list">${disc.map((s) => `<div role="listitem" class="scroller-item">${D.sellerCard(s, { following: fol, user: req.user })}</div>`).join('')}</div></section>` : '';
-  const body = `<section class="hero"><h1>Discover secondhand finds <em>and</em> the people selling them.</h1><p class="hero-sub">Shop one-of-a-kind pieces, then follow the sellers you love.</p>
+  const body = `<section class="hero"><p class="hero-kicker">PairPlug</p><h1>The Clothing Marketplace.</h1><p class="hero-sub">Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.</p>
     <form action="/shop" role="search"><label class="sr" for="hq2">Search listings</label><input id="hq2" name="q" type="search" placeholder="Search brand, item or size"><button class="btn">Search</button></form></section>
     <div class="chips" aria-label="Categories">${config.categories.map(([s, n]) => `<a class="chip" href="/shop?category=${s}">${esc(n)}${cats[s] ? ` <span class="muted">${cats[s]}</span>` : ''}</a>`).join('')}</div>
     ${sellerStrip}
     <div class="sechead"><h2>Just listed</h2><a href="/shop?sort=newest" class="small">View all →</a></div>
     ${latest.length ? V.grid(latest, { favs: favSet(req.user) }) : V.empty('No listings yet', 'The marketplace is empty right now. Check back soon.', ['/shop', 'Browse the shop'])}`;
-  page(req, res, { title: 'Secondhand marketplace', body });
+  page(req, res, { title: 'The Clothing Marketplace', body });
 });
 
 // ---------- Shop ----------
@@ -125,6 +126,7 @@ r.get('/listing/:id(\\d+)', (req, res) => {
     <div>${avail ? '<span class="pill s-active">Available</span>' : `${V.statusPill(l.status)} <span class="muted small">${esc(status)}</span>`}</div>
     <dl class="facts">${l.brand ? `<dt>Brand</dt><dd>${esc(l.brand)}</dd>` : ''}${l.size ? `<dt>Size</dt><dd>${esc(l.size)}</dd>` : ''}${l.condition ? `<dt>Condition</dt><dd>${esc(config.conditions[l.condition])}</dd>` : ''}
       <dt>Category</dt><dd><a href="/shop?category=${esc(l.category)}">${esc((config.categories.find((c) => c[0] === l.category) || [])[1])}</a></dd>
+      ${l.status === 'active' && l.quantity > 1 ? `<dt>Available</dt><dd>${l.quantity} units</dd>` : ''}
       <dt>Shipping</dt><dd>${l.shipping_payer === 'seller' || !l.shipping_cents ? '<strong>Free shipping</strong> — the seller covers the label' : `${money(l.shipping_cents)} flat fee, paid by the buyer`}</dd>
       <dt>Ships from</dt><dd>${esc(seller || '—')} ${isLocalShip(l.seller_country) ? '<span class="badge-local">Local ship</span>' : ''}</dd></dl>
     ${ext && !mine ? directBuyBox(l, req.user) : ''}
@@ -133,7 +135,7 @@ r.get('/listing/:id(\\d+)', (req, res) => {
       <button class="btn ghost${faved ? ' on' : ''}" style="flex:0" data-fav="${l.id}" aria-pressed="${faved}" aria-label="${faved ? 'Remove from favorites' : 'Save to favorites'}">${V.icon('heart')}</button></div>`}
     ${l.description ? `<h2>Description</h2><p style="white-space:pre-wrap">${esc(l.description)}</p>` : ''}
     <div class="panel" style="margin-top:18px"><a href="/s/${esc(l.seller_handle)}" style="text-decoration:none"><strong>${esc(l.seller_name || l.seller_handle)}</strong></a>
-      <div class="small muted">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} · ${rate.n} review${rate.n > 1 ? 's' : ''}` : 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
+      <div class="small muted">${RV.line(l.seller_id) || 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
       ${l.seller_bio ? `<p class="small">${esc(l.seller_bio)}</p>` : ''}
       <p class="small muted" style="margin:6px 0 0">${ext ? 'You pay this seller directly. PairPlug does not hold or refund payments — message the seller about any payment problem.' : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">PairPlug sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
   page(req, res, { title: l.title, body, description: l.description.slice(0, 150) });
@@ -148,10 +150,10 @@ r.get('/s/:handle', (req, res) => {
   const reviews = q.all('SELECT r.*, u.display_name FROM reviews r JOIN users u ON u.id = r.buyer_id WHERE r.seller_id = ? ORDER BY r.created_at DESC LIMIT 5', s.id);
   const body = `<div class="storehead"><div class="avatar" aria-hidden="true">${esc((s.store_name || s.handle)[0].toUpperCase())}</div><div><h1>${esc(s.store_name || s.handle)}</h1>
     <div class="muted small">@${esc(s.handle)} · ${esc(place(s))} ${isLocalShip(s.country) ? '<span class="badge-local">Local ship</span>' : ''}</div>
-    <div class="small">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} (${rate.n})` : '<span class="muted">No reviews yet</span>'} · ${sold} completed sale${sold === 1 ? '' : 's'}</div></div></div>
+    <div class="small">${RV.line(s.id) || '<span class="muted">No reviews yet</span>'} · ${sold} completed sale${sold === 1 ? '' : 's'}</div></div></div>
     ${s.bio ? `<p>${esc(s.bio)}</p>` : ''}<h2>Available (${result.total})</h2>
     ${result.items.length ? V.grid(result.items, { favs: favSet(req.user) }) + V.pager(result.page, result.pages, {}) : V.empty('No listings yet', 'No listings yet — check back for their next drop.')}
-    ${reviews.length ? `<h2>Reviews</h2>${reviews.map((v) => `<div class="panel">${stars(v.rating)} <strong>${esc(v.display_name.split(' ')[0])}</strong> <span class="muted small">${date(v.created_at)}</span>${v.body ? `<p style="margin:4px 0 0">${esc(v.body)}</p>` : ''}</div>`).join('')}` : ''}`;
+    ${RV.section(s.id, req.user)}`;
   page(req, res, { title: s.store_name || s.handle, body });
 });
 
@@ -159,7 +161,7 @@ r.get('/s/:handle', (req, res) => {
 const authForm = (kind, next) => {
   const reg = kind === 'register';
   return `<div class="narrow panel"><h1>${reg ? 'Create your account' : 'Log in'}</h1>
-  <p class="muted small" style="margin-top:-6px">${reg ? 'A free buyer account lets you message sellers, save favorites and order. Selling is invitation-only during the private beta.' : 'Welcome back. Approved beta sellers and administrators sign in here too.'}</p>
+  <p class="muted small" style="margin-top:-6px">${reg ? 'Join PairPlug — The Clothing Marketplace. A free buyer account lets you follow independent sellers, message them, save favorites and order. Selling is invitation-only during the private beta.' : 'Welcome back to PairPlug — The Clothing Marketplace. Approved beta sellers and staff sign in here too.'}</p>
   <form data-api="/api/${kind}" data-redirect="${esc(next)}" novalidate>
     ${reg ? '<label for="n">Name</label><input id="n" name="display_name" autocomplete="name" required>' : ''}
     <label for="e">Email</label><input id="e" name="email" type="email" autocomplete="email" required>
@@ -167,7 +169,7 @@ const authForm = (kind, next) => {
     <input type="hidden" name="next" value="${esc(next)}">
     ${reg ? `<label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="terms" required> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and have read the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/payments" target="_blank" rel="noopener">how payments and refunds work</a>.</span></label>` : ''}
     <button class="btn block" type="submit" style="margin-top:16px">${reg ? 'Sign up' : 'Log in'}</button></form>
-  <p class="small muted" style="margin-top:14px">${reg ? 'Already have an account? <a href="/login">Log in</a>' : 'New here? <a href="/register">Create an account</a>'}${reg ? '' : '<br>Forgot your password? Password reset needs an email provider, which isn\'t configured — email ${V.contactLink()}.'}${reg ? `<br>Questions? Email ${V.contactLink()}.` : ''}</p></div>`;
+  <p class="small muted" style="margin-top:14px">${reg ? 'Already have an account? <a href="/login">Log in</a>' : 'New here? <a href="/register">Create an account</a>'}${reg ? '' : '<br><a href="/forgot-password">Forgot your password?</a>'}<br>Questions or trouble signing in? <a href="/contact">Contact us</a> or email ${V.contactLink()}.</p></div>`;
 };
 const safeNext = (n) => (typeof n === 'string' && /^\/(?!\/)[\w\-./?=&%]*$/.test(n) ? n : '/');
 r.get('/login', (req, res) => (req.user ? res.redirect('/') : page(req, res, { title: 'Log in', body: authForm('login', safeNext(req.query.next)) })));
@@ -347,10 +349,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res) => {
       <form data-api="/api/orders/${o.id}/dispute" data-reload><label for="dr">What went wrong?</label><textarea id="dr" name="reason" required minlength="10" placeholder="Describe the issue (not received, not as described, damaged…)"></textarea>
       <label>Photos <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}<button class="btn danger" type="submit" style="margin-top:12px">Open dispute</button></form></details>` : ''}
     ${dispute ? disputePanel(dispute, req.user) : ''}
-    ${isBuyer && o.status === 'released' && !review ? `<div class="panel"><h3>Review this seller</h3><form data-api="/api/orders/${o.id}/review" data-reload>
-      <label for="rt">Rating</label><select id="rt" name="rating"><option value="5">5 — Excellent</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1 — Poor</option></select>
-      <label for="rb">Comment <span class="opt">(optional)</span></label><textarea id="rb" name="body" maxlength="1000"></textarea><button class="btn" type="submit" style="margin-top:12px">Submit review</button></form></div>` : ''}
-    ${review ? `<div class="panel"><h3>Review</h3>${stars(review.rating)}<p>${esc(review.body || '')}</p></div>` : ''}
+    ${isBuyer ? RV.panel(o) : ''}
   </section><aside class="panel sticky"><h3>Payment</h3>
     <div class="summary-row"><span>Items</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div>
     ${o.tax_cents ? `<div class="summary-row"><span>Tax</span><span>${money(o.tax_cents)}</span></div>` : ''}<div class="summary-row total"><span>Total</span><span>${money(o.total_cents)}</span></div>
@@ -407,16 +406,6 @@ r.post('/api/orders/:id(\\d+)/dispute/evidence', auth.requireUser, (req, res) =>
     if (note) q.run('INSERT INTO dispute_evidence(dispute_id, user_id, party, note, created_at) VALUES(?,?,?,?,?)', d.id, req.user.id, party, note, now());
     images.forEach((f) => q.run('INSERT INTO dispute_evidence(dispute_id, user_id, party, image, created_at) VALUES(?,?,?,?,?)', d.id, req.user.id, party, f, now()));
   });
-  res.json({ ok: true });
-});
-r.post('/api/orders/:id(\\d+)/review', auth.requireUser, (req, res) => {
-  const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(req.params.id), req.user.id);
-  if (!o) throw new HttpError(404, 'Order not found');
-  if (o.status !== (o.payment_mode === 'external' ? 'delivered' : 'released')) throw new HttpError(409, 'You can review once the order is complete.');
-  const rating = Number(req.body.rating);
-  if (!(rating >= 1 && rating <= 5 && Number.isInteger(rating))) throw new HttpError(422, 'Choose a rating from 1 to 5.');
-  try { q.run('INSERT INTO reviews(order_id, buyer_id, seller_id, rating, body, created_at) VALUES(?,?,?,?,?,?)', o.id, req.user.id, o.seller_id, rating, clean(req.body.body, 1000) || null, now()); }
-  catch { throw new HttpError(409, 'You already reviewed this order.'); }
   res.json({ ok: true });
 });
 

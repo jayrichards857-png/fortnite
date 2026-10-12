@@ -87,6 +87,8 @@ const getProviderByName = (n) => (n === 'stripe' && config.stripe.secretKey ? st
 
 /** Release held items back to the marketplace (used on failed/expired checkouts). Call inside tx(). */
 function releaseCheckoutItems(checkoutId) {
+  const ck = q.get('SELECT mode FROM checkouts WHERE id = ?', checkoutId);
+  if (ck && ck.mode === 'external') return require('./inventory').releaseCheckout(checkoutId);     // quantity-aware: give the held unit back
   q.run(`UPDATE listings SET status='active', reserved_until=NULL, reserved_checkout_id=NULL
          WHERE reserved_checkout_id = ? AND status = 'reserved'`, checkoutId);
 }

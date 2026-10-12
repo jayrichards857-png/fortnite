@@ -72,8 +72,8 @@ function record(user, listingId, body = {}) {
   return tx(() => {
     const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(listingId), user.id);
     if (!l) throw new HttpError(404, 'Listing not found');
-    if (active(l.id)) throw new HttpError(409, 'A sale is already recorded for this item.');
-    if (hasOrder(l.id)) throw new HttpError(409, 'This item already has a PairPlug order, which is its sale record. Confirm payment and ship from that order; recording it here would duplicate it.');
+    if (active(l.id)) throw new HttpError(409, 'A sale is already recorded for this item. If you sold more units elsewhere, lower the quantity in the listing editor.');
+    if (l.quantity === 0 && hasOrder(l.id)) throw new HttpError(409, 'This item already has a PairPlug order, which is its sale record. Confirm payment and ship from that order; recording it here would duplicate it.');
     if (l.status === 'reserved') throw new HttpError(409, 'A buyer is checking out this item right now. Try again after their reservation ends.');
     if (!['active', 'sold'].includes(l.status)) throw new HttpError(409, 'Only items for sale (or already marked sold) can be recorded as sold.');
     const t = now();
@@ -81,7 +81,7 @@ function record(user, listingId, body = {}) {
       recipient_name, recipient_line1, recipient_line2, recipient_city, recipient_region, recipient_postal, recipient_country, buyer_email) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?)`,
     l.id, user.id, d.sold_on, d.price, d.channel, d.reference, d.note, t, t, origin, payment, payment === 'confirmed_by_seller' ? t : null, fulfillment, fulfillment === 'ship' ? 'not_shipped' : 'not_applicable', ...recipientCols(rec), d.email);
     const id = Number(r.lastInsertRowid);
-    if (l.status === 'active') q.run("UPDATE listings SET status = 'sold', reserved_until = NULL, reserved_checkout_id = NULL, updated_at = ? WHERE id = ? AND status = 'active'", t, l.id);
+    if (l.status === 'active') { q.run('UPDATE listings SET quantity = MAX(0, quantity - 1) WHERE id = ?', l.id); require('./inventory').sync(l.id); }       // one unit sold outside PairPlug; 'sold' only when none is left
     log(id, user.id, 'recorded', { origin, fulfillment, payment, was: l.status });
     audit(user, 'sale_recorded', { type: 'listing', id: l.id, detail: { sale: id, origin, price_cents: d.price, was: l.status } });
     return { id, status: 'sold' };
@@ -169,6 +169,7 @@ function voidSale(user, id, body = {}) {
     const s = mine(user, id); if (s.voided_at) return { ok: true, alreadyVoided: true };
     if (s.shipment_status === 'shipped') throw new HttpError(409, 'A shipped sale can\'t be voided. Correct the details instead.');
     const t = now();
+    q.run('UPDATE listings SET quantity = MIN(999, quantity + 1) WHERE id = ?', s.listing_id);
     q.run('UPDATE external_sales SET voided_at = ?, void_reason = ?, voided_by = ?, updated_at = ? WHERE id = ?', t, reason, user.id, t, s.id);
     const l = q.get('SELECT status FROM listings WHERE id = ?', s.listing_id);
     let listing = l.status;

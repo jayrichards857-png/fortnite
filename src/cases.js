@@ -226,7 +226,7 @@ function sellerRespond(user, orderId, { action, reference, note }) {
 function completeRefund(orderId, actorLabel, note) {
   const o = q.get('SELECT * FROM orders WHERE id = ?', orderId);
   transition(o.id, 'refunded', { actor: actorLabel, note, set: { refunded_cents: o.total_cents } });
-  q.run("UPDATE listings SET status = 'archived', reserved_until = NULL, reserved_checkout_id = NULL WHERE id IN (SELECT listing_id FROM order_items WHERE order_id = ?)", o.id);   // the seller can resume it if they still have the item
+  require('./externalCheckout').afterRefund(o.id, false);   // archives the listing only if no other unit is left; the seller can resume it if they still have the item
 }
 /** The BUYER confirms (or denies) receiving the refund the seller reported. Only this completes it. */
 function buyerConfirm(user, orderId, { received, note }) {

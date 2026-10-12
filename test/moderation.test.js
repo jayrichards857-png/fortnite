@@ -34,8 +34,9 @@ const clearSlots = () => { q.run('UPDATE users SET is_moderator = 0 WHERE is_mod
 
 test('the official support email is the default, clickable, consistent, and honest about what email is', async () => {
   assert.equal(config.supportEmail, OFFICIAL); assert.equal(config.supportEmailOverridden, false);
-  const anon = new H.Client(); const pages = ['/support', '/terms', '/privacy', '/payments', '/rules', '/legal', '/', '/register', '/login', '/shop'];
-  for (const p of pages) { const h = await get(anon, p); assert.match(h, new RegExp(`href="mailto:${OFFICIAL}"`), `${p} has a mailto link`); }
+  const anon = new H.Client(); const pages = ['/support', '/terms', '/privacy', '/payments', '/rules', '/legal', '/register', '/login', '/contact'];
+  for (const p of pages) { const h = await get(anon, p); assert.match(h, new RegExp(`href="mailto:${OFFICIAL}`), `${p} has a mailto link`); }
+  for (const p of ['/', '/shop', '/sellers', '/login', '/register', '/support', '/terms']) assert.match(await get(anon, p), /href="\/contact"/, `${p} links to the Contact page`);
   const adm = await admin(), inv = await adm.post('/api/admin/invitations', { kind: 'buyer', email: `x${Date.now()}@example.test` });
   assert.match(await get(anon, `/invite/${tokenOf(inv.json.link)}`), new RegExp(`mailto:${OFFICIAL}`));
   const support = (await get(anon, '/support')).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');

@@ -43,6 +43,7 @@ app.use((req, res, next) => {
 });
 
 app.use(require('./routes/legal').router);
+app.use(require('./routes/reviews').router);      // seller reviews + review moderation (must precede the order routers)
 app.use(require('./routes/moderation').router);   // moderator setup links, /moderation, moderator management (admin)   // terms, privacy, payments/refunds/disputes, seller rules (public)
 app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
 app.use(require('./routes/store').router);   // storefronts + editor (takes over /s/:handle)

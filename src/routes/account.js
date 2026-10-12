@@ -60,12 +60,12 @@ r.get('/invite/:token', (req, res) => {
   const body = `<div class="narrow panel form-wide" style="max-width:560px"><h1>${seller ? 'Open your PairPlug store' : 'Join PairPlug'}</h1>
     <p class="muted small">Invitation for <strong>${esc(i.email)}</strong> · expires ${date(i.expires_at)}. ${seller ? 'During the beta PairPlug has no fees: buyers pay you directly through your own Stripe checkout, and you are expected to reply to buyer messages within 48 hours.' : ''}</p>
     <form data-api="/api/invitations/accept" data-redirect="/account"><input type="hidden" name="token" value="${esc(req.params.token)}">
-      ${existing ? '' : '<label for="n">Your name</label><input id="n" name="display_name" autocomplete="name" required><label for="p">Password <span class="opt">(8+ characters)</span></label><input id="p" name="password" type="password" autocomplete="new-password" minlength="8" required>'}
+      ${existing ? '' : `<label for="n">Your name</label><input id="n" name="display_name" autocomplete="name" value="${esc(i.suggested_name || '')}" required><label for="p">Password <span class="opt">(8+ characters)</span></label><input id="p" name="password" type="password" autocomplete="new-password" minlength="8" required>`}
       ${seller ? `<label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" required><label for="sh">Store URL <span class="opt">(pairplug.com/s/…)</span></label><input id="sh" name="handle" pattern="[a-zA-Z0-9_-]{3,30}" required>${storeFields}
         <label for="sb">About <span class="opt">(optional)</span></label><textarea id="sb" name="bio" maxlength="500"></textarea>
         <label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="agree" required> <span>I only list items I own, will ship what I sell, and will reply to buyers within 48 hours, and I have read the <a href="/rules" target="_blank" rel="noopener">Prohibited Items &amp; Seller Rules</a>.</span></label>` : ''}
       ${termsBox}
-      <p class="small muted">Questions about this invitation? Email ${V.contactLink()}.</p>
+      <p class="small muted">Questions about this invitation? <a href="/contact">Contact us</a> or email ${V.contactLink()}.</p>
       <button class="btn block" style="margin-top:14px" type="submit">${seller ? 'Create store' : 'Create account'}</button></form></div>`;
   page(req, res, { title: 'Invitation', body });
 });

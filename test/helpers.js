@@ -70,7 +70,7 @@ async function upload(c) {
 }
 async function makeListing(seller, over = {}) {
   const file = await upload(seller);
-  const r = await seller.post('/api/seller/listings', { title: 'Test jacket', description: 'Worn twice', category: 'outerwear', brand: 'Acme', size: 'M', condition: 'good', price: '40.00', shipping: '5.00', cost: '15.00', weight_oz: '20', images: [file], status: 'active', ...over });
+  const r = await seller.post('/api/seller/listings', { title: 'Test jacket', description: 'Worn twice', category: 'outerwear', brand: 'Acme', size: 'M', condition: 'good', price: '40.00', shipping: '5.00', cost: '15.00', weight_oz: '20', images: [file], status: 'active', ...(over.payment_url ? { payment_amount_ack: true } : {}), ...over });
   if (r.status !== 200) throw new Error('listing failed ' + r.text);
   return r.json.id;
 }

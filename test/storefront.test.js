@@ -164,7 +164,10 @@ test('listing validation & hybrid purchase UI: currency, prices, contact-only li
   const page = (await buyer.get(`/listing/${ok.json.id}`)).text;
   assert.doesNotMatch(page, />Buy now</); assert.doesNotMatch(page, /href="\/buy\//); assert.match(page, /Contact seller/); assert.match(page, /Online checkout|set up checkout|arrange payment/i); assert.match(page, /USD/);
   assert.equal((await buyer.post('/api/purchases', { listingId: ok.json.id, acknowledged: true, address: H.address })).status, 409, 'and the API agrees');
-  const withLink = await s.post('/api/seller/listings', { ...base, title: 'With link', price: '25.00', payment_url: LINK });
+  const unconfirmed = await s.post('/api/seller/listings', { ...base, title: 'Link not confirmed', price: '25.00', payment_url: LINK });
+  assert.doesNotMatch((await buyer.get(`/listing/${unconfirmed.json.id}`)).text, />Buy now</, 'a payment link the seller has not confirmed as matching is never offered');
+  assert.equal((await buyer.post('/api/purchases', { listingId: unconfirmed.json.id, acknowledged: true, address: H.address })).status, 409);
+  const withLink = await s.post('/api/seller/listings', { ...base, title: 'With link', price: '25.00', payment_url: LINK, payment_amount_ack: true });
   const p2 = (await buyer.get(`/listing/${withLink.json.id}`)).text; assert.match(p2, />Buy now</); assert.match(p2, /Contact seller/); assert.match(p2, /can&#39;t guarantee a refund|can't guarantee a refund/);
 });
 

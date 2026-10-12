@@ -80,7 +80,7 @@ test('homepage Discover Sellers and View all sellers list real, public stores (s
   const withItems = await shop('Home Seller One', 'homeone', ['Home jacket A', 'Home jacket B', 'Home jacket C', 'Home jacket D']), empty = await shop('Empty Store', 'emptystore', []), drafty = await shop('Draft Only', 'draftonly', ['Draft thing']);
   q.run("UPDATE listings SET status = 'draft' WHERE seller_id = (SELECT id FROM users WHERE handle = 'draftonly')");
   const home = await get(anon, '/'); assert.match(home, /Discover Sellers/); assert.match(home, /View all sellers/); assert.match(home, /@homeone/); assert.match(home, /@emptystore/, 'a public store with no listings is discoverable'); assert.match(home, /@draftonly/); assert.doesNotMatch(home, /Draft thing/, 'draft titles never leak'); assert.ok(home.indexOf('@homeone') < home.indexOf('@emptystore'), 'stores with items rank first');
-  assert.equal((home.match(/href="\/listing\/\d+" title="Home jacket/g) || []).length, 3, 'a preview of up to 3 newest available items'); assert.match(home, /data-follow="homeone"/); assert.match(home, /Discover secondhand finds/);
+  assert.equal((home.match(/href="\/listing\/\d+" title="Home jacket/g) || []).length, 3, 'a preview of up to 3 newest available items'); assert.match(home, /data-follow="homeone"/); assert.match(home, /The Clothing Marketplace/);
   // pagination on /sellers (12 per page)
   for (let i = 0; i < 12; i++) await shop(`Pager Shop ${i}`, `pager${i}`, [`Pager item ${i}`]);
   const p1 = await get(anon, '/sellers'), p2 = await get(anon, '/sellers?page=2'); const n1 = (p1.match(/class="scard"/g) || []).length, n2 = (p2.match(/class="scard"/g) || []).length;

@@ -46,3 +46,10 @@ Intended: PairPlug accepts and investigates scam reports, restricts accounts/lis
 * Whether to publish response-time targets (none promised) and any refund/"buyer protection" commitments (none made, none implied).
 * Retention of reports, evidence photos and packets (no automatic deletion exists).
 * Wording that "PairPlug may report suspected fraud to authorities when the law requires or permits".
+
+## Reviews, quantity and checkout amounts (schema v14)
+* **Reviews policy questions for counsel/owner:** whether "order-linked" wording is sufficient (we never say "verified purchase"); consumer-review laws (e.g. rules on fake/incentivised reviews, suppression of negative reviews) in your jurisdictions; retention of removed/hidden reviews; whether sellers should get a right of reply; whether moderators hiding reviews at their discretion needs a published standard. Moderators can only hide/restore with a reason, never edit.
+* **Delivery** is the buyer's own "received" click (or a carrier webhook if enabled); tracking alone never makes an order reviewable.
+* **Checkout amount:** PairPlug cannot verify what a seller's payment page charges. The only controls are the seller's confirmation, the buyer-facing "check before you pay" notice, and refusing Stripe test links in production. A seller who ticks the box falsely can still mismatch; that is covered by reports/restrictions, not prevented. **Launch note:** existing listings have no confirmation and cannot be bought online until their seller re-saves with the box ticked.
+* **Quantity:** a unit is held for a reservation (default 30 minutes) and given back if unpaid; the legal pages do not promise stock.
+* **Owner accounts:** invitations are not emailed (no provider configured); the owner delivers links by hand. Decide whether to configure an email provider before launch.

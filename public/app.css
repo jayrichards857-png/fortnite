@@ -164,3 +164,13 @@ fieldset{border:0;padding:0;margin:12px 0 0}legend{font-size:13px;font-weight:60
 .legal .tablewrap{overflow-x:auto}.legal table td,.legal table th{vertical-align:top}
 .legal-links{flex-basis:100%}.legal-links a,.site-footer a{display:inline-block;padding:4px 2px}
 a.scard{text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:6px}a.scard:hover{border-color:var(--ink,#111)}
+
+.qty-badge{font-size:11px;font-weight:600;background:#f1efe9;border-radius:99px;padding:2px 8px;margin-left:6px;vertical-align:middle}
+
+.contact-card{text-align:center}.contact-email{font-size:22px;font-weight:600;margin:4px 0 12px;word-break:break-all}.contact-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:8px 0 16px}.contact-card ul{text-align:left;max-width:520px;margin:0 auto}.email-copy{user-select:all;word-break:break-all}
+
+/* reviews */
+.rep-counts{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}.rep-counts>div{background:#f1efe9;border-radius:10px;padding:10px 16px;min-width:110px}.rep-counts strong{display:block;font-size:22px}.rep-counts span{font-size:12px;color:var(--muted)}
+.rep-thumb{display:inline-flex;gap:4px;align-items:center;font-weight:600;font-size:13px}.rep-thumb.up{color:#1f7a3d}.rep-line{display:inline-flex;gap:4px;align-items:center;font-size:13px}.review-card details{margin-top:6px}
+
+.hero-kicker{margin:0 0 4px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px;color:var(--muted)}

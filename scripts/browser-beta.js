@@ -49,7 +49,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await s.pg.fill('#price', '48'); await s.pg.fill('#cost', '15'); await s.pg.fill('#w', '24');
     await s.pg.click('[data-save=active]'); await s.pg.locator('.err').first().waitFor(); step('publish blocked without payment link / shipping fee: "' + (await s.pg.locator('.form-err').first().textContent()).trim() + '"');
     await s.pg.fill('#ship', '7'); await s.pg.fill('#purl', 'https://evil.example/x'); await s.pg.click('[data-save=active]'); await s.pg.waitForSelector('.err'); step('non-allowlisted listing link rejected');
-    await s.pg.fill('#purl', LINK);
+    await s.pg.fill('#purl', LINK); await s.pg.check('input[name=payment_amount_ack]');
     await Promise.all([s.pg.waitForURL(/\/listing\/\d+$/), s.pg.click('[data-save=active]')]); step('listing published: ' + s.pg.url());
     const listingUrl = s.pg.url(), listingId = listingUrl.split('/').pop();
 

@@ -21,6 +21,7 @@ const { notify } = require('./notify');
 const { resolveLink, buyerUrl } = require('./paymentLinks');
 const { randomUUID } = require('node:crypto');
 const { expireStaleCheckouts } = require('./payments');
+const INV = require('./inventory');
 
 const isExternal = () => config.checkoutMode === 'external';
 const MAX_PENDING_PER_BUYER = 3;
@@ -33,11 +34,14 @@ function terms(listing) {
 
 /** Can this listing be bought right now through a seller link? (used for the listing page and again at purchase time) */
 function purchasable(listing) {
-  if (!listing || listing.status !== 'active') return { ok: false, reason: 'This item is no longer available.' };
+  if (!listing || listing.status !== 'active' || !(listing.quantity > 0)) return { ok: false, reason: 'This item is no longer available.' };
   const seller = q.get('SELECT * FROM users WHERE id = ?', listing.seller_id);
   if (!seller || seller.banned || !seller.is_seller) return { ok: false, reason: 'This seller is unavailable.' };
   if (seller.selling_restricted_at) return { ok: false, reason: 'This seller is temporarily unavailable.' };
   if (!seller.email_verified_at) return { ok: false, reason: "This seller hasn't verified their email yet, so online checkout is paused. You can still message them." };
+  const link = resolveLink(listing, seller);
+  // A fixed-price payment link cannot be set by PairPlug per order. The seller must have confirmed that it charges exactly what this listing now costs; otherwise the buyer could be sent to a wrong amount.
+  if (link && link.source === 'listing' && listing.payment_total_ack_cents !== terms(listing).totalCents) return { ok: false, reason: "This seller still needs to confirm that their payment link charges the current total (item price plus shipping), so online checkout is paused. You can message them." };
   if (!resolveLink(listing, seller)) return { ok: false, reason: "This seller hasn't finished setting up checkout for this item yet." };
   return { ok: true, seller };
 }
@@ -67,11 +71,9 @@ function startPurchase(user, { listingId, address, acknowledged }) {
     const l = q.get('SELECT * FROM listings WHERE id = ?', Number(listingId));
     if (!l) throw new HttpError(404, 'Listing not found');
     if (l.seller_id === user.id) throw new HttpError(403, "You can't buy your own listing.");
-    // retry/double-click: this buyer already holds the reservation
-    if (l.status === 'reserved' && l.reserved_checkout_id) {
-      const mine = q.get(`SELECT o.id FROM orders o WHERE o.checkout_id = ? AND o.buyer_id = ? AND o.payment_mode = 'external' AND o.status = 'pending_payment'`, l.reserved_checkout_id, user.id);
-      if (mine) return { orderId: mine.id, existing: true };
-    }
+    // retry/double-click: this buyer already holds a reservation on this listing
+    const mine = q.get(`SELECT o.id FROM orders o JOIN order_items i ON i.order_id = o.id WHERE i.listing_id = ? AND o.buyer_id = ? AND o.payment_mode = 'external' AND o.status = 'pending_payment' ORDER BY o.id DESC LIMIT 1`, l.id, user.id);
+    if (mine) return { orderId: mine.id, existing: true };
     const p = purchasable(l);
     if (!p.ok) throw new HttpError(409, p.reason);
     const pending = q.get(`SELECT COUNT(*) n FROM orders WHERE buyer_id = ? AND payment_mode = 'external' AND status = 'pending_payment'`, user.id).n;
@@ -82,15 +84,15 @@ function startPurchase(user, { listingId, address, acknowledged }) {
     const ck = q.run(`INSERT INTO checkouts(buyer_id, idempotency_key, total_cents, mode, ship_name, ship_line1, ship_line2, ship_city, ship_region, ship_postal, ship_country, expires_at, created_at)
       VALUES(?,?,?, 'external', ?,?,?,?,?,?,?,?,?)`, user.id, `ext-${randomUUID()}`, t.totalCents, addr.ship_name, addr.ship_line1, addr.ship_line2, addr.ship_city, addr.ship_region, addr.ship_postal, addr.ship_country, expires, tNow);
     const checkoutId = Number(ck.lastInsertRowid);
-    // Reservation = conditional UPDATE inside a BEGIN IMMEDIATE transaction: exactly one buyer can win a unique item.
-    const res = q.run("UPDATE listings SET status='reserved', reserved_until=?, reserved_checkout_id=? WHERE id=? AND status='active'", expires, checkoutId, l.id);
-    if (res.changes !== 1) throw new HttpError(409, 'This item was just taken by another buyer.');
+    // Reservation = conditional decrement of the listing's quantity inside a BEGIN IMMEDIATE transaction: exactly one buyer can win the last unit.
+    if (!INV.holdUnit(l.id)) throw new HttpError(409, 'This item was just taken by another buyer.');
     // PairPlug takes no fees and moves no money in this mode: fee/payout columns are zero by definition.
     const o = q.run(`INSERT INTO orders(checkout_id, buyer_id, seller_id, payment_mode, shipping_payer, subtotal_cents, shipping_cents, tax_cents, total_cents, fee_bps, platform_fee_cents, processing_fee_cents, seller_payout_cents, snapshot_json, created_at, updated_at)
       VALUES(?,?,?, 'external', ?, ?,?,0,?, 0,0,0,0, ?, ?,?)`, checkoutId, user.id, seller.id, t.shippingPayer, t.itemCents, t.shippingCents, t.totalCents, snapshotOf(l, seller, link, t), tNow, tNow);
     const orderId = Number(o.lastInsertRowid);
     q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?, NULL, 'pending_payment', ?, 'Buyer started seller checkout (not paid)', ?)", orderId, `buyer:${user.id}`, tNow);
     q.run('INSERT INTO order_items(order_id, listing_id, title, price_cents, cost_cents, image) SELECT ?, id, title, price_cents, cost_cents, (SELECT file FROM listing_images WHERE listing_id = listings.id ORDER BY position LIMIT 1) FROM listings WHERE id = ?', orderId, l.id);
+    INV.sync(l.id);                                                                  // now that the order exists, the legacy reserved_* markers can point at it
     notify(seller.id, `order:${orderId}:initiated`, 'Someone started checkout', `Order #${orderId}: "${l.title}" is reserved. Watch for the payment in your Stripe dashboard (reference PP-${orderId}), then confirm it in PairPlug.`, `/dashboard/orders/${orderId}`);
     return { orderId, existing: false };
   });
@@ -109,7 +111,7 @@ function sellerOrder(user, orderId) {
   if (!o) throw new HttpError(404, 'Order not found');
   return o;
 }
-const releaseListing = (checkoutId) => q.run("UPDATE listings SET status='active', reserved_until=NULL, reserved_checkout_id=NULL WHERE reserved_checkout_id = ? AND status = 'reserved'", checkoutId);
+const releaseListing = (checkoutId) => INV.releaseCheckout(checkoutId);          // give the held unit back
 
 /**
  * Where the buyer is sent to pay. Only for the buyer's own, still-pending direct order. The destination is the exact link
@@ -137,7 +139,7 @@ function buyerClaimPaid(user, orderId) {
       const until = now() + getSettings().external_claim_hold_hours * 3600;
       q.run('UPDATE orders SET buyer_claimed_paid_at = ?, updated_at = ? WHERE id = ?', now(), now(), o.id);
       q.run('UPDATE checkouts SET expires_at = ? WHERE id = ?', until, o.checkout_id);
-      q.run("UPDATE listings SET reserved_until = ? WHERE reserved_checkout_id = ? AND status = 'reserved'", until, o.checkout_id);
+      INV.sync(q.get('SELECT listing_id FROM order_items WHERE order_id = ?', o.id).listing_id);
       q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?, 'pending_payment', 'pending_payment', ?, 'Buyer says they paid (unverified)', ?)", o.id, `buyer:${user.id}`, now());
       notify(o.seller_id, `order:${o.id}:claimed`, 'Buyer says they paid', `Order #${o.id}: check your payment dashboard for reference PP-${o.id}, then confirm the payment in PairPlug.`, `/dashboard/orders/${o.id}`);
     }
@@ -163,11 +165,9 @@ function sellerConfirmPayment(user, orderId, { reference } = {}) {
     // Repeated request (double click / retry) by the seller who already confirmed: nothing changes, and it is reported honestly.
     if (['paid', 'shipped', 'delivered', 'released'].includes(o.status) && o.payment_confirmed_by === user.id) return { ok: true, alreadyConfirmed: true };
     if (o.status !== 'pending_payment') throw new HttpError(409, o.status === 'cancelled' ? 'This reservation expired or was cancelled, so the item may have been released. Refund the buyer in your payment dashboard if they paid.' : 'This order is already confirmed.');
-    const held = q.get("SELECT id FROM listings WHERE reserved_checkout_id = ? AND status = 'reserved'", o.checkout_id);
-    if (!held) throw new HttpError(409, 'The item is no longer reserved for this order.');
     transition(o.id, 'paid', { actor: `seller:${user.id}`, note: 'Seller confirmed payment received in their own payment account', set: { paid_at: now(), payment_confirmed_at: now(), payment_confirmed_by: user.id, payment_reference: cleanLine(reference, 80) || null } });
     q.run("UPDATE checkouts SET status = 'paid' WHERE id = ?", o.checkout_id);
-    q.run("UPDATE listings SET status = 'sold', reserved_until = NULL WHERE id = ?", held.id);
+    INV.sync(q.get('SELECT listing_id FROM order_items WHERE order_id = ?', o.id).listing_id);       // the reserved unit becomes a sale; the listing is 'sold' only when no unit is left
     notify(o.buyer_id, `order:${o.id}:confirmed`, 'Payment confirmed by the seller', `Order #${o.id}: the seller confirmed your payment and will ship soon.`, `/orders/${o.id}`);
     return { ok: true };
   });
@@ -187,12 +187,20 @@ function sellerRejectPayment(user, orderId) {
 }
 
 /** Seller records that THEY refunded the buyer in their payment provider. PairPlug moves no money and verifies nothing. */
+/** A refunded unit: back in stock when the seller relists it; otherwise the listing is archived only if nothing else is left to sell. */
+function afterRefund(orderId, relist) {
+  for (const it of q.all('SELECT listing_id FROM order_items WHERE order_id = ?', orderId)) {
+    if (relist) INV.returnUnit(it.listing_id);
+    else if (q.get('SELECT quantity FROM listings WHERE id = ?', it.listing_id).quantity === 0 && !INV.pendingCount(it.listing_id)) q.run("UPDATE listings SET status = 'archived', reserved_until = NULL, reserved_checkout_id = NULL WHERE id = ?", it.listing_id);
+    else INV.sync(it.listing_id);
+  }
+}
 function sellerDeclareRefund(user, orderId, { relist }) {
   return tx(() => {
     const o = sellerOrder(user, orderId);
     if (!['paid', 'shipped', 'delivered'].includes(o.status)) throw new HttpError(409, 'Only confirmed orders can be marked refunded.');
     transition(o.id, 'refunded', { actor: `seller:${user.id}`, note: 'Seller states they refunded the buyer outside PairPlug', set: { refunded_cents: o.total_cents } });
-    q.run('UPDATE listings SET status = ?, reserved_until = NULL, reserved_checkout_id = NULL WHERE id IN (SELECT listing_id FROM order_items WHERE order_id = ?)', relist ? 'active' : 'archived', o.id);
+    afterRefund(o.id, relist);
     notify(o.buyer_id, `order:${o.id}:refund-declared`, 'Seller marked your order refunded', `Order #${o.id}: the seller says a refund was issued through their payment provider.`, `/orders/${o.id}`);
     return { ok: true };
   });
@@ -283,4 +291,4 @@ function markReceived(user, orderId, who) {
   });
 }
 
-module.exports = { buyerSetAddress, sellerRequestAddress, sellerShip, sellerCorrectTracking, addressMissing, isExternal, terms, purchasable, startPurchase, payRedirect, buyerClaimPaid, buyerCancel, sellerConfirmPayment, sellerRejectPayment, sellerDeclareRefund, markReceived, buyerOrder, sellerOrder };
+module.exports = { afterRefund, buyerSetAddress, sellerRequestAddress, sellerShip, sellerCorrectTracking, addressMissing, isExternal, terms, purchasable, startPurchase, payRedirect, buyerClaimPaid, buyerCancel, sellerConfirmPayment, sellerRejectPayment, sellerDeclareRefund, markReceived, buyerOrder, sellerOrder };

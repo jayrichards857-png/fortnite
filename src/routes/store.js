@@ -11,6 +11,7 @@ const SF = require('../storefront');
 const { isLocalShip } = require('../pricing');
 const { uploader } = require('./buyer');
 const D = require('../discovery');
+const RV = require('../reviews');
 
 const r = express.Router();
 const stars = (n) => `<span class="stars" aria-label="${n.toFixed(1)} out of 5">${'★'.repeat(Math.round(n))}${'☆'.repeat(5 - Math.round(n))}</span>`;
@@ -44,7 +45,7 @@ r.get('/s/:handle', (req, res) => {
     <div class="store-head"><div class="store-id">${st.avatar ? img(st.avatar, 'avatar-img', `${name} profile picture`) : `<div class="avatar" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`}
       <div class="store-title">${st.logo ? img(st.logo, 'logo-img', `${name} logo`) : ''}<h1>${esc(name)}</h1>${st.headline ? `<p class="headline">${esc(st.headline)}</p>` : ''}
         <div class="meta">@${esc(s.handle)}${st.showLocation && place ? ` · ${esc(place)}` : ''} ${isLocalShip(s.country) && st.showLocation ? '<span class="badge-local">Local ship</span>' : ''}</div>
-        <div class="meta">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} (${rate.n})` : 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div>
+        <div class="meta">${RV.line(s.id) || 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div>
       <div class="store-actions">${owner ? '<a class="btn" href="/dashboard/storefront">Customize</a>' : `${D.heartBtn(s.handle, req.user ? D.followedSet(req.user).has(s.id) : false, 'btn ghost')}<button class="btn" data-chat-seller="${esc(s.handle)}">Contact seller</button><a class="btn ghost small" href="/support?seller=${esc(s.handle)}">Report</a>`}</div></div>
     ${links ? `<div class="chips" aria-label="Seller links">${links}</div>` : ''}
     ${st.announcement ? `<div class="store-announce" role="note">${esc(st.announcement)}</div>` : ''}
@@ -54,7 +55,7 @@ r.get('/s/:handle', (req, res) => {
     <div class="sechead"><h2>${featured.length ? 'All items' : 'Available'} (${result.total + featured.length})</h2></div>
     ${result.items.length || featured.length ? (result.items.length ? `<div class="grid store-grid l-${esc(st.layout)}">${result.items.map((l) => V.card(l, { favs })).join('')}</div>${V.pager(result.page, result.pages, req.query.preview ? { preview: 1 } : {})}` : '')
       : V.empty('No listings yet', 'No listings yet — check back for their next drop. Follow this store to be notified when they publish.')}
-    ${reviews.length ? `<h2>Reviews</h2>${reviews.map((v) => `<div class="panel store-card">${stars(v.rating)} <strong>${esc(v.display_name.split(' ')[0])}</strong> <span class="muted small">${date(v.created_at)}</span>${v.body ? `<p style="margin:4px 0 0">${esc(v.body)}</p>` : ''}</div>`).join('')}` : ''}
+    ${RV.section(s.id, req.user)}
   </div>`;
   res.send(V.layout({ user: req.user, path: '/s', title: name, body, description: (st.headline || st.about || s.bio || '').slice(0, 150), head: `<link rel="stylesheet" href="/storefront.css?v=${cssEtag}">` }));
 });

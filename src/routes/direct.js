@@ -9,6 +9,7 @@ const { esc, money, clean, cleanLine, date, HttpError } = require('../util');
 const V = require('../views');
 const auth = require('../auth');
 const X = require('../externalCheckout');
+const RV = require('../reviews');
 const { validatePaymentUrl, trackingUrl, LABEL_PROVIDERS } = require('../paymentLinks');
 const L = require('../listings');
 const SP = require('./support');
@@ -82,6 +83,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
   const pending = o.status === 'pending_payment', until = ck.expires_at;
   const action = pending ? `<div class="panel notice strong"><h3>Step 2: pay the seller</h3>
       <p>Your item is reserved until <strong>${new Date(until * 1000).toLocaleString()}</strong>. Pay <strong>${money(o.total_cents)}</strong> on the seller's own checkout page (opens in the seller's payment provider, not PairPlug).</p>
+      <p class="small" style="border-left:3px solid var(--warn,#c9822b);padding-left:10px"><strong>Check before you pay:</strong> the seller's page should show <strong>${money(o.total_cents)}</strong> in total (item ${money(o.subtotal_cents)} + shipping ${money(o.shipping_cents)}). PairPlug cannot set or read the amount on that page. If it shows a different amount, the wrong item, or a "test mode" / "sandbox" notice, <strong>do not pay</strong>: cancel this purchase and <a href="/support">report it</a>.</p>
       <p><a class="btn" href="/orders/${o.id}/pay" target="_blank" rel="noopener noreferrer">Go to seller checkout ↗</a></p>
       ${o.buyer_claimed_paid_at ? '<p class="small"><strong>You told us you paid.</strong> The seller has been notified and will confirm once they see the payment. Your reservation is extended while they check.</p>'
       : `<p class="small muted">Already paid? Tell the seller. This does <em>not</em> confirm the order — only the seller can do that.</p><p><button class="btn ghost" data-post="/api/orders/${o.id}/claim-paid">I've completed payment</button>
@@ -97,9 +99,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
         <label for="ab_k">Country</label><select id="ab_k" name="country"><option value="US">United States</option><option value="CA">Canada</option><option value="MX">Mexico</option></select><button class="btn" type="submit" style="margin-top:10px">Save delivery address</button></form>` : ''}
       ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}${buyerLbl && buyerLbl.tracking_status ? `<p class="small" style="margin:6px 0 0">Carrier status: <strong>${esc(buyerLbl.tracking_status)}</strong></p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
     ${o.status === 'shipped' ? `<div class="panel"><h3>Received it?</h3><button class="btn" data-post="/api/orders/${o.id}/received">Mark as received</button></div>` : ''}
-    ${o.status === 'delivered' && !review ? `<div class="panel"><h3>Review this seller</h3><form data-api="/api/orders/${o.id}/review" data-reload><label for="rt">Rating</label><select id="rt" name="rating"><option value="5">5 — Excellent</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1 — Poor</option></select>
-      <label for="rb">Comment <span class="opt">(optional)</span></label><textarea id="rb" name="body" maxlength="1000"></textarea><button class="btn" type="submit" style="margin-top:12px">Submit review</button></form></div>` : ''}
-    ${review ? `<div class="panel"><h3>Your review</h3><span class="stars">${'★'.repeat(review.rating)}${'☆'.repeat(5 - review.rating)}</span><p>${esc(review.body || '')}</p></div>` : ''}
+    ${RV.panel(o)}
     <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. PairPlug does not hold your payment and cannot refund it.</p></div>
     ${SP.buyerPanels(o)}
   </section><aside class="panel sticky"><h3>Amount</h3>

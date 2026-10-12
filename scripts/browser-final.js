@@ -107,7 +107,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
 
     // ---- 6. contact-first listing (no payment link): no Buy now, Contact seller works; then add link -> Buy now
     const file = await upload(s1.ctx);
-    const mkListing = async (ctx, title, extra = {}) => { const r = await api(ctx, 'POST', '/api/seller/listings', { title, description: 'Worn twice', category: 'outerwear', brand: 'Acme', size: 'M', condition: 'good', price: '48.00', shipping: '7.00', shipping_payer: 'buyer', weight_oz: 16, images: [file], status: 'active', ...extra }); assert.equal(r.status, 200, JSON.stringify(r.json)); return r.json.id; };
+    const mkListing = async (ctx, title, extra = {}) => { const r = await api(ctx, 'POST', '/api/seller/listings', { title, description: 'Worn twice', category: 'outerwear', brand: 'Acme', size: 'M', condition: 'good', price: '48.00', shipping: '7.00', shipping_payer: 'buyer', weight_oz: 16, images: [file], status: 'active', ...(extra.payment_url ? { payment_amount_ack: true } : {}), ...extra }); assert.equal(r.status, 200, JSON.stringify(r.json)); return r.json.id; };
     const l1 = await mkListing(s1.ctx, 'Contact only jacket');
     await b.pg.goto(`${B}/listing/${l1}`); t = await b.pg.textContent('main'); assert.doesNotMatch(t, /Buy now/); assert.match(t, /Contact seller/i);
     await Promise.all([b.pg.waitForURL(/\/messages\/\d+/), b.pg.click('[data-chat-start]')]); await b.pg.fill('#compose', 'Is this still available?'); await b.pg.click('#composer button[type=submit]');
@@ -167,7 +167,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
 
     // ---- 11. mobile: key pages have no horizontal overflow
     const m = await mk({ width: 375, height: 760 }); await login(m.pg, 'buyer@example.test', 'a-long-password-2');
-    for (const p of ['/', '/sellers', '/following', '/shop', `/listing/${l2}`, '/s/store-s1', '/messages', `/orders/${orderId}`, '/support', '/account', '/legal', '/terms', '/privacy', '/payments', '/rules']) {
+    for (const p of ['/', '/sellers', '/following', '/shop', `/listing/${l2}`, '/s/store-s1', '/messages', `/orders/${orderId}`, '/support', '/account', '/legal', '/terms', '/privacy', '/payments', '/rules', '/contact']) {
       await m.pg.goto(B + p); const over = await m.pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth); assert.ok(over <= 1, `${p} overflows by ${over}px`);
     }
     await shot(m.pg, 'final-11-mobile-store.png'); step('11. mobile layout (375px): no horizontal overflow on key pages incl. legal pages');
