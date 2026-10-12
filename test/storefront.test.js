@@ -168,7 +168,7 @@ test('listing validation & hybrid purchase UI: currency, prices, contact-only li
   assert.doesNotMatch((await buyer.get(`/listing/${unconfirmed.json.id}`)).text, />Buy now</, 'a payment link the seller has not confirmed as matching is never offered');
   assert.equal((await buyer.post('/api/purchases', { listingId: unconfirmed.json.id, acknowledged: true, address: H.address })).status, 409);
   const withLink = await s.post('/api/seller/listings', { ...base, title: 'With link', price: '25.00', payment_url: LINK, payment_amount_ack: true });
-  const p2 = (await buyer.get(`/listing/${withLink.json.id}`)).text; assert.match(p2, />Buy now</); assert.match(p2, /Contact seller/); assert.match(p2, /can&#39;t guarantee a refund|can't guarantee a refund/);
+  const p2 = (await buyer.get(`/listing/${withLink.json.id}`)).text; assert.match(p2, />Buy now</); assert.match(p2, /Contact seller/); assert.match(p2, /cannot promise a refund or recovery/);
 });
 
 test('contact routes: every active seller is contactable from the storefront and listings, with or without a payment link', async () => {

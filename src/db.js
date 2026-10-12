@@ -726,6 +726,20 @@ CREATE INDEX idx_review_events ON review_events(review_id, id);
 CREATE TRIGGER review_events_no_update BEFORE UPDATE ON review_events BEGIN SELECT RAISE(ABORT, 'review history is append-only'); END;
 CREATE TRIGGER review_events_no_delete BEFORE DELETE ON review_events BEGIN SELECT RAISE(ABORT, 'review history is append-only'); END;
 `,
+// 15: preserved case records. Additive. When an order is reported, the order facts and a fingerprint of the buyer/seller conversation are frozen here (append-only), staff-only.
+`
+CREATE TABLE case_records (
+  id INTEGER PRIMARY KEY,
+  case_id INTEGER NOT NULL REFERENCES cases(id),
+  kind TEXT NOT NULL CHECK (kind IN ('order_snapshot')),
+  content TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_case_records ON case_records(case_id, id);
+CREATE TRIGGER case_records_no_update BEFORE UPDATE ON case_records BEGIN SELECT RAISE(ABORT, 'case records are append-only'); END;
+CREATE TRIGGER case_records_no_delete BEFORE DELETE ON case_records BEGIN SELECT RAISE(ABORT, 'case records are append-only'); END;
+`,
 ];
 
 function migrate() {

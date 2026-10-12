@@ -168,7 +168,7 @@ test('legal and help pages describe the real scam-reporting role and its limits,
   assert.match(pages['/payments'], /cannot freeze, hold, reverse or refund money/); assert.match(pages['/payments'], /not a financial hold/); assert.match(pages['/payments'], /contact your payment provider or card issuer/i);
   assert.match(pages['/payments'], /no guaranteed response time/i); assert.match(pages['/payments'], /no buyer-protection programme or insurance/i); assert.match(pages['/payments'], /not automatic/i);
   assert.match(pages['/terms'], /report it/i); assert.match(pages['/rules'], /restrict selling while we investigate/); assert.match(pages['/privacy'], /Payment providers \(fraud reports\)/); assert.match(pages['/privacy'], /not told who reported them|not told who reported/i);
-  assert.match(pages['/support'], /Suspect a scam\? Report it/); assert.match(pages['/support'], /does not hold, move, freeze or refund money/);
+  assert.match(pages['/support'], /Suspect a scam\? Report it/); assert.match(pages['/support'], /does not currently hold or directly control those funds/);
   assert.doesNotMatch(all, /we (will )?(freeze|recover|reverse) (your|the) (money|funds|payment)/i); assert.doesNotMatch(all, /guarantee[sd]? (a )?refund|you will be refunded|within \d+ (hours|days) we will|insured|covered by PairPlug/i);
   assert.doesNotMatch(all, /PairPlug (does not|doesn't) (investigate|review) (reports|scams)|no role in (resolving )?(disputes|scams)/i);
 });

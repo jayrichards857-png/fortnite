@@ -29,7 +29,7 @@ test('legal pages are public, versioned, linked from the global footer on deskto
 
 test('the policies say what is true: direct payments, no custody, seller-handled refunds, no invented business details or compliance claims', async () => {
   const anon = new H.Client(), all = {}; for (const p of PAGES) all[p] = text(await get(anon, p)); const joined = Object.values(all).join(' ');
-  assert.match(all['/payments'], /you pay the seller directly/i); assert.match(all['/payments'], /does not hold or process the payment/i); assert.match(all['/payments'], /not proof of payment/i);
+  assert.match(all['/payments'], /you pay the seller through their external checkout/i); assert.match(all['/payments'], /does not currently hold, process or directly control the payment/i); assert.match(all['/payments'], /not proof of payment/i);
   assert.match(all['/payments'], /seller decides and issues refunds/i); assert.match(all['/payments'], /chargebacks/i); assert.match(all['/payments'], /force a seller to refund/i);
   assert.match(all['/payments'], /seller's statement, not a check by PairPlug/i);
   assert.match(all['/terms'], /not the seller of the items/i); assert.match(all['/terms'], /rights you have under consumer-protection law/i);
@@ -99,7 +99,7 @@ test('invitations: new accounts must tick the terms (nothing is consumed on refu
 test('policy links appear on listing and checkout screens, and the pages describe privacy accurately', async () => {
   const seller = await H.newSeller('RulesSeller'), buyer = await H.newUser('Pol'), id = await H.makeListing(seller, { payment_url: LINK });
   const editor = await get(seller, '/dashboard/listings/new'); assert.match(editor, /href="\/rules"/); assert.match(editor, /href="\/payments"/);
-  const buy = await get(buyer, `/buy/${id}`); assert.match(buy, /href="\/payments"/); assert.match(buy, /href="\/terms"/); assert.match(buy, /href="\/privacy"/); assert.match(buy, /doesn't hold or refund my payment/);
+  const buy = await get(buyer, `/buy/${id}`); assert.match(buy, /href="\/payments"/); assert.match(buy, /href="\/terms"/); assert.match(buy, /href="\/privacy"/); assert.ok(buy.includes(require('../src/util').esc(require('../src/disclosure').ACK)), 'the updated checkbox wording is shown');
   const o = await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(o.status, 200);
   const oid = Number(String(o.json.redirect).match(/(\d+)/)[1]);
   // privacy statements, checked against the real pages: the seller does not see the address until they confirm payment; admins' lists don't show it

@@ -109,7 +109,7 @@ test('listing page shows shipping terms and total, never escrow/cart language; c
   const { seller, buyer, id } = await scene();
   const page = (await new H.Client().get(`/listing/${id}`)).text;
   assert.match(page, /Buy now/); assert.match(page, /\$46\.00/); assert.match(page, /\$6\.00 flat fee, paid by the buyer/);
-  assert.match(page, /directly through their own Stripe checkout/);
+  assert.match(page, /through their external checkout/);
   assert.doesNotMatch(page, /escrow|Add to cart/i);
   const free = await listing(seller, { shipping_payer: 'seller', shipping: '0' });
   assert.match((await new H.Client().get(`/listing/${free}`)).text, /Free shipping/);
@@ -152,7 +152,7 @@ test('purchase: creates a PENDING order + reservation; nothing is paid, no money
   const other = await H.newUser(); assert.equal((await purchase(other, id)).status, 409);
   // buyer sees an honest status, seller sees "unconfirmed", never "paid"
   const bp = (await buyer.get(`/orders/${o.id}`)).text;
-  assert.match(bp, /Awaiting payment confirmation/); assert.match(bp, /PP-\d+/); assert.match(bp, /does not collect, hold or protect|doesn't hold|does not hold/i);
+  assert.match(bp, /Awaiting payment confirmation/); assert.match(bp, /PP-\d+/); assert.match(bp, /does not currently hold or directly control/i);
   assert.doesNotMatch(bp, /escrow|held until/i);
   const sp = (await seller.get('/dashboard/orders')).text; assert.match(sp, /Unconfirmed/); assert.doesNotMatch(sp, /Confirmed by you/);
 });

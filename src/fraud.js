@@ -7,6 +7,7 @@ const { q, tx, now } = require('./db');
 const { HttpError, clean } = require('./util');
 const { notify } = require('./notify');
 const { audit } = require('./audit');
+const crypto = require('node:crypto');
 
 const CATEGORIES = {
   non_delivery: 'I paid and never received the item',
@@ -120,4 +121,23 @@ function markSubmitted(admin, id, { channel, reference, note }) {
 }
 const packetsFor = (caseId) => q.all('SELECT id, provider, provider_host, status, prepared_at, submitted_at, channel, reference FROM processor_reports WHERE case_id = ? ORDER BY id DESC', caseId);
 
-module.exports = { CATEGORIES, category, sellerHeld, warnPendingBuyers, sellerRisk, repeatReported, providersFor, providerOf, PROVIDER_NAME, preparePacket, markSubmitted, packetsFor };
+/** Freeze the facts of a reported order at the moment of the report: order state and money figures as recorded (all unverified claims are labelled as claims), tracking as entered by the
+ *  seller, and a fingerprint of the buyer/seller conversation (count, last id, SHA-256 of the message texts). The messages themselves stay stored unaltered; there is no delete path. */
+function preserveOrderRecord(caseId, orderId) {
+  const o = q.get('SELECT * FROM orders WHERE id = ?', Number(orderId)); if (!o) return null;
+  const conv = q.get('SELECT id FROM conversations WHERE buyer_id = ? AND seller_id = ?', o.buyer_id, o.seller_id);
+  const msgs = conv ? q.all('SELECT id, sender_id, body, created_at FROM messages WHERE conversation_id = ? ORDER BY id', conv.id) : [];
+  const h = crypto.createHash('sha256'); for (const m of msgs) h.update(`${m.id}|${m.sender_id}|${m.created_at}|${m.body}\n`);
+  const ts = (t) => (t ? new Date(t * 1000).toISOString() : null);
+  const content = JSON.stringify({
+    order: { id: o.id, status: o.status, payment_mode: o.payment_mode, total_cents: o.total_cents, subtotal_cents: o.subtotal_cents, shipping_cents: o.shipping_cents, created_at: ts(o.created_at),
+      buyer_said_paid_at: ts(o.buyer_claimed_paid_at), seller_said_payment_received_at: ts(o.payment_confirmed_at), payment_reference_entered_by_seller: o.payment_reference || null, payment_independently_verified: false,
+      carrier_entered_by_seller: o.carrier || null, tracking_entered_by_seller: o.tracking_number || null, shipped_at: ts(o.shipped_at), delivered_at: ts(o.delivered_at) },
+    conversation: { messages: msgs.length, first_id: msgs[0]?.id || null, last_id: msgs.length ? msgs[msgs.length - 1].id : null, sha256: msgs.length ? h.digest('hex') : null },
+    note: 'Frozen when the order was reported. Payment figures are what the parties stated; PairPlug has not verified any external payment.' }, null, 1);
+  q.run('INSERT INTO case_records(case_id, kind, content, sha256, created_at) VALUES(?,?,?,?,?)', Number(caseId), 'order_snapshot', content, crypto.createHash('sha256').update(content).digest('hex'), now());
+  return content;
+}
+const caseRecords = (caseId) => q.all('SELECT * FROM case_records WHERE case_id = ? ORDER BY id', Number(caseId));
+
+module.exports = { preserveOrderRecord, caseRecords, CATEGORIES, category, sellerHeld, warnPendingBuyers, sellerRisk, repeatReported, providersFor, providerOf, PROVIDER_NAME, preparePacket, markSubmitted, packetsFor };

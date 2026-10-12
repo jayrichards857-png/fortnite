@@ -17,6 +17,7 @@ const r = express.Router();
 const A = [auth.requireAdmin];
 const S = [auth.requireStaff];
 const M = require('../moderation');
+const DISC = require('../disclosure');
 const U = [auth.requireUser];
 const when = (t) => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') : '—');
 const label = (s) => esc(String(s).replace(/_/g, ' '));
@@ -86,9 +87,9 @@ r.get('/support', (req, res) => {
   const contact = `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, concerns about a buyer or seller, account issues and appeals, safety concerns and general questions. <a href="/contact">Open the Contact page</a> for one-click email options.</p><p class="small muted">Email is read by the operator. It does not create a case automatically and there is no guaranteed response time; to attach photos and screenshots to a tracked case, use the report forms on this page.</p>`;
   const body = `<h1>Help &amp; reporting</h1><div class="two"><section>
     <div class="panel"><h3>How problems are handled</h3><ul class="plain"><li><strong>Message the seller first.</strong> Most problems are solved in a conversation. Sellers are expected to reply within <strong>48 hours</strong>. That is an expectation, not a guarantee.</li>
-      <li>Buyers pay sellers directly through the seller's own payment link. <strong>PairPlug does not hold, move, freeze or refund money</strong> and cannot reverse a payment. Refunds are issued by the seller in their own payment provider; <strong>your payment provider or card issuer handles chargebacks and payment disputes</strong>, so contact them yourself if you were charged and did not get what you paid for.</li>
+      <li>Buyers pay sellers through the seller's external payment link. <strong>PairPlug does not currently hold or directly control those funds</strong>, and cannot freeze, reverse or refund them. Refunds are issued by the seller in their own payment provider; <strong>your payment provider or card issuer handles chargebacks and payment disputes</strong>, so contact them as well if you were charged and did not get what you paid for.</li>
       <li><strong>Suspect a scam? Report it.</strong> PairPlug reviews reports and evidence, may contact both sides, and can pause listings, restrict selling, suspend accounts and report suspected fraud to the payment provider. These steps affect the seller's PairPlug account, not their payment account, and no outcome (such as a refund) is promised.</li>
-      <li>Tracking shows where a carrier says a package is. It is not proof of delivery or of what was inside.</li></ul>${contact}</div>
+      <li>Tracking shows where a carrier says a package is. It is not proof of delivery or of what was inside.</li></ul>${DISC.canCannot({ compact: true })}${contact}</div>
     <div class="panel" id="report-seller"><h3>Report a seller</h3>${req.user ? `<form data-api="/api/cases/seller" data-redirect="/cases/{id}"><label for="sh">Seller handle</label><input id="sh" name="handle" maxlength="40" value="${esc(req.query.seller || '')}" required>
       ${catSelect('sc')}<label for="so">Related order <span class="opt">(optional)</span></label><select id="so" name="orderId"><option value="">None / not sure</option>${q.all("SELECT o.id, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id).map((o) => `<option value="${o.id}">Order #${o.id} · @${esc(o.handle)}</option>`).join('')}</select>
       <label for="sr">What happened?</label><textarea id="sr" name="reason" maxlength="2000" required></textarea>
@@ -107,7 +108,7 @@ r.get('/cases/:id(\\d+)', U, (req, res) => {
     ${c.resolution ? `<div class="panel notice strong"><h3>Decision</h3><p style="margin:0">${esc(c.resolution)}</p></div>` : ''}
     <div class="panel"><h3>Conversation</h3><ul class="timeline">${v.events.map((e) => eventLine(e)).join('')}</ul></div>
     ${open ? `<form class="panel" data-api="/api/cases/${c.id}/respond" data-reload><h3>Add a reply or evidence</h3><textarea name="body" maxlength="2000" required aria-label="Reply"></textarea>${uploader('evidence', 4)}<button class="btn" type="submit" style="margin-top:10px">Send</button></form>` : ''}
-    <p class="small muted">PairPlug support cannot move money. Typical review time depends on the founder's availability; there is no guaranteed response time.</p>`;
+    <p class="small muted">PairPlug support cannot freeze, reverse or refund money in the seller's payment account, and cannot promise an outcome; it can review the evidence, contact both sides, restrict the seller on PairPlug and report suspected fraud to the payment processor. Typical review time depends on the founder's availability; there is no guaranteed response time.</p>`;
   userPage(req, res, { title: `Case #${c.id}`, body, scripts: UP });
 });
 
@@ -155,6 +156,7 @@ r.get('/admin/cases/:id(\\d+)', S, (req, res) => {
       ${(provs.length ? provs : [{ provider: 'other', host: '' }]).map((p) => `<button class="btn ghost small" data-post="/api/admin/cases/${c.id}/processor-packet" data-body='${JSON.stringify({ provider: p.provider, host: p.host })}'>Prepare ${esc(F.PROVIDER_NAME[p.provider])} packet${p.host ? ` (${esc(p.host)})` : ''}</button>`).join(' ')}</div>` : ''}` : '';
   adminPage(req, res, { title: `Case #${c.id}`, body: `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)}${c.category ? ` · reporter says: ${esc(F.CATEGORIES[c.category])}` : ''} · opened ${when(c.created_at)}${o ? ` · order #${o.id} (${label(o.status)}, ${money(o.total_cents)})` : ''}</p>
     <div class="two"><section><div class="panel"><h3>Timeline</h3><ul class="timeline">${v.events.map((e) => eventLine(e, true)).join('')}</ul></div>
+      ${F.caseRecords(c.id).map((rc) => `<div class="panel"><h3>Preserved record <span class="muted small">(${when(rc.created_at)} UTC · sha256 ${esc(rc.sha256.slice(0, 12))}…)</span></h3><pre class="small" style="white-space:pre-wrap;margin:0">${esc(rc.content)}</pre><p class="small muted" style="margin:6px 0 0">Frozen when the report was filed. Staff-only; not shown to the buyer or seller.</p></div>`).join('')}
       ${c.conversation_id ? `<div class="panel"><h3>Reported conversation</h3><p class="small muted">Opening it is recorded in the audit log.</p><button class="btn ghost" id="vc">View reported conversation</button><div id="conv"></div></div>` : ''}
       ${c.resolution ? `<div class="panel notice"><h3>Decision</h3><p>${esc(c.resolution)}</p></div>` : ''}</section>
     <aside>${riskPanel}${open ? `<form class="panel" data-api="/api/admin/cases/${c.id}/note" data-reload><h3>Internal note</h3><textarea name="body" maxlength="2000" required aria-label="Internal note"></textarea><button class="btn ghost small" type="submit">Save note (hidden from users)</button></form>

@@ -61,7 +61,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await b.pg.click('a:has-text("Buy now")'); await b.pg.waitForURL(/\/login/);
     await b.pg.goto(B + '/register?next=/buy/' + listingId); await b.pg.fill('#n', 'Jordan Buyer'); await b.pg.fill('#e', 'jordan@example.test'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]');
     await b.pg.click('button[type=submit]'); await b.pg.waitForURL((u) => u.pathname.startsWith('/buy/')); step('anonymous buyer is sent to sign up, then back to the purchase page');
-    assert.match(await b.pg.textContent('main'), /does not collect, hold or protect/); assert.match(await b.pg.textContent('main'), /Refunds, chargebacks and payment problems are handled by the seller/);
+    assert.match(await b.pg.textContent('main'), /does not currently hold or directly control those funds/); assert.match(await b.pg.textContent('main'), /If an issue arises, contact PairPlug/);
     await b.pg.fill('#a_name', 'Jordan Buyer'); await b.pg.fill('#a_line1', '1 Test Way'); await b.pg.fill('#a_city', 'Seattle'); await b.pg.fill('#a_region', 'WA'); await b.pg.fill('#a_postal', '98101');
     await b.pg.click('button:has-text("Reserve item")'); await b.pg.locator('.err, .form-err').first().waitFor(); step('purchase blocked until the payment-model acknowledgement is ticked');
     await shot(b.pg, 'beta-03-buy.png');

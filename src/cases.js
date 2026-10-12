@@ -44,6 +44,7 @@ function reportOrder(user, orderId, { reason, evidence = [], category }) {
     const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?, ?)", o.id, user.id, o.seller_id, why, cat, now(), now());
     const id = Number(c.lastInsertRowid);
     addEvent(id, user, 'buyer', 'report', why); imgs.forEach((f) => addEvent(id, user, 'buyer', 'evidence', null, { image: f }));
+    F.preserveOrderRecord(id, o.id);
     notify(o.seller_id, `case:${id}:opened`, 'A buyer reported a problem with an order', `Order #${o.id}: please respond so it can be resolved.`, `/cases/${id}`);
     audit(user, 'case_opened', { type: 'case', id, detail: { kind: 'order_issue', order: o.id } });
     return id;
@@ -66,6 +67,7 @@ function reportSeller(user, handle, { reason, evidence = [], orderId, category }
     const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?,?, 'open', ?, ?, ?)", oid, user.id, s.id, why, cat, now(), now());
     const id = Number(c.lastInsertRowid);
     addEvent(id, user, 'buyer', 'report', why); imgs.forEach((f) => addEvent(id, user, 'buyer', 'evidence', null, { image: f }));
+    if (oid) F.preserveOrderRecord(id, oid);
     audit(user, 'case_opened', { type: 'case', id, detail: { kind: 'seller_issue', order: oid } });
     return id;                                                                            // the reported seller is deliberately NOT notified of a seller report
   });

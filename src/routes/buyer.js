@@ -20,6 +20,7 @@ const r = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const D = require('../discovery');
 const RV = require('../reviews');
+const DISC = require('../disclosure');
 const LEGAL = require('../legal');
 const favSet = (user) => new Set(user ? q.all('SELECT listing_id FROM favorites WHERE user_id = ?', user.id).map((f) => f.listing_id) : []);
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
@@ -104,7 +105,7 @@ function directBuyBox(l, user) {
   else if (l.status === 'reserved') cta = '<button class="btn block" disabled>Reserved — another buyer is paying</button><p class="small muted" style="margin:6px 0 0">If they don\'t complete payment, this item becomes available again.</p>';
   else if (l.status !== 'active') cta = '';
   else if (!X.purchasable(l).ok) cta = `<p class="small muted" style="margin:0">${esc(X.purchasable(l).reason)} Use <strong>Contact seller</strong> to arrange payment and shipping.</p>`;   // no fake checkout button
-  else cta = `<a class="btn block" href="/buy/${l.id}">Buy now</a><p class="small muted" style="margin:6px 0 0">You'll pay <strong>${esc(l.seller_name || l.seller_handle)}</strong> directly through their own Stripe checkout. PairPlug doesn't process or hold your payment and can't guarantee a refund. <a href="/buy/${l.id}">How it works</a></p>`;
+  else cta = `<a class="btn block" href="/buy/${l.id}">Buy now</a><p class="small muted" style="margin:6px 0 0">You'll pay <strong>${esc(l.seller_name || l.seller_handle)}</strong> through their external checkout. ${esc(DISC.SHORT)} <a href="/buy/${l.id}">How it works</a></p>`;
   return `<div class="panel" style="margin:14px 0">${rows}${cta ? `<div style="margin-top:12px">${cta}</div>` : ''}</div>`;
 }
 
@@ -137,7 +138,7 @@ r.get('/listing/:id(\\d+)', (req, res) => {
     <div class="panel" style="margin-top:18px"><a href="/s/${esc(l.seller_handle)}" style="text-decoration:none"><strong>${esc(l.seller_name || l.seller_handle)}</strong></a>
       <div class="small muted">${RV.line(l.seller_id) || 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
       ${l.seller_bio ? `<p class="small">${esc(l.seller_bio)}</p>` : ''}
-      <p class="small muted" style="margin:6px 0 0">${ext ? 'You pay this seller directly. PairPlug does not hold or refund payments — message the seller about any payment problem.' : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">PairPlug sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
+      <p class="small muted" style="margin:6px 0 0">${ext ? `${DISC.SHORT} Message the seller about any payment problem.` : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">PairPlug sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
   page(req, res, { title: l.title, body, description: l.description.slice(0, 150) });
 });
 

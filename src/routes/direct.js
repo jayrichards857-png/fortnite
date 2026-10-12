@@ -10,6 +10,7 @@ const V = require('../views');
 const auth = require('../auth');
 const X = require('../externalCheckout');
 const RV = require('../reviews');
+const DISC = require('../disclosure');
 const { validatePaymentUrl, trackingUrl, LABEL_PROVIDERS } = require('../paymentLinks');
 const L = require('../listings');
 const SP = require('./support');
@@ -29,9 +30,9 @@ r.all(['/cart', '/checkout', '/api/cart', '/api/cart/:id', '/api/checkout', '/pa
 });
 
 const HOW_IT_WORKS = `<div class="panel notice"><h3>How payment works</h3><ul class="plain">
-  <li><strong>You pay the seller directly</strong> through the seller's own checkout (Stripe). PairPlug does not collect, hold or protect your payment.</li>
-  <li>The seller confirms your payment on PairPlug, then ships. Until they confirm, the order shows as <em>awaiting payment confirmation</em>.</li>
-  <li><strong>Refunds, chargebacks and payment problems are handled by the seller and their payment provider</strong>, not by PairPlug. Message the seller first.</li></ul><p class="small" style="margin:8px 0 0">Details: <a href="/payments">Payments, Refunds &amp; Disputes</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></p></div>`;
+  <li><strong>You pay the seller through their external checkout</strong> (for example Stripe). PairPlug does not currently hold or directly control those funds.</li>
+  <li>The seller confirms your payment on PairPlug, then ships. Until they confirm, the order shows as <em>awaiting payment confirmation</em>. That confirmation is the seller's statement; PairPlug does not independently verify it.</li>
+  <li><strong>If an issue arises, contact PairPlug.</strong> We may review the order, contact the seller, and report the problem to the payment processor with the evidence we have. We cannot promise a refund or recovery.</li></ul>${DISC.canCannot({ compact: true })}<p class="small" style="margin:8px 0 0">Details: <a href="/payments">Payments, Refunds &amp; Disputes</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></p></div>`;
 
 // ---------- Buyer: review terms + address, then reserve ----------
 r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
@@ -50,7 +51,7 @@ r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
       ${field('name', 'Full name', 'autocomplete="name" required')}${field('line1', 'Address', 'autocomplete="address-line1" required')}${field('line2', 'Apt, suite <span class="opt">(optional)</span>', 'autocomplete="address-line2"')}
       <div class="row">${field('city', 'City', 'autocomplete="address-level2" required')}${field('region', 'State / province', 'autocomplete="address-level1" required')}${field('postal', 'ZIP / postal code', 'autocomplete="postal-code" required')}</div>
       <label for="a_country">Country</label><select id="a_country" name="country"><option value="US">United States</option><option value="CA">Canada</option><option value="MX">Mexico</option></select>
-      <label style="font-weight:400;display:flex;gap:8px;margin-top:14px"><input type="checkbox" id="ack" name="acknowledged"> I understand I'm paying the seller directly through their own checkout, and that PairPlug doesn't hold or refund my payment.</label>
+      <label style="font-weight:400;display:flex;gap:8px;margin-top:14px"><input type="checkbox" id="ack" name="acknowledged"> ${esc(DISC.ACK)}</label>
       <button class="btn block" style="margin-top:14px" type="submit">Reserve item &amp; continue</button>
       <p class="small muted" style="margin-bottom:0">The item is held for you for ${getSettings().external_hold_minutes} minutes while you pay. Nothing is charged by PairPlug.</p></form></section>
     <aside class="panel sticky"><h3>Order summary</h3><div class="line" style="grid-template-columns:56px 1fr"><a href="/listing/${l.id}">${V.img(l.images[0], 'thumb', l.title)}</a><div><strong>${esc(l.title)}</strong><div class="muted small">${esc([l.size && 'Size ' + l.size, l.condition && config.conditions[l.condition]].filter(Boolean).join(' · '))}</div></div></div>
@@ -100,7 +101,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
       ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}${buyerLbl && buyerLbl.tracking_status ? `<p class="small" style="margin:6px 0 0">Carrier status: <strong>${esc(buyerLbl.tracking_status)}</strong></p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
     ${o.status === 'shipped' ? `<div class="panel"><h3>Received it?</h3><button class="btn" data-post="/api/orders/${o.id}/received">Mark as received</button></div>` : ''}
     ${RV.panel(o)}
-    <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. PairPlug does not hold your payment and cannot refund it.</p></div>
+    <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. If it is not resolved, report it to PairPlug below. ${esc(DISC.SHORT)}</p>${DISC.canCannot({ compact: true })}</div>
     ${SP.buyerPanels(o)}
   </section><aside class="panel sticky"><h3>Amount</h3>
     <div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div>
