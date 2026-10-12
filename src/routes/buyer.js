@@ -141,7 +141,7 @@ r.get('/listing/:id(\\d+)', async (req, res) => {
       <div class="small muted">${await RV.line(l.seller_id) || 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
       ${l.seller_bio ? `<p class="small">${esc(l.seller_bio)}</p>` : ''}
       <p class="small muted" style="margin:6px 0 0">${ext ? `${DISC.SHORT} Message the seller about any payment problem.` : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">PairPlug sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
-  await page(req, res, { title: l.title, body, description: l.description.slice(0, 150) });
+  await page(req, res, { title: l.title, body: body + await RV.listingSection(l.id, req.user), description: l.description.slice(0, 150) });
 });
 
 // ---------- Seller storefront ----------

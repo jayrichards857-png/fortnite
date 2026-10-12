@@ -72,9 +72,10 @@ async function exportToSqlite(file) {
   const done = [], rem = new Set(tables);
   while (rem.size) { const ready = [...rem].filter((t) => fk.every(([c, p]) => c !== t || p === t || !rem.has(p))).sort(); assert.ok(ready.length, 'fk cycle'); ready.sort((a) => (a === 'settings' ? -1 : 0)).forEach((t) => { done.push(t); rem.delete(t); }); }
   for (const t of ['settings', ...done.filter((x) => x !== 'settings')]) {
+    if (!lite.prepare(`PRAGMA table_info("${t}")`).all().length) continue;                 // PostgreSQL-only table (added after SQLite v16)
     const rows = await q.all(`SELECT * FROM "${t}" ORDER BY 1`);
     if (!rows.length) continue;
-    const cols = Object.keys(rows[0]); const ins = lite.prepare(`INSERT OR REPLACE INTO "${t}"(${cols.map((c) => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`);
+    const liteCols = new Set(lite.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name)), cols = Object.keys(rows[0]).filter((c) => liteCols.has(c)); const ins = lite.prepare(`INSERT OR REPLACE INTO "${t}"(${cols.map((c) => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`);
     for (const r of rows) ins.run(...cols.map((c) => r[c]));
   }
   lite.exec("UPDATE sqlite_sequence SET seq = seq + 50 WHERE name = 'messages'");        // AUTOINCREMENT remembers ids of deleted rows: next id must be above this
@@ -131,7 +132,7 @@ test('the schema guarantees survive the import: triggers are active again (appen
   await assert.rejects(pgq(t.url, 'DELETE FROM audit_log'), /append-only/);
   await assert.rejects(pgq(t.url, 'DELETE FROM orders'), /cannot be deleted/);
   await assert.rejects(pgq(t.url, 'UPDATE ledger SET amount_cents = 1'), /append-only/).catch(() => {});      // no ledger rows in this scenario: nothing to update, the trigger is still installed
-  assert.equal(Number((await pgq(t.url, "SELECT COUNT(*) n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'O'"))[0].n), 38, 'all 38 user triggers enabled');
+  assert.equal(Number((await pgq(t.url, "SELECT COUNT(*) n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'O'"))[0].n), 39, 'all 39 user triggers enabled');
   await assert.rejects(pgq(t.url, 'UPDATE listings SET quantity = -1'), /check constraint/i);
 });
 

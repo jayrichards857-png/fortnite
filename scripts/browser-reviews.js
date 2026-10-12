@@ -46,7 +46,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     // ---- buyer leaves a review through the UI
     await b.pg.goto(B + `/orders/${orderId}`); await b.pg.click('button[data-post$="/received"]'); await b.pg.waitForLoadState('networkidle'); await b.pg.reload();
     assert.ok(await b.pg.locator('text=Leave a review').count(), 'review form appears once the order is received');
-    await b.pg.check('input[name=thumbsUp]'); await b.pg.fill('textarea[name=body]', 'Great jacket <b>exactly</b> as described.'); await b.pg.click('#review button[type=submit]'); await b.pg.waitForSelector('text=Posted');
+    await b.pg.check('input[name=rating][value="5"]'); await b.pg.check('input[name=thumbsUp]'); await b.pg.fill('textarea[name=body]', 'Great jacket <b>exactly</b> as described.'); await b.pg.click('#review button[type=submit]'); await b.pg.waitForSelector('text=Posted');
     step('buyer posted a thumbs-up review from the order page');
     // ---- the storefront shows counts, escaped text, "order-linked", and an honest line about payments
     const guest = await mk(); await guest.pg.goto(B + '/s/samstore');

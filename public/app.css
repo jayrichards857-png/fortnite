@@ -267,3 +267,7 @@ img,video{max-width:100%}
 
 /* tablets: wide tables keep readable columns and scroll inside their wrapper instead of squeezing cells (phones stack them as cards) */
 @media (min-width:641px) and (max-width:1024px){.tablewrap>table{min-width:860px}}
+/* photo reviews */
+.review-stars{color:#8a5a00;letter-spacing:1px;white-space:nowrap}
+.review-photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.review-photos img{width:96px;height:96px;object-fit:cover;border-radius:var(--r);border:1px solid var(--line);display:block}
+.review-photo-mod{display:inline-flex;flex-direction:column;gap:4px;margin:6px 8px 0 0;align-items:flex-start}.review-photo-mod img{width:96px;height:96px;object-fit:cover;border-radius:var(--r);border:1px solid var(--line);display:block}
