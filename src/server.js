@@ -11,6 +11,20 @@ const escrow = require('./escrow');
 const { attachWebSocket } = require('./chat/ws');
 const { hostAllowed } = require('./host');
 
+// Express 4 does not route rejected promises from async handlers to the error middleware (the process would crash on an
+// unhandled rejection). Patch the router layer once so `async (req,res) => {…}` handlers behave like synchronous ones.
+const Layer = require('express/lib/router/layer');
+if (!Layer.prototype.__asyncSafe) {
+  const handleRequest = Layer.prototype.handle_request;
+  Layer.prototype.handle_request = function (req, res, next) {
+    const fn = this.handle;
+    if (fn.length > 3) return next();                       // error-handling middleware: leave to Express
+    try { const r = fn(req, res, next); if (r && typeof r.then === 'function') r.then(undefined, next); }
+    catch (err) { next(err); }
+  };
+  Layer.prototype.__asyncSafe = handleRequest && true;
+}
+
 const app = express();
 app.disable('x-powered-by');
 // Behind a reverse proxy (Caddy/nginx) the real client IP comes from X-Forwarded-For; without this every user would share one
@@ -33,7 +47,7 @@ app.use(express.static(path.join(config.root, 'public'), { maxAge: config.isProd
 
 // Webhook routes need the raw body, so they are mounted before the JSON parser (they apply their own parsers).
 let lastSweep = 0;
-app.use((req, res, next) => { if (Date.now() - lastSweep > 5000) { lastSweep = Date.now(); try { require('./moderation').liftExpired(); } catch (e) { console.error('suspension sweep failed', e.message); } } next(); });   // timed suspensions end on time even between background ticks
+app.use(async (req, res, next) => { if (Date.now() - lastSweep > 5000) { lastSweep = Date.now(); try { await require('./moderation').liftExpired(); } catch (e) { console.error('suspension sweep failed', e.message); } } next(); });   // timed suspensions end on time even between background ticks
 app.use(auth.loadUser);
 app.use((req, res, next) => (req.path.startsWith('/webhooks/') || req.path === '/api/uploads' ? next() : express.json({ limit: '2mb' })(req, res, next)));
 app.use(auth.csrfGuard);
@@ -61,30 +75,30 @@ app.use(require('./routes/adminBeta').router);
 app.use(require('./routes/chat').router);
 
 // Health check for uptime monitors / process managers: proves the process is up AND the database answers.
-app.get('/healthz', (req, res) => {
-  try { q.get('SELECT 1'); res.json({ ok: true, checkoutMode: config.checkoutMode }); }
+app.get('/healthz', async (req, res) => {
+  try { await q.get('SELECT 1'); res.json({ ok: true, checkoutMode: config.checkoutMode }); }
   catch { res.status(503).json({ ok: false }); }
 });
 
-app.use((req, res) => {
+app.use(async (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
-  res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Page not found', "We couldn't find that page.", ['/shop', 'Browse the shop']) }));
+  res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Page not found', "We couldn't find that page.", ['/shop', 'Browse the shop']) }));
 });
-app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+app.use(async (err, req, res, next) => { // eslint-disable-line no-unused-vars
   const status = err.status || (err instanceof SyntaxError ? 400 : 500);
   const deliberate = err instanceof HttpError; // our own, user-safe messages (incl. 502/503)
   if (status >= 500 && !deliberate) console.error(err);
   const msg = status >= 500 && !deliberate ? 'Something went wrong. Please try again.' : err.message;
   if (req.path.startsWith('/api/') || req.path.startsWith('/webhooks/') || req.headers.accept === 'application/json') return res.status(status).json({ error: msg, fields: err.fields });
-  res.status(status).send(V.layout({ user: req.user, title: 'Error', body: V.empty(status === 500 ? 'Something went wrong' : msg, 'Please go back and try again.', ['/', 'Home']) }));
+  res.status(status).send(await V.layout({ user: req.user, title: 'Error', body: V.empty(status === 500 ? 'Something went wrong' : msg, 'Please go back and try again.', ['/', 'Home']) }));
 });
 
-function startJobs() {
+async function startJobs() {
   // Background sweeps. Both are idempotent and also safe if several app instances run them.
   let last = 0;
-  const tick = () => { try { payments.expireStaleCheckouts(); escrow.autoReleaseDue(); require('./moderation').liftExpired();
-    if (Date.now() - last > 3600e3) { last = Date.now(); require('./images').cleanupOrphanUploads(); require('./discovery').purgeSearchLog(); require('./db').q.run('DELETE FROM sessions WHERE expires_at < ?', Math.floor(Date.now() / 1000)); } } catch (e) { console.error('job error', e); } };
-  tick(); return setInterval(tick, 60 * 1000).unref();
+  const tick = async () => { try { await payments.expireStaleCheckouts(); await escrow.autoReleaseDue(); await require('./moderation').liftExpired();
+    if (Date.now() - last > 3600e3) { last = Date.now(); await require('./images').cleanupOrphanUploads(); await require('./discovery').purgeSearchLog(); await require('./db').q.run('DELETE FROM sessions WHERE expires_at < ?', Math.floor(Date.now() / 1000)); } } catch (e) { console.error('job error', e); } };
+  await tick(); return setInterval(tick, 60 * 1000).unref();
 }
 
 /** Create the HTTP server with the WebSocket transport attached (used by `npm start` and by the tests). */
@@ -115,8 +129,8 @@ if (require.main === module) {
   }
   if (config.supportEmailOverridden) console.warn(`NOTE: SUPPORT_EMAIL is set to ${config.supportEmail}, which overrides the official PairPlug address (${config.officialSupportEmail}). Make sure that is intended.`);
   const server = createServer();
-  server.listen(config.port, config.host, () => {
-    startJobs();
+  server.listen(config.port, config.host, async () => {
+    try { await startJobs(); } catch (e) { console.error('startup jobs failed', e); process.exit(1); }
     const p = payments.getProvider();
     console.log(`PairPlug listening on ${config.publicUrl} [bound to ${config.host}:${config.port}]  (checkout: ${config.checkoutMode}${config.checkoutMode === 'platform' ? `, payments: ${p ? p.name : 'DISABLED'}` : ', sellers are paid directly'})`);
   });

@@ -17,7 +17,7 @@ const IMG_SQL = `(SELECT file FROM listing_images WHERE listing_id = l.id ORDER 
 const SELLER_SQL = `u.handle AS seller_handle, u.store_name AS seller_name, u.country AS seller_country, u.region AS seller_region, u.city AS seller_city`;
 
 /** Public marketplace search. Every filter becomes SQL; nothing is filtered client-side. */
-function searchListings(f) {
+async function searchListings(f) {
   const where = ["l.status = 'active'"], p = [];
   const terms = clean(f.q || '', 100).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
   for (const t of terms) {
@@ -36,20 +36,20 @@ function searchListings(f) {
   const order = { price_asc: 'l.price_cents ASC, l.id DESC', price_desc: 'l.price_cents DESC, l.id DESC' }[f.sort] || 'l.published_at DESC, l.id DESC';
   const perPage = 24, page = Math.max(1, parseInt(f.page, 10) || 1);
   const from = `FROM listings l JOIN users u ON u.id = l.seller_id AND u.banned = 0 WHERE ${where.join(' AND ')}`;
-  const total = q.get(`SELECT COUNT(*) n ${from}`, ...p).n;
-  const items = q.all(`SELECT l.*, ${IMG_SQL}, ${SELLER_SQL} ${from} ORDER BY ${order} LIMIT ? OFFSET ?`, ...p, perPage, (page - 1) * perPage);
+  const total = (await q.get(`SELECT COUNT(*) n ${from}`, ...p)).n;
+  const items = await q.all(`SELECT l.*, ${IMG_SQL}, ${SELLER_SQL} ${from} ORDER BY ${order} LIMIT ? OFFSET ?`, ...p, perPage, (page - 1) * perPage);
   return { items, total, page, perPage, pages: Math.max(1, Math.ceil(total / perPage)) };
 }
 
-function facets() {
-  const col = (c) => q.all(`SELECT ${c} v, COUNT(*) n FROM listings WHERE status='active' AND ${c} IS NOT NULL AND ${c} <> '' GROUP BY ${c} COLLATE NOCASE ORDER BY n DESC, v LIMIT 30`).map((r) => r.v);
-  return { brands: col('brand'), sizes: col('size'),
-    categories: q.all("SELECT category v, COUNT(*) n FROM listings WHERE status='active' GROUP BY category").reduce((a, r) => ({ ...a, [r.v]: r.n }), {}) };
+async function facets() {
+  const col = async (c) => (await q.all(`SELECT ${c} v, COUNT(*) n FROM listings WHERE status='active' AND ${c} IS NOT NULL AND ${c} <> '' GROUP BY ${c} COLLATE NOCASE ORDER BY n DESC, v LIMIT 30`)).map((r) => r.v);
+  return { brands: await col('brand'), sizes: await col('size'),
+    categories: (await q.all("SELECT category v, COUNT(*) n FROM listings WHERE status='active' GROUP BY category")).reduce((a, r) => ({ ...a, [r.v]: r.n }), {}) };
 }
 
-function getListing(id) {
-  const l = q.get(`SELECT l.*, ${SELLER_SQL}, u.bio AS seller_bio, u.created_at AS seller_since, u.plan AS seller_plan FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, id);
-  if (l) l.images = q.all('SELECT file FROM listing_images WHERE listing_id = ? ORDER BY position, id', id).map((r) => r.file);
+async function getListing(id) {
+  const l = await q.get(`SELECT l.*, ${SELLER_SQL}, u.bio AS seller_bio, u.created_at AS seller_since, u.plan AS seller_plan FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, id);
+  if (l) l.images = (await q.all('SELECT file FROM listing_images WHERE listing_id = ? ORDER BY position, id', id)).map((r) => r.file);
   return l;
 }
 
@@ -97,26 +97,26 @@ function validateListing(body, { publish }) {
     condition, price_cents: price, cost_cents: cost, shipping_cents: shipping, shipping_payer, payment_url, sku, weight_oz, length_in, width_in, height_in, images, quantity };
 }
 
-function saveListing(user, id, body) {
+async function saveListing(user, id, body) {
   const publish = body.status === 'active';
   if (body.status && !SELLER_STATUSES.has(body.status)) throw new HttpError(422, 'Invalid status');
   const v = validateListing(body, { publish });
-  const files = ownedUploads(user.id, v.images);
+  const files = await ownedUploads(user.id, v.images);
   // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
-  if (publish && q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) throw new HttpError(403, 'Selling is paused on your account while PairPlug reviews a report. You can still reply to PairPlug and handle existing orders.');
-  if (publish && !q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
+  if (publish && (await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) throw new HttpError(403, 'Selling is paused on your account while PairPlug reviews a report. You can still reply to PairPlug and handle existing orders.');
+  if (publish && !(await q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id)).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
   // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
   let prev = null;
-  const saved = tx(() => {
+  const saved = await tx(async () => {
     const t = now();
     let cur = null;
     if (id) {
-      cur = q.get('SELECT * FROM listings WHERE id = ?', id);
+      cur = await q.get('SELECT * FROM listings WHERE id = ?', id);
       if (!cur || cur.seller_id !== user.id) throw new HttpError(404, 'Listing not found'); // 404 (not 403) so IDs of others' listings aren't confirmed
       if (['sold', 'reserved'].includes(cur.status)) throw new HttpError(409, `This item is ${cur.status} and can't be edited.`);
     }
     if (v.sku) {
-      const dup = q.get('SELECT id FROM listings WHERE seller_id = ? AND sku = ? AND id <> ?', user.id, v.sku, id || 0);
+      const dup = await q.get('SELECT id FROM listings WHERE seller_id = ? AND sku = ? AND id <> ?', user.id, v.sku, id || 0);
       if (dup) throw new HttpError(422, 'Please fix the highlighted fields.', { sku: 'You already use this SKU on another listing.' });
     }
     const status = body.status || (cur ? cur.status : 'draft');
@@ -141,45 +141,45 @@ function saveListing(user, id, body) {
     let listingId = id;
     if (id) {
       const published_at = status === 'active' && !cur.published_at ? t : cur.published_at;
-      q.run(`UPDATE listings SET ${cols.map((c) => c + ' = ?').join(', ')}, status = ?, published_at = ?, updated_at = ? WHERE id = ?`, ...vals, status, published_at, t, id);
-      if (cur.price_cents > v.price_cents && status === 'active') notifyPriceDrop(id, v.title, cur.price_cents, v.price_cents);
+      await q.run(`UPDATE listings SET ${cols.map((c) => c + ' = ?').join(', ')}, status = ?, published_at = ?, updated_at = ? WHERE id = ?`, ...vals, status, published_at, t, id);
+      if (cur.price_cents > v.price_cents && status === 'active') await notifyPriceDrop(id, v.title, cur.price_cents, v.price_cents);
     } else {
-      const r = q.run(`INSERT INTO listings(seller_id, ${cols.join(',')}, status, published_at, created_at, updated_at) VALUES(?, ${cols.map(() => '?').join(',')}, ?,?,?,?)`,
+      const r = await q.run(`INSERT INTO listings(seller_id, ${cols.join(',')}, status, published_at, created_at, updated_at) VALUES(?, ${cols.map(() => '?').join(',')}, ?,?,?,?)`,
         user.id, ...vals, status, status === 'active' ? t : null, t, t);
       listingId = Number(r.lastInsertRowid);
     }
-    q.run('DELETE FROM listing_images WHERE listing_id = ?', listingId);
-    files.forEach((f, i) => q.run('INSERT INTO listing_images(listing_id, file, position) VALUES(?,?,?)', listingId, f, i));
-    return q.get('SELECT * FROM listings WHERE id = ?', listingId);
+    await q.run('DELETE FROM listing_images WHERE listing_id = ?', listingId);
+    for (const [i, f] of files.entries()) await q.run('INSERT INTO listing_images(listing_id, file, position) VALUES(?,?,?)', listingId, f, i);
+    return await q.get('SELECT * FROM listings WHERE id = ?', listingId);
   });
-  auditPaymentLink(user, saved, prev);
-  if (saved.status === 'active') D.announceDrop(saved.id);        // after commit; announces only a FIRST publication, once (see discovery.announceDrop)
+  await auditPaymentLink(user, saved, prev);
+  if (saved.status === 'active') await D.announceDrop(saved.id);        // after commit; announces only a FIRST publication, once (see discovery.announceDrop)
   return saved;
 }
 
 /** Audit trail for the payment-link policy: link changes, confirmations (with the policy version the seller saw) and cleared confirmations. Never contains a secret: Payment Link addresses are public. */
-function auditPaymentLink(user, saved, prev) {
+async function auditPaymentLink(user, saved, prev) {
   if (!prev) return;
   const { cur, total, ack, linkSame, totalSame } = prev, was = cur ? cur.payment_url : null;
-  if ((saved.payment_url || null) !== (was || null)) audit(user, 'listing_payment_link_changed', { type: 'listing', id: saved.id, detail: { from: was, to: saved.payment_url || null } });
-  if (ack && !(linkSame && totalSame)) audit(user, 'listing_payment_total_acknowledged', { type: 'listing', id: saved.id, detail: { total_cents: total, link: saved.payment_url, policy: PP.VERSION, note: 'seller statement; not verified by PairPlug' } });
-  if (!ack && cur && cur.payment_total_ack_cents != null) audit(user, 'listing_payment_ack_cleared', { type: 'listing', id: saved.id, detail: { reason: !linkSame ? 'payment link changed' : total !== cur.payment_total_ack_cents ? 'price or shipping changed' : 'box unticked' } });
+  if ((saved.payment_url || null) !== (was || null)) await audit(user, 'listing_payment_link_changed', { type: 'listing', id: saved.id, detail: { from: was, to: saved.payment_url || null } });
+  if (ack && !(linkSame && totalSame)) await audit(user, 'listing_payment_total_acknowledged', { type: 'listing', id: saved.id, detail: { total_cents: total, link: saved.payment_url, policy: PP.VERSION, note: 'seller statement; not verified by PairPlug' } });
+  if (!ack && cur && cur.payment_total_ack_cents != null) await audit(user, 'listing_payment_ack_cleared', { type: 'listing', id: saved.id, detail: { reason: !linkSame ? 'payment link changed' : total !== cur.payment_total_ack_cents ? 'price or shipping changed' : 'box unticked' } });
 }
 
-function notifyPriceDrop(listingId, title, oldC, newC) {
+async function notifyPriceDrop(listingId, title, oldC, newC) {
   const key = `listing:${listingId}:price:${newC}`;
-  for (const f of q.all('SELECT user_id FROM favorites WHERE listing_id = ?', listingId))
-    notify(f.user_id, key, 'Price drop on a saved item', `${title} dropped from $${(oldC / 100).toFixed(2)} to $${(newC / 100).toFixed(2)}.`, `/listing/${listingId}`);
+  for (const f of await q.all('SELECT user_id FROM favorites WHERE listing_id = ?', listingId))
+    await notify(f.user_id, key, 'Price drop on a saved item', `${title} dropped from $${(oldC / 100).toFixed(2)} to $${(newC / 100).toFixed(2)}.`, `/listing/${listingId}`);
 }
 
-function duplicateListing(user, id) {
-  return tx(() => {
-    const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
+async function duplicateListing(user, id) {
+  return await tx(async () => {
+    const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
     if (!l) throw new HttpError(404, 'Listing not found');
     const t = now();
-    const r = q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+    const r = await q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, l.title + ' (copy)', l.description, l.category, l.brand, l.size, l.condition, l.price_cents, l.cost_cents, l.shipping_cents, l.shipping_payer, null, l.weight_oz, l.length_in, l.width_in, l.height_in, t, t);
-    q.run('INSERT INTO listing_images(listing_id,file,position) SELECT ?, file, position FROM listing_images WHERE listing_id = ?', r.lastInsertRowid, id);
+    await q.run('INSERT INTO listing_images(listing_id,file,position) SELECT ?, file, position FROM listing_images WHERE listing_id = ?', r.lastInsertRowid, id);
     return Number(r.lastInsertRowid);
   });
 }
@@ -188,39 +188,39 @@ function duplicateListing(user, id) {
  * Bulk actions. Every id is checked for ownership and for a state that the *seller* may change.
  * Items that are sold/reserved are skipped (reported back), since the order system owns those states.
  */
-function bulkAction(user, { ids, action, status, price, percent }) {
+async function bulkAction(user, { ids, action, status, price, percent }) {
   if (!Array.isArray(ids) || !ids.length || ids.length > 500) throw new HttpError(422, 'Select between 1 and 500 listings.');
   ids = ids.map(Number).filter(Number.isInteger);
   const published = [];
-  const out = tx(() => {
+  const out = await tx(async () => {
     const result = { updated: 0, skipped: [] };
     for (const id of ids) {
-      const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
+      const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
       if (!l) { result.skipped.push({ id, reason: 'not found' }); continue; }
       if (['sold', 'reserved'].includes(l.status)) { result.skipped.push({ id, reason: `${l.status} items can't be changed` }); continue; }
       if (action === 'status') {
         if (!SELLER_STATUSES.has(status)) throw new HttpError(422, 'Invalid status');
         if (status === 'active') {
-          if (q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) { result.skipped.push({ id, reason: 'selling is paused on your account' }); continue; }
-          if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) { result.skipped.push({ id, reason: 'verify your email first' }); continue; }
-          const hasImg = q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
+          if ((await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) { result.skipped.push({ id, reason: 'selling is paused on your account' }); continue; }
+          if (!(await q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id)).v) { result.skipped.push({ id, reason: 'verify your email first' }); continue; }
+          const hasImg = await q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
         }
-        q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
+        await q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
         if (status === 'active') published.push(id);
       } else if (action === 'price') {
         let np;
         if (percent != null) { const pc = Number(percent); if (!(pc >= -90 && pc <= 500)) throw new HttpError(422, 'Percent must be between -90 and 500'); np = Math.round(l.price_cents * (1 + pc / 100)); }
         else { np = dollarsToCents(price); if (np == null || Number.isNaN(np)) throw new HttpError(422, 'Enter a valid price'); }
         if (np < 100 || np > 1000000) { result.skipped.push({ id, reason: 'price out of range' }); continue; }
-        q.run('UPDATE listings SET price_cents = ?, updated_at = ? WHERE id = ?', np, now(), id);
-        if (np < l.price_cents && l.status === 'active') notifyPriceDrop(id, l.title, l.price_cents, np);
+        await q.run('UPDATE listings SET price_cents = ?, updated_at = ? WHERE id = ?', np, now(), id);
+        if (np < l.price_cents && l.status === 'active') await notifyPriceDrop(id, l.title, l.price_cents, np);
       } else throw new HttpError(422, 'Unknown action');
       result.updated++;
     }
     return result;
   });
-  for (const id of published) D.announceDrop(id);
+  for (const id of published) await D.announceDrop(id);
   return out;
 }
 
@@ -243,19 +243,19 @@ function parseCsv(text) {
  * CSV import keyed on SKU. Existing SKUs get their price/cost/shipping/etc updated; unknown SKUs become
  * *drafts* (photos can't come from a CSV, and publishing requires a photo). Never touches sold/reserved items.
  */
-function importCsv(user, text) {
+async function importCsv(user, text) {
   const rows = parseCsv(String(text || '').replace(/^﻿/, ''));
   if (rows.length < 2) throw new HttpError(422, 'CSV needs a header row and at least one data row.');
   if (rows.length - 1 > config.limits.csvRows) throw new HttpError(422, `Maximum ${config.limits.csvRows} rows per import.`);
   const head = rows[0].map((h) => h.trim().toLowerCase());
   if (!head.includes('sku')) throw new HttpError(422, 'CSV must have a "sku" column.');
   const report = { created: 0, updated: 0, errors: [] };
-  tx(() => {
-    rows.slice(1).forEach((r, i) => {
+  await tx(async () => {
+    for (const [i, r] of rows.slice(1).entries()) {
       const line = i + 2, rec = Object.fromEntries(head.map((h, j) => [h, (r[j] ?? '').trim()]));
       try {
         if (!rec.sku) throw new Error('sku is required');
-        const cur = q.get('SELECT * FROM listings WHERE seller_id = ? AND sku = ?', user.id, rec.sku);
+        const cur = await q.get('SELECT * FROM listings WHERE seller_id = ? AND sku = ?', user.id, rec.sku);
         if (cur && ['sold', 'reserved'].includes(cur.status)) throw new Error(`item is ${cur.status}`);
         const merged = cur ? { title: cur.title, description: cur.description, category: cur.category, brand: cur.brand, size: cur.size, condition: cur.condition,
           shipping_payer: cur.shipping_payer, payment_url: cur.payment_url, price: (cur.price_cents / 100).toFixed(2), cost: cur.cost_cents == null ? '' : (cur.cost_cents / 100).toFixed(2), shipping: (cur.shipping_cents / 100).toFixed(2),
@@ -265,26 +265,26 @@ function importCsv(user, text) {
         const v = validateListing({ ...merged, images: [] }, { publish: false });
         const t = now();
         if (cur) {
-          q.run(`UPDATE listings SET title=?,description=?,category=?,brand=?,size=?,condition=?,price_cents=?,cost_cents=?,shipping_cents=?,shipping_payer=?,payment_url=?,weight_oz=?,length_in=?,width_in=?,height_in=?,updated_at=? WHERE id=?`,
+          await q.run(`UPDATE listings SET title=?,description=?,category=?,brand=?,size=?,condition=?,price_cents=?,cost_cents=?,shipping_cents=?,shipping_payer=?,payment_url=?,weight_oz=?,length_in=?,width_in=?,height_in=?,updated_at=? WHERE id=?`,
             v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.shipping_payer, v.payment_url, v.weight_oz, v.length_in, v.width_in, v.height_in, t, cur.id);
-          if (cur.payment_url !== v.payment_url) { q.run('UPDATE listings SET payment_total_ack_cents = NULL, payment_ack_at = NULL, payment_ack_policy = NULL WHERE id = ?', cur.id); audit(user, 'listing_payment_link_changed', { type: 'listing', id: cur.id, detail: { from: cur.payment_url, to: v.payment_url, via: 'csv' } }); }
+          if (cur.payment_url !== v.payment_url) { await q.run('UPDATE listings SET payment_total_ack_cents = NULL, payment_ack_at = NULL, payment_ack_policy = NULL WHERE id = ?', cur.id); await audit(user, 'listing_payment_link_changed', { type: 'listing', id: cur.id, detail: { from: cur.payment_url, to: v.payment_url, via: 'csv' } }); }
           report.updated++;
         } else {
-          q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,sku,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+          await q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,sku,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.shipping_payer, v.payment_url, rec.sku, v.weight_oz, v.length_in, v.width_in, v.height_in, t, t);
           report.created++;
         }
       } catch (e) { report.errors.push({ line, error: e.fields ? Object.values(e.fields).join(' ') : e.message }); }
-    });
+    }
   });
   return report;
 }
 
 /** Can this listing go live right now? Returns a human-readable reason it can't, or null. One rule set for publish, resume and bulk. */
-function publishBlocker(user, l) {
-  if (q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) return 'Selling is paused on your account while PairPlug reviews a report.';
-  if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) return 'Verify your email address first.';
-  if (!q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', l.id)) return 'Add at least one photo.';
+async function publishBlocker(user, l) {
+  if ((await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) return 'Selling is paused on your account while PairPlug reviews a report.';
+  if (!(await q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id)).v) return 'Verify your email address first.';
+  if (!await q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', l.id)) return 'Add at least one photo.';
   if (!l.condition) return 'Choose a condition.';
   if (!(l.weight_oz > 0)) return 'Add a shipping weight.';
   return null;
@@ -296,34 +296,34 @@ function publishBlocker(user, l) {
  *   pause: active -> archived     resume: archived -> active     unpublish: active -> draft
  *   (marking an item sold by hand is now `externalSales.record`: it also writes the seller's external-sale record)     delete: unused draft/archived -> removed
  */
-function listingAction(user, id, action) {
-  const out = tx(() => {
-    const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(id), user.id);
+async function listingAction(user, id, action) {
+  const out = await tx(async () => {
+    const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(id), user.id);
     if (!l) throw new HttpError(404, 'Listing not found');
     if (l.status === 'reserved') throw new HttpError(409, 'A buyer is checking out this item right now. Try again after their reservation ends.');
-    const t = now(), set = (status) => q.run('UPDATE listings SET status = ?, updated_at = ? WHERE id = ?', status, t, l.id);
+    const t = now(), set = async (status) => await q.run('UPDATE listings SET status = ?, updated_at = ? WHERE id = ?', status, t, l.id);
     const bad = (m) => { throw new HttpError(409, m); };
     switch (action) {
-      case 'pause': if (l.status !== 'active') bad('Only items for sale can be paused.'); set('archived'); break;
-      case 'unpublish': if (l.status !== 'active') bad('Only items for sale can be unpublished.'); set('draft'); break;
+      case 'pause': if (l.status !== 'active') bad('Only items for sale can be paused.'); await set('archived'); break;
+      case 'unpublish': if (l.status !== 'active') bad('Only items for sale can be unpublished.'); await set('draft'); break;
       case 'resume': {
         if (l.status !== 'archived') bad('Only paused items can be resumed.');
-        const why = publishBlocker(user, l); if (why) throw new HttpError(422, `Can't resume yet: ${why}`);
-        q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, ?), updated_at = ? WHERE id = ?', 'active', t, t, l.id); break;
+        const why = await publishBlocker(user, l); if (why) throw new HttpError(422, `Can't resume yet: ${why}`);
+        await q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, ?), updated_at = ? WHERE id = ?', 'active', t, t, l.id); break;
       }
       case 'delete': {
         if (!['draft', 'archived'].includes(l.status)) bad('Pause or unpublish the item before deleting it.');
-        if (q.get('SELECT 1 x FROM order_items WHERE listing_id = ?', l.id) || q.get('SELECT 1 x FROM conversations WHERE listing_id = ?', l.id)) bad('This item has orders or conversations, so it is kept for the record. Leave it paused instead.');
-        const files = q.all('SELECT file FROM listing_images WHERE listing_id = ?', l.id).map((r) => r.file);
-        q.run('DELETE FROM favorites WHERE listing_id = ?', l.id); q.run('DELETE FROM cart_items WHERE listing_id = ?', l.id); q.run('DELETE FROM listings WHERE id = ?', l.id);
-        audit(user, 'listing_deleted', { type: 'listing', id: l.id });
+        if (await q.get('SELECT 1 x FROM order_items WHERE listing_id = ?', l.id) || await q.get('SELECT 1 x FROM conversations WHERE listing_id = ?', l.id)) bad('This item has orders or conversations, so it is kept for the record. Leave it paused instead.');
+        const files = (await q.all('SELECT file FROM listing_images WHERE listing_id = ?', l.id)).map((r) => r.file);
+        await q.run('DELETE FROM favorites WHERE listing_id = ?', l.id); await q.run('DELETE FROM cart_items WHERE listing_id = ?', l.id); await q.run('DELETE FROM listings WHERE id = ?', l.id);
+        await audit(user, 'listing_deleted', { type: 'listing', id: l.id });
         return { removed: true, files };
       }
       default: throw new HttpError(400, 'Unknown action');
     }
-    return { status: q.get('SELECT status FROM listings WHERE id = ?', l.id).status };
+    return { status: (await q.get('SELECT status FROM listings WHERE id = ?', l.id)).status };
   });
-  if (action === 'resume' && out && out.status === 'active') D.announceDrop(id);
+  if (action === 'resume' && out && out.status === 'active') await D.announceDrop(id);
   return out;
 }
 

@@ -7,11 +7,11 @@ const { payments: _p } = {};
 const escrow = require('../src/escrow');
 const payments = require('../src/payments');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
-const bal = (handle) => require('../src/stats').wallet(q.get('SELECT id FROM users WHERE handle = ?', handle).id);
-const order = (id) => q.get('SELECT * FROM orders WHERE id = ?', id);
+const bal = async (handle) => await require('../src/stats').wallet((await q.get('SELECT id FROM users WHERE handle = ?', handle)).id);
+const order = async (id) => await q.get('SELECT * FROM orders WHERE id = ?', id);
 
 test('empty marketplace: pages render honest empty states, no fake data', async () => {
   const c = new H.Client();
@@ -20,7 +20,7 @@ test('empty marketplace: pages render honest empty states, no fake data', async 
   assert.match(home.text, /No listings yet/);
   const shop = await c.get('/shop?q=anything');
   assert.match(shop.text, /No matching items/);
-  assert.equal(q.get('SELECT COUNT(*) n FROM listings').n, 0);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM listings')).n, 0);
 });
 
 test('auth: register validation, login, wrong password, logout, no plaintext passwords', async () => {
@@ -28,7 +28,7 @@ test('auth: register validation, login, wrong password, logout, no plaintext pas
   let r = await c.post('/api/register', { email: 'bad', display_name: '', terms: true, password: 'short' });
   assert.equal(r.status, 422); assert.ok(r.json.fields.email && r.json.fields.password);
   const u = await H.newUser('Auth');
-  const row = q.get('SELECT * FROM users WHERE email = ?', u.email);
+  const row = await q.get('SELECT * FROM users WHERE email = ?', u.email);
   assert.match(row.password_hash, /^scrypt\$/); assert.ok(!row.password_hash.includes('correct-horse'));
   const l = new H.Client();
   assert.equal((await l.post('/api/login', { email: u.email, password: 'nope-nope-1' })).status, 401);
@@ -80,9 +80,9 @@ test('seller journey: upload, validate, publish, find, edit, inventory', async (
   for (const qs of ['q=sneaker', 'category=sneakers', 'min=100', 'max=10', 'condition=fair', 'size=S']) assert.match((await anon.get('/shop?' + qs)).text, /No matching items/, qs);
   assert.equal((await anon.get("/shop?q=%25_'; DROP TABLE listings;--")).status, 200);
   // edit price and status
-  const edit = await s.put(`/api/seller/listings/${id}`, { title: 'Vintage denim jacket', category: 'denim', condition: 'good', sku: 'DJ-1', price: '49.00', weight_oz: '20', images: JSON.parse(JSON.stringify(q.all('SELECT file FROM listing_images WHERE listing_id = ?', id).map((r) => r.file))), status: 'active' });
+  const edit = await s.put(`/api/seller/listings/${id}`, { title: 'Vintage denim jacket', category: 'denim', condition: 'good', sku: 'DJ-1', price: '49.00', weight_oz: '20', images: JSON.parse(JSON.stringify((await q.all('SELECT file FROM listing_images WHERE listing_id = ?', id)).map((r) => r.file))), status: 'active' });
   assert.equal(edit.status, 200);
-  assert.equal(q.get('SELECT price_cents p FROM listings WHERE id = ?', id).p, 4900);
+  assert.equal((await q.get('SELECT price_cents p FROM listings WHERE id = ?', id)).p, 4900);
   assert.match((await s.get('/dashboard/inventory')).text, /Vintage denim jacket/);
   assert.match((await s.get('/dashboard/inventory?q=DJ-1')).text, /Vintage denim jacket/);
   // draft isn't public
@@ -100,7 +100,7 @@ test('authorization: sellers cannot touch each other\'s listings, orders or uplo
   assert.equal((await b.get(`/dashboard/listings/${id}/edit`)).status, 404);
   const bulk = await b.post('/api/seller/listings/bulk', { ids: [id], action: 'status', status: 'archived' });
   assert.equal(bulk.json.updated, 0); assert.equal(bulk.json.skipped[0].reason, 'not found');
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'active');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'active');
   const file = await H.upload(a);
   const steal = await b.post('/api/seller/listings', { title: 'Stolen photo', category: 'denim', price: '10.00', status: 'draft', images: [file] });
   assert.equal(steal.status, 403);
@@ -113,7 +113,7 @@ test('bulk actions: validated server-side; sold items protected; sold cannot be 
   const ids = [await H.makeListing(s, { price: '20.00' }), await H.makeListing(s, { price: '30.00' })];
   let r = await s.post('/api/seller/listings/bulk', { ids, action: 'price', percent: '10' });
   assert.equal(r.json.updated, 2);
-  assert.deepEqual(ids.map((i) => q.get('SELECT price_cents p FROM listings WHERE id = ?', i).p), [2200, 3300]);
+  assert.deepEqual(await Promise.all(ids.map(async (i) => (await q.get('SELECT price_cents p FROM listings WHERE id = ?', i)).p)), [2200, 3300]);
   assert.equal((await s.post('/api/seller/listings/bulk', { ids, action: 'status', status: 'sold' })).status, 422);
   assert.equal((await s.post('/api/seller/listings/bulk', { ids, action: 'price', price: '0.10' })).json.updated, 0);
   r = await s.post('/api/seller/listings/bulk', { ids, action: 'status', status: 'archived' });
@@ -133,20 +133,20 @@ test('full buyer journey + escrow: checkout → paid → shipped → delivered �
   assert.equal((await buyer.post('/api/cart', { listingId: id })).status, 200);
   assert.match((await buyer.get('/cart')).text, /Test jacket/);
   const ck = await H.checkout(buyer); assert.equal(ck.status, 200);
-  const o = q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
+  const o = await q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
   assert.equal(o.status, 'pending_payment');
   assert.equal(o.total_cents, 10800); assert.equal(o.platform_fee_cents, 1000);
   assert.equal(o.seller_payout_cents, 10800 - 1000 - o.processing_fee_cents);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'reserved');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'reserved');
   // reserved items can't be added by others
   const other = await H.newUser();
   assert.equal((await other.post('/api/cart', { listingId: id })).status, 409);
   assert.equal((await H.pay(buyer, ck.json.checkoutId)).json.paid, true);
-  assert.equal(order(o.id).status, 'paid'); assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'sold');
+  assert.equal((await order(o.id)).status, 'paid'); assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'sold');
   assert.match((await buyer.get('/orders')).text, new RegExp(`#${o.id}`));
   assert.match((await s.get('/dashboard/orders')).text, /Mark shipped/);
   // funds not yet available
-  assert.equal(bal(s.handle).availableCents, 0);
+  assert.equal((await bal(s.handle)).availableCents, 0);
   // cannot release unpaid/unshipped; buyer can't confirm before shipping
   assert.equal((await buyer.post(`/api/orders/${o.id}/confirm`)).status, 409);
   // other seller can't ship it
@@ -154,34 +154,34 @@ test('full buyer journey + escrow: checkout → paid → shipped → delivered �
   assert.equal((await evil.post(`/api/seller/orders/${o.id}/ship`, { carrier: 'USPS', tracking: '9400111899223' })).status, 404);
   assert.equal((await s.post(`/api/seller/orders/${o.id}/ship`, { carrier: 'USPS', tracking: 'x' })).status, 422);
   assert.equal((await s.post(`/api/seller/orders/${o.id}/ship`, { carrier: 'USPS', tracking: '9400111899223' })).status, 200);
-  assert.equal(order(o.id).status, 'shipped');
+  assert.equal((await order(o.id)).status, 'shipped');
   // carrier webhook: auth required, then marks delivered
   const hook = (secret, status) => fetch(H.base + '/webhooks/tracking', { method: 'POST', headers: { 'content-type': 'application/json', 'x-webhook-secret': secret }, body: JSON.stringify({ carrier: 'USPS', trackingNumber: '9400111899223', status }) });
   assert.equal((await hook('wrong', 'DELIVERED')).status, 401);
   assert.equal((await hook('carrier-secret', 'DELIVERED')).status, 200);
-  assert.equal(order(o.id).status, 'delivered'); assert.ok(order(o.id).auto_release_at > Date.now() / 1000);
-  assert.equal(bal(s.handle).availableCents, 0, 'still escrowed after delivery');
+  assert.equal((await order(o.id)).status, 'delivered'); assert.ok((await order(o.id)).auto_release_at > Date.now() / 1000);
+  assert.equal((await bal(s.handle)).availableCents, 0, 'still escrowed after delivery');
   assert.equal((await hook('carrier-secret', 'DELIVERED')).status, 200, 'duplicate carrier event is harmless');
   // buyer confirms -> funds released exactly once
   assert.equal((await buyer.post(`/api/orders/${o.id}/confirm`)).status, 200);
-  assert.equal(order(o.id).status, 'released');
-  assert.equal(bal(s.handle).availableCents, o.seller_payout_cents);
+  assert.equal((await order(o.id)).status, 'released');
+  assert.equal((await bal(s.handle)).availableCents, o.seller_payout_cents);
   assert.equal((await buyer.post(`/api/orders/${o.id}/confirm`)).status, 409, 'cannot release twice');
-  assert.equal(bal(s.handle).availableCents, o.seller_payout_cents);
+  assert.equal((await bal(s.handle)).availableCents, o.seller_payout_cents);
   // review
   assert.equal((await buyer.post(`/api/orders/${o.id}/review`, { thumbsUp: true, body: 'Great' })).status, 200);
   assert.equal((await buyer.post(`/api/orders/${o.id}/review`, { thumbsUp: true })).status, 409);
   assert.match((await new H.Client().get(`/s/${s.handle}`)).text, /Great/);
   // dashboard numbers come from the records
-  const ov = require('../src/stats').overview(q.get('SELECT id FROM users WHERE handle = ?', s.handle).id);
+  const ov = await require('../src/stats').overview((await q.get('SELECT id FROM users WHERE handle = ?', s.handle)).id);
   assert.equal(ov.gross, 10000); assert.equal(ov.completed, 1); assert.equal(ov.net, o.seller_payout_cents);
   assert.equal(ov.profit.cents, o.seller_payout_cents - 4000);
   // withdrawal can't exceed balance
   assert.equal((await s.post('/api/seller/withdrawals', { amount: '9999' })).status, 422);
   assert.equal((await s.post('/api/seller/withdrawals', { amount: (o.seller_payout_cents / 100).toFixed(2) })).status, 200);
-  assert.equal(bal(s.handle).availableCents, 0);
+  assert.equal((await bal(s.handle)).availableCents, 0);
   // notifications recorded once per event
-  const n = q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?", `order:${o.id}:released`).n;
+  const n = (await q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?", `order:${o.id}:released`)).n;
   assert.equal(n, 1);
 });
 
@@ -190,27 +190,27 @@ test('auto-release after delivery window', async () => {
   const id = await H.makeListing(s);
   await buyer.post('/api/cart', { listingId: id });
   const ck = await H.checkout(buyer); await H.pay(buyer, ck.json.checkoutId);
-  const o = q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
+  const o = await q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
   await s.post(`/api/seller/orders/${o.id}/ship`, { carrier: 'UPS', tracking: '1Z999AA10123456784' });
-  escrow.markDelivered(o.id, 'carrier');
-  assert.equal(escrow.autoReleaseDue(), 0, 'not due yet');
-  q.run('UPDATE orders SET auto_release_at = ? WHERE id = ?', Math.floor(Date.now() / 1000) - 5, o.id);
-  assert.equal(escrow.autoReleaseDue(), 1);
-  assert.equal(order(o.id).status, 'released');
-  assert.equal(escrow.autoReleaseDue(), 0);
+  await escrow.markDelivered(o.id, 'carrier');
+  assert.equal(await escrow.autoReleaseDue(), 0, 'not due yet');
+  await q.run('UPDATE orders SET auto_release_at = ? WHERE id = ?', Math.floor(Date.now() / 1000) - 5, o.id);
+  assert.equal(await escrow.autoReleaseDue(), 1);
+  assert.equal((await order(o.id)).status, 'released');
+  assert.equal(await escrow.autoReleaseDue(), 0);
 });
 
 test('concurrency: 12 buyers racing for one unique item → exactly one wins', async () => {
   const s = await H.newSeller('Race');
   const id = await H.makeListing(s, { title: 'Grail sneaker', category: 'sneakers', price: '300.00' });
-  const buyers = await Promise.all(Array.from({ length: 12 }, () => H.newUser('Racer')));
+  const buyers = await Promise.all(Array.from({ length: 12 }, async () => await H.newUser('Racer')));
   const added = await Promise.all(buyers.map((b) => b.post('/api/cart', { listingId: id })));
   assert.equal(added.filter((r) => r.status === 200).length, 12, 'all can add to cart while item is active');
   const results = await Promise.all(buyers.map((b) => H.checkout(b)));
   const wins = results.filter((r) => r.status === 200), losses = results.filter((r) => r.status === 409);
   assert.equal(wins.length, 1, JSON.stringify(results.map((r) => r.status)));
   assert.equal(losses.length, 11);
-  assert.equal(q.get('SELECT COUNT(*) n FROM order_items WHERE listing_id = ?', id).n, 1);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM order_items WHERE listing_id = ?', id)).n, 1);
 });
 
 test('idempotency: replaying a checkout key returns the same checkout, no duplicate orders', async () => {
@@ -220,7 +220,7 @@ test('idempotency: replaying a checkout key returns the same checkout, no duplic
   const [a, b] = await Promise.all([H.checkout(buyer, 'same-key-12345'), H.checkout(buyer, 'same-key-12345')]);
   const c = await H.checkout(buyer, 'same-key-12345');
   assert.equal(c.status, 200); assert.equal(c.json.checkoutId, (a.status === 200 ? a : b).json.checkoutId);
-  assert.equal(q.get('SELECT COUNT(*) n FROM orders WHERE buyer_id = (SELECT id FROM users WHERE email = ?)', buyer.email).n, 1);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM orders WHERE buyer_id = (SELECT id FROM users WHERE email = ?)', buyer.email)).n, 1);
 });
 
 test('webhooks: bad signature rejected, duplicates idempotent, amount mismatch rejected', async () => {
@@ -228,18 +228,18 @@ test('webhooks: bad signature rejected, duplicates idempotent, amount mismatch r
   const id = await H.makeListing(s);
   await buyer.post('/api/cart', { listingId: id });
   const ck = await H.checkout(buyer); const cid = ck.json.checkoutId;
-  const total = q.get('SELECT total_cents t FROM checkouts WHERE id = ?', cid).t;
+  const total = (await q.get('SELECT total_cents t FROM checkouts WHERE id = ?', cid)).t;
   const send = (body, sig) => fetch(H.base + '/webhooks/payments/sandbox', { method: 'POST', headers: { 'x-sandbox-signature': sig ?? payments.sandbox.sign(body) }, body });
   const ev = (over) => JSON.stringify({ id: 'evt_x1', type: 'payment_succeeded', checkoutId: cid, amountCents: total, ...over });
   assert.equal((await send(ev(), 'deadbeef')).status, 400);
-  assert.equal(q.get('SELECT status FROM checkouts WHERE id = ?', cid).status, 'pending', 'unsigned event changes nothing');
+  assert.equal((await q.get('SELECT status FROM checkouts WHERE id = ?', cid)).status, 'pending', 'unsigned event changes nothing');
   assert.equal((await send(ev({ id: 'evt_bad', amountCents: 1 }))).status, 400, 'wrong amount');
-  assert.equal(q.get('SELECT status FROM checkouts WHERE id = ?', cid).status, 'pending');
+  assert.equal((await q.get('SELECT status FROM checkouts WHERE id = ?', cid)).status, 'pending');
   const [r1, r2, r3] = await Promise.all([send(ev()), send(ev()), send(ev())]);
   const bodies = await Promise.all([r1, r2, r3].map((r) => r.json()));
   assert.equal(bodies.filter((b) => b.paid).length, 1); assert.equal(bodies.filter((b) => b.duplicate).length, 2);
-  assert.equal(q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key LIKE 'order:%:paid'  AND user_id = (SELECT id FROM users WHERE handle = ?)", s.handle).n, 1);
-  assert.equal(q.get('SELECT COUNT(*) n FROM order_events WHERE to_status = ? AND order_id IN (SELECT id FROM orders WHERE checkout_id = ?)', 'paid', cid).n, 1);
+  assert.equal((await q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key LIKE 'order:%:paid'  AND user_id = (SELECT id FROM users WHERE handle = ?)", s.handle)).n, 1);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM order_events WHERE to_status = ? AND order_id IN (SELECT id FROM orders WHERE checkout_id = ?)', 'paid', cid)).n, 1);
 });
 
 test('failed payment releases the item; late success after expiry is flagged for refund, not fulfilled', async () => {
@@ -247,21 +247,21 @@ test('failed payment releases the item; late success after expiry is flagged for
   const id = await H.makeListing(s);
   await buyer.post('/api/cart', { listingId: id });
   const ck = await H.checkout(buyer);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'reserved');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'reserved');
   await H.pay(buyer, ck.json.checkoutId, 'failed');
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'active');
-  assert.equal(order(q.get('SELECT id FROM orders WHERE checkout_id = ?', ck.json.checkoutId).id).status, 'cancelled');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'active');
+  assert.equal((await order((await q.get('SELECT id FROM orders WHERE checkout_id = ?', ck.json.checkoutId)).id)).status, 'cancelled');
   // someone else can now buy it
   await other.post('/api/cart', { listingId: id });
   const ck2 = await H.checkout(other); assert.equal(ck2.status, 200);
   // expire it
-  q.run('UPDATE checkouts SET expires_at = 1 WHERE id = ?', ck2.json.checkoutId);
-  assert.equal(payments.expireStaleCheckouts(), 1);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'active');
+  await q.run('UPDATE checkouts SET expires_at = 1 WHERE id = ?', ck2.json.checkoutId);
+  assert.equal(await payments.expireStaleCheckouts(), 1);
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'active');
   const late = await H.pay(other, ck2.json.checkoutId);
   assert.equal(late.json.lateSuccess, true);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'active', 'late payment must not sell the item');
-  assert.equal(q.get('SELECT status FROM payments WHERE checkout_id = ?', ck2.json.checkoutId).status, 'needs_refund');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'active', 'late payment must not sell the item');
+  assert.equal((await q.get('SELECT status FROM payments WHERE checkout_id = ?', ck2.json.checkoutId)).status, 'needs_refund');
 });
 
 test('seller cancel after payment refunds the buyer and relists nothing automatically; refund only once', async () => {
@@ -269,57 +269,57 @@ test('seller cancel after payment refunds the buyer and relists nothing automati
   const id = await H.makeListing(s);
   await buyer.post('/api/cart', { listingId: id });
   const ck = await H.checkout(buyer); await H.pay(buyer, ck.json.checkoutId);
-  const o = q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
+  const o = await q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
   assert.equal((await s.post(`/api/seller/orders/${o.id}/cancel`)).status, 200);
-  const after = order(o.id);
+  const after = await order(o.id);
   assert.equal(after.status, 'refunded'); assert.equal(after.refunded_cents, o.total_cents);
-  assert.equal(q.get('SELECT status FROM refunds WHERE order_id = ?', o.id).status, 'succeeded');
+  assert.equal((await q.get('SELECT status FROM refunds WHERE order_id = ?', o.id)).status, 'succeeded');
   assert.equal((await s.post(`/api/seller/orders/${o.id}/cancel`)).status, 409);
-  assert.equal(q.get('SELECT COUNT(*) n FROM refunds WHERE order_id = ?', o.id).n, 1);
-  assert.equal(bal(s.handle).availableCents, 0);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM refunds WHERE order_id = ?', o.id)).n, 1);
+  assert.equal((await bal(s.handle)).availableCents, 0);
 });
 
 test('disputes: evidence from both sides, admin resolves; refund and release paths', async () => {
   const s = await H.newSeller('Disp'), buyer = await H.newUser(), stranger = await H.newUser();
-  const admin = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', admin.email);
-  const mk = async () => { const id = await H.makeListing(s); await buyer.post('/api/cart', { listingId: id }); const ck = await H.checkout(buyer); await H.pay(buyer, ck.json.checkoutId); return q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId); };
+  const admin = await H.newUser('Admin'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', admin.email);
+  const mk = async () => { const id = await H.makeListing(s); await buyer.post('/api/cart', { listingId: id }); const ck = await H.checkout(buyer); await H.pay(buyer, ck.json.checkoutId); return await q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId); };
   const o1 = await mk(), o2 = await mk();
   const photo = await H.upload(buyer);
   assert.equal((await stranger.post(`/api/orders/${o1.id}/dispute`, { reason: 'I am not the buyer at all' })).status, 404);
   assert.equal((await buyer.post(`/api/orders/${o1.id}/dispute`, { reason: 'short' })).status, 422);
   assert.equal((await buyer.post(`/api/orders/${o1.id}/dispute`, { reason: 'Item never arrived, seller silent', evidence_json: JSON.stringify([photo]) })).status, 200);
-  assert.equal(order(o1.id).status, 'disputed');
+  assert.equal((await order(o1.id)).status, 'disputed');
   assert.equal((await buyer.post(`/api/orders/${o1.id}/dispute`, { reason: 'Item never arrived, again' })).status, 409);
   assert.equal((await s.post(`/api/orders/${o1.id}/dispute/evidence`, { note: 'Shipped with signature, see tracking' })).status, 200);
   assert.equal((await buyer.post(`/api/orders/${o1.id}/confirm`)).status, 409, 'buyer cannot release a disputed order');
-  const d = q.get('SELECT * FROM disputes WHERE order_id = ?', o1.id);
+  const d = await q.get('SELECT * FROM disputes WHERE order_id = ?', o1.id);
   assert.equal((await buyer.post(`/api/admin/disputes/${d.id}/resolve`, { decision: 'refund' })).status, 403);
   const page = await admin.get(`/admin/disputes/${d.id}`);
   assert.equal(page.status, 200); assert.match(page.text, /Shipped with signature/); assert.match(page.text, /Item never arrived/);
   assert.equal((await admin.post(`/api/admin/disputes/${d.id}/resolve`, { decision: 'refund', note: 'No proof of delivery' })).status, 200);
-  assert.equal(order(o1.id).status, 'refunded');
+  assert.equal((await order(o1.id)).status, 'refunded');
   assert.equal((await admin.post(`/api/admin/disputes/${d.id}/resolve`, { decision: 'release' })).status, 404, 'cannot resolve twice');
   // release path
   await buyer.post(`/api/orders/${o2.id}/dispute`, { reason: 'Changed my mind about this item' });
-  const d2 = q.get('SELECT * FROM disputes WHERE order_id = ?', o2.id);
+  const d2 = await q.get('SELECT * FROM disputes WHERE order_id = ?', o2.id);
   assert.equal((await admin.post(`/api/admin/disputes/${d2.id}/resolve`, { decision: 'release' })).status, 200);
-  assert.equal(order(o2.id).status, 'released'); assert.equal(bal(s.handle).availableCents, o2.seller_payout_cents);
+  assert.equal((await order(o2.id)).status, 'released'); assert.equal((await bal(s.handle)).availableCents, o2.seller_payout_cents);
 });
 
 test('admin: ban removes sessions & listings; fee changes apply to new orders only; validation', async () => {
-  const admin = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', admin.email);
+  const admin = await H.newUser('Admin'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', admin.email);
   const s = await H.newSeller('Banned'); const id = await H.makeListing(s);
-  const uid = q.get('SELECT id FROM users WHERE handle = ?', s.handle).id;
+  const uid = (await q.get('SELECT id FROM users WHERE handle = ?', s.handle)).id;
   assert.equal((await admin.post(`/api/admin/users/${uid}/ban`, { banned: true, reason: 'Abuse reported by several users' })).status, 200);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'archived');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'archived');
   assert.equal((await s.get('/dashboard')).status, 302, 'banned session is dead');
   assert.equal((await new H.Client().post('/api/login', { email: s.email, password: 'correct-horse-9' })).status, 403);
   assert.equal((await admin.put('/api/admin/settings', { fee_bps_standard: 99999 })).status, 422);
-  const cur = require('../src/db').getSettings();
+  const cur = await require('../src/db').getSettings();
   assert.equal((await admin.put('/api/admin/settings', { ...cur, fee_bps_standard: 800 })).status, 200);
   const s2 = await H.newSeller('Fee'), b = await H.newUser(); const id2 = await H.makeListing(s2, { price: '100.00', shipping: '0' });
   await b.post('/api/cart', { listingId: id2 }); const ck = await H.checkout(b);
-  assert.equal(q.get('SELECT platform_fee_cents f FROM orders WHERE checkout_id = ?', ck.json.checkoutId).f, 800);
+  assert.equal((await q.get('SELECT platform_fee_cents f FROM orders WHERE checkout_id = ?', ck.json.checkoutId)).f, 800);
   await admin.put('/api/admin/settings', { ...cur });
 });
 
@@ -329,8 +329,8 @@ test('CSV import: creates drafts, updates by SKU, reports bad rows, protects sol
   const csv = 'sku,title,category,price,cost,condition,weight_oz\nEX-1,,,25.00,,,\nNEW-1,Wool coat,outerwear,80,30,good,40\nBAD-1,X,nope,abc,,,\n';
   const r = await s.post('/api/seller/import', { csv });
   assert.equal(r.json.updated, 1); assert.equal(r.json.created, 1); assert.equal(r.json.errors.length, 1);
-  assert.equal(q.get('SELECT price_cents p FROM listings WHERE id = ?', id).p, 2500);
-  assert.equal(q.get("SELECT status FROM listings WHERE sku = 'NEW-1'").status, 'draft');
+  assert.equal((await q.get('SELECT price_cents p FROM listings WHERE id = ?', id)).p, 2500);
+  assert.equal((await q.get("SELECT status FROM listings WHERE sku = 'NEW-1'")).status, 'draft');
   assert.equal((await s.post('/api/seller/import', { csv: 'title\nfoo' })).status, 422);
 });
 
@@ -340,10 +340,10 @@ test('favorites persist per account and price drops notify once', async () => {
   assert.equal((await new H.Client().put(`/api/favorites/${id}`)).status, 401);
   assert.equal((await b.put(`/api/favorites/${id}`)).status, 200);
   assert.match((await b.get('/favorites')).text, /Test jacket/);
-  const body = (price) => ({ title: 'Test jacket', category: 'outerwear', condition: 'good', price, weight_oz: '20', images: q.all('SELECT file FROM listing_images WHERE listing_id = ?', id).map((r) => r.file), status: 'active' });
-  await s.put(`/api/seller/listings/${id}`, body('40.00'));
-  await s.put(`/api/seller/listings/${id}`, body('40.00'));
-  assert.equal(q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key LIKE 'listing:%:price:%' AND user_id = (SELECT id FROM users WHERE email = ?)", b.email).n, 1);
+  const body = async (price) => ({ title: 'Test jacket', category: 'outerwear', condition: 'good', price, weight_oz: '20', images: (await q.all('SELECT file FROM listing_images WHERE listing_id = ?', id)).map((r) => r.file), status: 'active' });
+  await s.put(`/api/seller/listings/${id}`, await body('40.00'));
+  await s.put(`/api/seller/listings/${id}`, await body('40.00'));
+  assert.equal((await q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key LIKE 'listing:%:price:%' AND user_id = (SELECT id FROM users WHERE email = ?)", b.email)).n, 1);
   assert.equal((await b.req('DELETE', `/api/favorites/${id}`)).status, 200);
   assert.doesNotMatch((await b.get('/favorites')).text, /Test jacket/);
 });

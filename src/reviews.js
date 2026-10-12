@@ -20,74 +20,74 @@ function input({ thumbsUp, body }) {
   if (!t && !text) throw new HttpError(422, 'Please fix the highlighted fields.', { body: 'Give a thumbs-up, write a few words, or both.' });
   return { t, text };
 }
-const event = (reviewId, actor, role, kind, detail) =>
-  q.run('INSERT INTO review_events(review_id, actor_id, actor_role, kind, detail, created_at) VALUES(?,?,?,?,?,?)', reviewId, actor.id, role, kind, detail ? JSON.stringify(detail).slice(0, 1500) : null, now());
-const forOrder = (orderId) => q.get('SELECT * FROM seller_reviews WHERE order_id = ?', Number(orderId));
+const event = async (reviewId, actor, role, kind, detail) =>
+  await q.run('INSERT INTO review_events(review_id, actor_id, actor_role, kind, detail, created_at) VALUES(?,?,?,?,?,?)', reviewId, actor.id, role, kind, detail ? JSON.stringify(detail).slice(0, 1500) : null, now());
+const forOrder = async (orderId) => await q.get('SELECT * FROM seller_reviews WHERE order_id = ?', Number(orderId));
 const staffRole = (u) => (u.is_admin ? 'admin' : 'moderator');
 
 /** The order must be the caller's own purchase. Anything else is a 404, so order numbers of others are never confirmed. */
-function ownOrder(user, orderId) {
-  const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(orderId), user.id);
+async function ownOrder(user, orderId) {
+  const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(orderId), user.id);
   if (!o) throw new HttpError(404, 'Order not found');
   if (o.seller_id === user.id) throw new HttpError(403, "You can't review your own store.");
   return o;
 }
 
-function submit(user, orderId, data) {
+async function submit(user, orderId, data) {
   rateLimit(`review:${user.id}`, 20, 3600);
   const { t, text } = input(data);
-  return tx(() => {
-    const o = ownOrder(user, orderId);
+  return await tx(async () => {
+    const o = await ownOrder(user, orderId);
     if (!COMPLETE.includes(o.status)) throw new HttpError(409, 'You can review a seller after you have marked the order received.');
-    const cur = forOrder(o.id);
+    const cur = await forOrder(o.id);
     if (cur && cur.status !== 'removed') throw new HttpError(409, 'You have already reviewed this order. You can edit or remove your review.');
     if (cur) {                                                                              // the buyer removed it earlier and is writing it again: same row, never a second review
-      q.run("UPDATE seller_reviews SET thumbs_up = ?, body = ?, status = 'published', edited_at = ? WHERE id = ?", t, text, now(), cur.id);
-      event(cur.id, user, 'buyer', 'reinstated', { thumbs_up: t, hasText: Boolean(text) });
+      await q.run("UPDATE seller_reviews SET thumbs_up = ?, body = ?, status = 'published', edited_at = ? WHERE id = ?", t, text, now(), cur.id);
+      await event(cur.id, user, 'buyer', 'reinstated', { thumbs_up: t, hasText: Boolean(text) });
       return cur.id;
     }
     let id;
-    try { id = Number(q.run('INSERT INTO seller_reviews(order_id, buyer_id, seller_id, thumbs_up, body, created_at) VALUES(?,?,?,?,?,?)', o.id, user.id, o.seller_id, t, text, now()).lastInsertRowid); }
+    try { id = Number((await q.run('INSERT INTO seller_reviews(order_id, buyer_id, seller_id, thumbs_up, body, created_at) VALUES(?,?,?,?,?,?)', o.id, user.id, o.seller_id, t, text, now())).lastInsertRowid); }
     catch (e) { if (/UNIQUE/.test(String(e.message))) throw new HttpError(409, 'You have already reviewed this order.'); throw e; }
-    event(id, user, 'buyer', 'created', { thumbs_up: t, hasText: Boolean(text) });
+    await event(id, user, 'buyer', 'created', { thumbs_up: t, hasText: Boolean(text) });
     return id;
   });
 }
-function edit(user, orderId, data) {
+async function edit(user, orderId, data) {
   rateLimit(`review:${user.id}`, 20, 3600);
   const { t, text } = input(data);
-  return tx(() => {
-    const o = ownOrder(user, orderId), cur = forOrder(o.id);
+  return await tx(async () => {
+    const o = await ownOrder(user, orderId), cur = await forOrder(o.id);
     if (!cur || cur.status === 'removed') throw new HttpError(404, 'You have no review on this order.');
     if (cur.status === 'hidden') throw new HttpError(403, 'This review was hidden by PairPlug moderation and can no longer be changed.');
-    q.run('UPDATE seller_reviews SET thumbs_up = ?, body = ?, edited_at = ? WHERE id = ?', t, text, now(), cur.id);
-    event(cur.id, user, 'buyer', 'edited', { before: { thumbs_up: cur.thumbs_up, body: cur.body }, after: { thumbs_up: t, body: text } });
+    await q.run('UPDATE seller_reviews SET thumbs_up = ?, body = ?, edited_at = ? WHERE id = ?', t, text, now(), cur.id);
+    await event(cur.id, user, 'buyer', 'edited', { before: { thumbs_up: cur.thumbs_up, body: cur.body }, after: { thumbs_up: t, body: text } });
     return cur.id;
   });
 }
-function remove(user, orderId) {
-  return tx(() => {
-    const o = ownOrder(user, orderId), cur = forOrder(o.id);
+async function remove(user, orderId) {
+  return await tx(async () => {
+    const o = await ownOrder(user, orderId), cur = await forOrder(o.id);
     if (!cur || cur.status === 'removed') throw new HttpError(404, 'You have no review on this order.');
     if (cur.status === 'hidden') throw new HttpError(403, 'This review was hidden by PairPlug moderation; it can only be restored by moderators.');
-    q.run("UPDATE seller_reviews SET status = 'removed', edited_at = ? WHERE id = ?", now(), cur.id);
-    event(cur.id, user, 'buyer', 'removed', null);
+    await q.run("UPDATE seller_reviews SET status = 'removed', edited_at = ? WHERE id = ?", now(), cur.id);
+    await event(cur.id, user, 'buyer', 'removed', null);
     return cur.id;
   });
 }
 
 // ------------------------------------------------------------------ reports + moderation
-function report(user, reviewId, reason) {
+async function report(user, reviewId, reason) {
   rateLimit(`review-report:${user.id}`, 10, 3600);
   const why = clean(reason, 501);
   if (why.length < 5 || why.length > 500) throw new HttpError(422, 'Please fix the highlighted fields.', { reason: 'Tell us what is wrong (5 to 500 characters).' });
-  return tx(() => {
-    const r = q.get("SELECT * FROM seller_reviews WHERE id = ? AND status = 'published'", Number(reviewId));
+  return await tx(async () => {
+    const r = await q.get("SELECT * FROM seller_reviews WHERE id = ? AND status = 'published'", Number(reviewId));
     if (!r) throw new HttpError(404, 'Review not found');
     if (r.buyer_id === user.id) throw new HttpError(403, "You can't report your own review; edit or remove it instead.");
-    try { q.run('INSERT INTO review_reports(review_id, reporter_id, reason, created_at) VALUES(?,?,?,?)', r.id, user.id, why, now()); }
+    try { await q.run('INSERT INTO review_reports(review_id, reporter_id, reason, created_at) VALUES(?,?,?,?)', r.id, user.id, why, now()); }
     catch (e) { if (/UNIQUE/.test(String(e.message))) throw new HttpError(409, 'You already reported this review.'); throw e; }
-    event(r.id, user, user.id === r.seller_id ? 'seller' : 'user', 'reported', { reason: why });
+    await event(r.id, user, user.id === r.seller_id ? 'seller' : 'user', 'reported', { reason: why });
     return r.id;
   });
 }
@@ -95,63 +95,63 @@ function staffOnly(actor) { if (!(actor && (actor.is_admin || actor.is_moderator
 const why5 = (v) => { const t = clean(v, 1001); if (t.length < 5 || t.length > 1000) throw new HttpError(422, 'Please fix the highlighted fields.', { reason: 'A reason of 5 to 1000 characters is required.' }); return t; };
 
 /** Hide a published review (it stops counting and showing). Moderators cannot change its content. */
-function hide(actor, reviewId, reason) {
+async function hide(actor, reviewId, reason) {
   staffOnly(actor); const why = why5(reason);
-  return tx(() => {
-    const r = q.get('SELECT * FROM seller_reviews WHERE id = ?', Number(reviewId)); if (!r) throw new HttpError(404, 'Review not found');
+  return await tx(async () => {
+    const r = await q.get('SELECT * FROM seller_reviews WHERE id = ?', Number(reviewId)); if (!r) throw new HttpError(404, 'Review not found');
     if (r.status !== 'published') throw new HttpError(409, 'Only a published review can be hidden.');
-    q.run("UPDATE seller_reviews SET status = 'hidden' WHERE id = ?", r.id);
-    q.run("UPDATE review_reports SET status = 'actioned', resolved_by = ?, resolved_at = ? WHERE review_id = ? AND status = 'open'", actor.id, now(), r.id);
-    event(r.id, actor, staffRole(actor), 'hidden', { reason: why }); audit(actor, 'review_hidden', { type: 'review', id: r.id, detail: { reason: why, seller: r.seller_id } });
+    await q.run("UPDATE seller_reviews SET status = 'hidden' WHERE id = ?", r.id);
+    await q.run("UPDATE review_reports SET status = 'actioned', resolved_by = ?, resolved_at = ? WHERE review_id = ? AND status = 'open'", actor.id, now(), r.id);
+    await event(r.id, actor, staffRole(actor), 'hidden', { reason: why }); await audit(actor, 'review_hidden', { type: 'review', id: r.id, detail: { reason: why, seller: r.seller_id } });
   });
 }
-function restore(actor, reviewId, reason) {
+async function restore(actor, reviewId, reason) {
   staffOnly(actor); const why = why5(reason);
-  return tx(() => {
-    const r = q.get('SELECT * FROM seller_reviews WHERE id = ?', Number(reviewId)); if (!r) throw new HttpError(404, 'Review not found');
+  return await tx(async () => {
+    const r = await q.get('SELECT * FROM seller_reviews WHERE id = ?', Number(reviewId)); if (!r) throw new HttpError(404, 'Review not found');
     if (r.status !== 'hidden') throw new HttpError(409, 'Only a hidden review can be restored.');
-    q.run("UPDATE seller_reviews SET status = 'published' WHERE id = ?", r.id);
-    event(r.id, actor, staffRole(actor), 'restored', { reason: why }); audit(actor, 'review_restored', { type: 'review', id: r.id, detail: { reason: why } });
+    await q.run("UPDATE seller_reviews SET status = 'published' WHERE id = ?", r.id);
+    await event(r.id, actor, staffRole(actor), 'restored', { reason: why }); await audit(actor, 'review_restored', { type: 'review', id: r.id, detail: { reason: why } });
   });
 }
 /** Close the open reports on a review without hiding it. */
-function dismiss(actor, reviewId, reason) {
+async function dismiss(actor, reviewId, reason) {
   staffOnly(actor); const why = why5(reason);
-  return tx(() => {
-    const r = q.get('SELECT id FROM seller_reviews WHERE id = ?', Number(reviewId)); if (!r) throw new HttpError(404, 'Review not found');
-    const n = q.run("UPDATE review_reports SET status = 'dismissed', resolved_by = ?, resolved_at = ? WHERE review_id = ? AND status = 'open'", actor.id, now(), r.id).changes;
+  return await tx(async () => {
+    const r = await q.get('SELECT id FROM seller_reviews WHERE id = ?', Number(reviewId)); if (!r) throw new HttpError(404, 'Review not found');
+    const n = (await q.run("UPDATE review_reports SET status = 'dismissed', resolved_by = ?, resolved_at = ? WHERE review_id = ? AND status = 'open'", actor.id, now(), r.id)).changes;
     if (!n) throw new HttpError(409, 'There are no open reports on this review.');
-    event(r.id, actor, staffRole(actor), 'report_dismissed', { reason: why, reports: n }); audit(actor, 'review_reports_dismissed', { type: 'review', id: r.id, detail: { reason: why, reports: n } });
+    await event(r.id, actor, staffRole(actor), 'report_dismissed', { reason: why, reports: n }); await audit(actor, 'review_reports_dismissed', { type: 'review', id: r.id, detail: { reason: why, reports: n } });
   });
 }
-const moderationQueue = () => ({
-  reported: q.all(`SELECT r.*, b.display_name buyer, s.store_name, s.handle, (SELECT COUNT(*) FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') open_reports,
+const moderationQueue = async () => ({
+  reported: await q.all(`SELECT r.*, b.display_name buyer, s.store_name, s.handle, (SELECT COUNT(*) FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') open_reports,
       (SELECT group_concat(p.reason, ' ¦ ') FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') reasons FROM seller_reviews r JOIN users b ON b.id = r.buyer_id JOIN users s ON s.id = r.seller_id
       WHERE EXISTS (SELECT 1 FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') ORDER BY r.id DESC LIMIT 100`),
-  hidden: q.all(`SELECT r.*, b.display_name buyer, s.store_name, s.handle FROM seller_reviews r JOIN users b ON b.id = r.buyer_id JOIN users s ON s.id = r.seller_id WHERE r.status = 'hidden' ORDER BY r.id DESC LIMIT 100`),
+  hidden: await q.all(`SELECT r.*, b.display_name buyer, s.store_name, s.handle FROM seller_reviews r JOIN users b ON b.id = r.buyer_id JOIN users s ON s.id = r.seller_id WHERE r.status = 'hidden' ORDER BY r.id DESC LIMIT 100`),
 });
-const history = (reviewId) => q.all('SELECT e.*, u.display_name FROM review_events e JOIN users u ON u.id = e.actor_id WHERE e.review_id = ? ORDER BY e.id', Number(reviewId));
+const history = async (reviewId) => await q.all('SELECT e.*, u.display_name FROM review_events e JOIN users u ON u.id = e.actor_id WHERE e.review_id = ? ORDER BY e.id', Number(reviewId));
 
 // ------------------------------------------------------------------ reading
 /** Raw counts over PUBLISHED reviews only: reviews, thumbs-up among them, and how many have written text. */
-function stats(sellerId) {
-  const r = q.get("SELECT COUNT(*) reviews, COALESCE(SUM(thumbs_up), 0) thumbs, COUNT(body) written FROM seller_reviews WHERE seller_id = ? AND status = 'published'", Number(sellerId));
+async function stats(sellerId) {
+  const r = await q.get("SELECT COUNT(*) reviews, COALESCE(SUM(thumbs_up), 0) thumbs, COUNT(body) written FROM seller_reviews WHERE seller_id = ? AND status = 'published'", Number(sellerId));
   return { reviews: r.reviews, thumbs: r.thumbs, written: r.written };
 }
-const recent = (sellerId, n = 8) => q.all("SELECT r.id, r.thumbs_up, r.body, r.created_at, r.edited_at, u.display_name FROM seller_reviews r JOIN users u ON u.id = r.buyer_id WHERE r.seller_id = ? AND r.status = 'published' AND r.body IS NOT NULL ORDER BY r.created_at DESC, r.id DESC LIMIT ?", Number(sellerId), n);
+const recent = async (sellerId, n = 8) => await q.all("SELECT r.id, r.thumbs_up, r.body, r.created_at, r.edited_at, u.display_name FROM seller_reviews r JOIN users u ON u.id = r.buyer_id WHERE r.seller_id = ? AND r.status = 'published' AND r.body IS NOT NULL ORDER BY r.created_at DESC, r.id DESC LIMIT ?", Number(sellerId), n);
 
 // ------------------------------------------------------------------ rendering (everything user-written goes through esc())
 const THUMB = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16"><path d="M7 11v9H4v-9zM7 11l4-8c1.5 0 2.5 1 2.5 2.5V9H19a2 2 0 0 1 2 2.3l-1.3 7a2 2 0 0 1-2 1.7H7"/></svg>';
 const firstName = (n) => String(n || 'Buyer').split(' ')[0];
 
 /** Compact reputation line for cards: raw counts only, nothing when there are no reviews. */
-function line(sellerId) {
-  const s = stats(sellerId);
+async function line(sellerId) {
+  const s = await stats(sellerId);
   return s.reviews ? `<span class="rep-line" title="Order-linked reviews; not a rating">${THUMB} ${s.thumbs} thumbs-up · ${s.reviews} review${s.reviews === 1 ? '' : 's'}</span>` : '';
 }
 /** Storefront section. `viewer` enables the report button. */
-function section(sellerId, viewer) {
-  const s = stats(sellerId), list = recent(sellerId);
+async function section(sellerId, viewer) {
+  const s = await stats(sellerId), list = await recent(sellerId);
   const head = `<div class="sechead"><h2>Reviews</h2></div>`;
   if (!s.reviews) return `<section class="reputation" aria-label="Seller reviews">${head}<div class="panel"><p style="margin:0"><strong>No reviews yet.</strong> <span class="muted">Buyers can leave a thumbs-up and an optional review after they receive an order from this seller.</span></p></div></section>`;
   return `<section class="reputation" aria-label="Seller reviews">${head}
@@ -161,9 +161,9 @@ function section(sellerId, viewer) {
       ${viewer && viewer.id ? `<details class="small"><summary>Report this review</summary><form data-api="/api/reviews/${v.id}/report" data-reload><label for="rr${v.id}" class="sr">Why are you reporting it?</label><input id="rr${v.id}" name="reason" maxlength="500" minlength="5" required placeholder="What is wrong with it?"><button class="btn ghost small" type="submit">Send report</button></form></details>` : ''}</div>`).join('')}</section>`;
 }
 /** Panel for the buyer's own order page. */
-function panel(o) {
+async function panel(o) {
   if (!COMPLETE.includes(o.status)) return '';
-  const cur = forOrder(o.id);
+  const cur = await forOrder(o.id);
   const form = (url, method, c) => `<form data-api="${url}" data-method="${method}" data-reload>
       <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="thumbsUp"${c && c.thumbs_up ? ' checked' : ''}> ${THUMB} <strong>Thumbs-up</strong> — I had a good experience with this seller</label>
       <label for="rv${o.id}" style="margin-top:10px">Your review <span class="opt">(optional, up to ${MAX_BODY} characters)</span></label><textarea id="rv${o.id}" name="body" maxlength="${MAX_BODY}" placeholder="How was the item, the communication and the shipping?">${esc(c && c.body || '')}</textarea>

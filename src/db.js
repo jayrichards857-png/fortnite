@@ -767,29 +767,57 @@ function migrate() {
 }
 migrate();
 
+// ---- async data-access facade -------------------------------------------------------------------------------------------
+// Stage 1 of the PostgreSQL migration (docs/POSTGRES_MIGRATION.md): every call site is already `await`-based; this file is the only
+// place that knows which engine is underneath. While SQLite is the engine there is ONE connection, so a transaction must exclude
+// every other statement from other requests until it finishes (`held`). Statements issued *inside* the transaction (same async
+// context, tracked with AsyncLocalStorage) pass straight through; nested tx() joins the outer one.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const als = new AsyncLocalStorage();
+let held = null;                                   // promise of the currently open outermost transaction
+
+// In development/tests a forgotten `await` on a db call throws as soon as the un-awaited result is used.
+const GUARD = process.env.NODE_ENV !== 'production';
+const guarded = (p, what) => !GUARD ? p : new Proxy(p, {
+  get(t, k) {
+    if (k === 'then' || k === 'catch' || k === 'finally') return t[k].bind(t);
+    if (typeof k === 'symbol') return Reflect.get(t, k);
+    throw new Error(`missing await on db call (${what}): read .${String(k)} of an un-awaited result`);
+  },
+});
+async function exec(fn) {
+  if (!als.getStore()) while (held) await held;
+  return fn();
+}
 const q = {
-  get: (sql, ...p) => db.prepare(sql).get(...p),
-  all: (sql, ...p) => db.prepare(sql).all(...p),
-  run: (sql, ...p) => db.prepare(sql).run(...p),
+  get: (sql, ...p) => guarded(exec(() => db.prepare(sql).get(...p)), 'q.get'),
+  all: (sql, ...p) => guarded(exec(() => db.prepare(sql).all(...p)), 'q.all'),
+  run: (sql, ...p) => guarded(exec(() => db.prepare(sql).run(...p)), 'q.run'),
 };
 
-// BEGIN IMMEDIATE takes SQLite's write lock up-front, so concurrent checkouts serialize and a
-// read-then-write race (two buyers seeing the same item "active") cannot happen.
-function tx(fn) {
-  db.exec('BEGIN IMMEDIATE');
-  try { const r = fn(); db.exec('COMMIT'); return r; }
-  catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; }
+async function tx(fn) {
+  if (als.getStore()) return fn();                 // nested: join the outer transaction
+  while (held) await held;
+  let release; held = new Promise((r) => { release = r; });
+  try {
+    return await als.run({ tx: true }, async () => {
+      db.exec('BEGIN IMMEDIATE');
+      try { const r = await fn(); db.exec('COMMIT'); return r; }
+      catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; }
+    });
+  } finally { held = null; release(); }
 }
 
 const now = () => Math.floor(Date.now() / 1000);
+const ready = async () => {};                      // PostgreSQL stage: connect + run migrations here
 
-function getSettings() {
+async function getSettings() {
   const out = { ...config.defaults };
-  for (const r of q.all('SELECT key, value FROM settings')) if (r.key in out) out[r.key] = Number(r.value);
+  for (const r of await q.all('SELECT key, value FROM settings')) if (r.key in out) out[r.key] = Number(r.value);
   return out;
 }
-function setSetting(key, value) {
-  q.run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, String(value));
+async function setSetting(key, value) {
+  await q.run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, String(value));
 }
 
-module.exports = { db, q, tx, now, getSettings, setSetting, MIGRATIONS };
+module.exports = { db, q, tx, now, ready, getSettings, setSetting, MIGRATIONS };

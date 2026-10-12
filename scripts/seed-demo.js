@@ -60,25 +60,25 @@ const PW = 'demo-password-1';
   const draft = await sellers[0].post('/api/seller/listings', { title: 'Flannel overshirt (needs photos)', category: 'clothing', price: '42', cost: '11', sku: 'NOR-DRAFT', status: 'draft' });
   const buyer = await H.newUser('Alex Rivera'); const buyer2 = await H.newUser('Sam Chen');
   // Fixture login credentials are for the isolated demo DB only.
-  q.run('UPDATE users SET email = ?, password_hash = ? WHERE email = ?', 'buyer@demo.test', hashPassword(PW), buyer.email);
-  q.run('UPDATE users SET email = ?, password_hash = ? WHERE id = (SELECT id FROM users WHERE handle = ?)', 'seller@demo.test', hashPassword(PW), 'northfield');
-  q.run('UPDATE users SET email = ?, password_hash = ? WHERE id = (SELECT id FROM users WHERE handle = ?)', 'seller2@demo.test', hashPassword(PW), 'maple');
-  q.run("INSERT INTO users(email, password_hash, display_name, is_admin, created_at) VALUES('admin@demo.test', ?, 'Admin', 1, strftime('%s','now'))", hashPassword(PW));
+  await q.run('UPDATE users SET email = ?, password_hash = ? WHERE email = ?', 'buyer@demo.test', hashPassword(PW), buyer.email);
+  await q.run('UPDATE users SET email = ?, password_hash = ? WHERE id = (SELECT id FROM users WHERE handle = ?)', 'seller@demo.test', hashPassword(PW), 'northfield');
+  await q.run('UPDATE users SET email = ?, password_hash = ? WHERE id = (SELECT id FROM users WHERE handle = ?)', 'seller2@demo.test', hashPassword(PW), 'maple');
+  await q.run("INSERT INTO users(email, password_hash, display_name, is_admin, created_at) VALUES('admin@demo.test', ?, 'Admin', 1, strftime('%s','now'))", hashPassword(PW));
 
-  const buy = async (c, listingIds) => { for (const id of listingIds) await c.post('/api/cart', { listingId: id }); const ck = await H.checkout(c); await H.pay(c, ck.json.checkoutId); return q.all('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId); };
+  const buy = async (c, listingIds) => { for (const id of listingIds) await c.post('/api/cart', { listingId: id }); const ck = await H.checkout(c); await H.pay(c, ck.json.checkoutId); return await q.all('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId); };
   const ship = (s, o, n) => s.post(`/api/seller/orders/${o.id}/ship`, { carrier: 'USPS', tracking: `9400${1000000 + n}`.padEnd(14, '0') });
   const day = 86400, now = Math.floor(Date.now() / 1000);
-  const back = (o, d) => q.run('UPDATE orders SET created_at = created_at - ?, paid_at = paid_at - ? WHERE id = ?', d * day, d * day, o.id);
+  const back = async (o, d) => await q.run('UPDATE orders SET created_at = created_at - ?, paid_at = paid_at - ? WHERE id = ?', d * day, d * day, o.id);
   const s0 = sellers[0], s1 = sellers[1];
   // completed sales spread over the last weeks (released)
   const done = [[ids[0], 24], [ids[2], 19], [ids[4], 13], [ids[16], 9], [ids[1], 4]];
   let n = 1;
   for (const [id, d] of done) {
-    const [o] = await buy(buyer2, [id]); await ship(s0, o, n++); await require('../src/escrow').markDelivered(o.id, 'carrier'); require('../src/escrow').releaseToSeller(o.id, 'system:auto-release'); back(o, d);
+    const [o] = await buy(buyer2, [id]); await ship(s0, o, n++); await require('../src/escrow').markDelivered(o.id, 'carrier'); await require('../src/escrow').releaseToSeller(o.id, 'system:auto-release'); await back(o, d);
   }
-  const [o2] = await buy(buyer, [ids[6]]); await ship(s1, o2, n++); back(o2, 3);        // shipped
-  const [o3] = await buy(buyer, [ids[10]]); await ship(s1, o3, n++); require('../src/escrow').markDelivered(o3.id, 'carrier'); back(o3, 6); // delivered, awaiting confirmation
-  const [o4] = await buy(buyer, [ids[3]]); back(o4, 1);                                      // paid, to ship
+  const [o2] = await buy(buyer, [ids[6]]); await ship(s1, o2, n++); await back(o2, 3);        // shipped
+  const [o3] = await buy(buyer, [ids[10]]); await ship(s1, o3, n++); await require('../src/escrow').markDelivered(o3.id, 'carrier'); await back(o3, 6); // delivered, awaiting confirmation
+  const [o4] = await buy(buyer, [ids[3]]); await back(o4, 1);                                      // paid, to ship
   const [o5] = await buy(buyer2, [ids[7]]); await ship(s1, o5, n++);                          // disputed
   const ev1 = (await buyer2.req('POST', '/api/uploads', swatch(3, 1), { raw: true, type: 'image/png' })).json.file;
   await buyer2.post(`/api/orders/${o5.id}/dispute`, { reason: 'Left shoe has a sole separation that is not shown in the listing photos.', evidence_json: JSON.stringify([ev1]) });
@@ -87,7 +87,7 @@ const PW = 'demo-password-1';
   // cart contents for the buyer
   await buyer.post('/api/cart', { listingId: ids[12] }); await buyer.post('/api/cart', { listingId: ids[14] }); await buyer.post('/api/cart', { listingId: ids[13] });
   await buyer.put(`/api/favorites/${ids[8]}`); await buyer.put(`/api/favorites/${ids[11]}`);
-  q.run('UPDATE listings SET published_at = published_at - ? WHERE id IN (?, ?)', 120 * day, ids[5], ids[9]); // aged inventory
+  await q.run('UPDATE listings SET published_at = published_at - ? WHERE id IN (?, ?)', 120 * day, ids[5], ids[9]); // aged inventory
   console.log('Demo DB ready:', dbFile, '| logins: buyer@demo.test, seller@demo.test, seller2@demo.test, admin@demo.test | password:', PW);
   await H.stop(); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

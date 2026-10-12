@@ -11,9 +11,9 @@ const MAX_BODY = 2000, PAGE = 50, SYNC_LIMIT = 200;
 const other = (c, userId) => (c.buyer_id === userId ? c.seller_id : c.buyer_id);
 
 /** Membership gate: the ONLY way a conversation is looked up for a user. Non-members get 404 (existence isn't leaked). */
-function memberConversation(user, conversationId) {
+async function memberConversation(user, conversationId) {
   const id = Number(conversationId);
-  const c = Number.isInteger(id) ? q.get('SELECT * FROM conversations WHERE id = ? AND (buyer_id = ? OR seller_id = ?)', id, user.id, user.id) : null;
+  const c = Number.isInteger(id) ? await q.get('SELECT * FROM conversations WHERE id = ? AND (buyer_id = ? OR seller_id = ?)', id, user.id, user.id) : null;
   if (!c) throw new HttpError(404, 'Conversation not found');
   return c;
 }
@@ -28,25 +28,25 @@ function present(m) {
  * from the listing, or from the storefront handle. The client never supplies a user id. `arg` is a listing id or
  * { listingId } | { sellerHandle } (contacting a seller needs no listing and no payment link).
  */
-function startConversation(user, arg) {
+async function startConversation(user, arg) {
   rateLimit(`chat-start:${user.id}`, 30, 3600);
   const input = arg && typeof arg === 'object' ? arg : { listingId: arg };
   let sellerId, listingId = null;
   if (input.listingId) {
-    const l = q.get(`SELECT l.id, l.seller_id, l.status, u.banned, u.is_seller FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, Number(input.listingId));
+    const l = await q.get(`SELECT l.id, l.seller_id, l.status, u.banned, u.is_seller FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.id = ?`, Number(input.listingId));
     if (!l || !['active', 'reserved', 'sold'].includes(l.status) || l.banned || !l.is_seller) throw new HttpError(404, 'Listing not found');
     sellerId = l.seller_id; listingId = l.id;
   } else if (input.sellerHandle) {
-    const sel = q.get('SELECT id, banned, is_seller FROM users WHERE handle = ? COLLATE NOCASE', String(input.sellerHandle).slice(0, 40));
+    const sel = await q.get('SELECT id, banned, is_seller FROM users WHERE handle = ? COLLATE NOCASE', String(input.sellerHandle).slice(0, 40));
     if (!sel || !sel.is_seller || sel.banned) throw new HttpError(404, 'Seller not found');
     sellerId = sel.id;
   } else throw new HttpError(400, 'Choose a listing or a seller to contact.');
   if (sellerId === user.id) throw new HttpError(403, "You can't message yourself.");
-  return tx(() => {
-    q.run('INSERT OR IGNORE INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES(?,?,?,?)', user.id, sellerId, listingId, now());
+  return await tx(async () => {
+    await q.run('INSERT OR IGNORE INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES(?,?,?,?)', user.id, sellerId, listingId, now());
     // an existing conversation keeps its history; a listing-based contact just moves the listing context
-    if (listingId) q.run('UPDATE conversations SET listing_id = ? WHERE buyer_id = ? AND seller_id = ?', listingId, user.id, sellerId);
-    return q.get('SELECT * FROM conversations WHERE buyer_id = ? AND seller_id = ?', user.id, sellerId).id;
+    if (listingId) await q.run('UPDATE conversations SET listing_id = ? WHERE buyer_id = ? AND seller_id = ?', listingId, user.id, sellerId);
+    return (await q.get('SELECT * FROM conversations WHERE buyer_id = ? AND seller_id = ?', user.id, sellerId)).id;
   });
 }
 
@@ -63,27 +63,27 @@ function validateBody(raw) {
  * message is always in the database. Retrying with the same clientId returns the original row (duplicate:true):
  * enforced by UNIQUE(conversation_id, sender_id, client_id), not just by an application-level check.
  */
-function sendMessage(user, { conversationId, clientId, body }) {
+async function sendMessage(user, { conversationId, clientId, body }) {
   if (!/^[\w-]{8,64}$/.test(String(clientId || ''))) throw new HttpError(400, 'Missing or invalid clientId');
   const text = validateBody(body);
-  const c = memberConversation(user, conversationId);
+  const c = await memberConversation(user, conversationId);
   const recipientId = other(c, user.id);
-  const recipient = q.get('SELECT banned FROM users WHERE id = ?', recipientId);
+  const recipient = await q.get('SELECT banned FROM users WHERE id = ?', recipientId);
   if (!recipient || recipient.banned) throw new HttpError(403, 'This user is unavailable.');
-  const existing = q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId);
+  const existing = await q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId);
   if (existing) return { message: present(existing), duplicate: true };
   rateLimit(`chat-send:${user.id}`, 40, 60);
 
   let msg, duplicate = false;
-  tx(() => {
+  await tx(async () => {
     const t = now();
-    const r = q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, listing_id, created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(conversation_id, sender_id, client_id) DO NOTHING',
+    const r = await q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, listing_id, created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(conversation_id, sender_id, client_id) DO NOTHING',
       c.id, user.id, text, clientId, c.listing_id, t);
-    if (r.changes === 0) { duplicate = true; msg = q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId); return; }
-    msg = q.get('SELECT * FROM messages WHERE id = ?', r.lastInsertRowid);
-    q.run('UPDATE conversations SET last_message_at = ? WHERE id = ?', t, c.id);
+    if (r.changes === 0) { duplicate = true; msg = await q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId); return; }
+    msg = await q.get('SELECT * FROM messages WHERE id = ?', r.lastInsertRowid);
+    await q.run('UPDATE conversations SET last_message_at = ? WHERE id = ?', t, c.id);
     // sending implies you've read everything up to your own message
-    q.run(`INSERT INTO conversation_reads(conversation_id, user_id, last_read_message_id, updated_at) VALUES(?,?,?,?)
+    await q.run(`INSERT INTO conversation_reads(conversation_id, user_id, last_read_message_id, updated_at) VALUES(?,?,?,?)
            ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_message_id = MAX(last_read_message_id, excluded.last_read_message_id), updated_at = excluded.updated_at`, c.id, user.id, msg.id, t);
   });
   const out = present(msg);
@@ -96,21 +96,21 @@ function sendMessage(user, { conversationId, clientId, body }) {
 }
 
 /** Mark everything up to `upTo` as read (clamped to the conversation's newest message; never moves backwards). */
-function markRead(user, { conversationId, upTo }) {
-  const c = memberConversation(user, conversationId);
-  const max = q.get('SELECT COALESCE(MAX(id), 0) m FROM messages WHERE conversation_id = ?', c.id).m;
+async function markRead(user, { conversationId, upTo }) {
+  const c = await memberConversation(user, conversationId);
+  const max = (await q.get('SELECT COALESCE(MAX(id), 0) m FROM messages WHERE conversation_id = ?', c.id)).m;
   const target = Math.min(Math.max(0, Math.floor(Number(upTo) || 0)), max);
-  q.run(`INSERT INTO conversation_reads(conversation_id, user_id, last_read_message_id, updated_at) VALUES(?,?,?,?)
+  await q.run(`INSERT INTO conversation_reads(conversation_id, user_id, last_read_message_id, updated_at) VALUES(?,?,?,?)
          ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_message_id = MAX(last_read_message_id, excluded.last_read_message_id), updated_at = excluded.updated_at`, c.id, user.id, target, now());
-  const readUpTo = q.get('SELECT last_read_message_id r FROM conversation_reads WHERE conversation_id = ? AND user_id = ?', c.id, user.id).r;
+  const readUpTo = (await q.get('SELECT last_read_message_id r FROM conversation_reads WHERE conversation_id = ? AND user_id = ?', c.id, user.id)).r;
   const ev = { t: 'read', conversationId: c.id, userId: user.id, upTo: readUpTo };
   getHub().publish(other(c, user.id), ev); getHub().publish(user.id, ev);
   return { readUpTo };
 }
 
 /** Typing indicators are ephemeral by design: published to the other member only, never stored. */
-function typing(user, { conversationId }) {
-  const c = memberConversation(user, conversationId);
+async function typing(user, { conversationId }) {
+  const c = await memberConversation(user, conversationId);
   rateLimit(`chat-typing:${user.id}`, 60, 60);
   getHub().publish(other(c, user.id), { t: 'typing', conversationId: c.id, userId: user.id, at: Date.now() });
   return {};
@@ -134,20 +134,20 @@ function presentConv(c, userId) {
     lastBody: c.last_body, lastSender: c.last_sender, lastMessageAt: c.last_message_at || c.created_at, unread: c.unread || 0, otherReadUpTo: c.other_read || 0 };
 }
 
-function listConversations(user) {
+async function listConversations(user) {
   // conversations with no messages yet are hidden from the *seller* (they'd be empty noise); buyers see what they just opened
-  return q.all(`${CONV_SQL} WHERE (c.buyer_id = ?1 OR (c.seller_id = ?1 AND c.last_message_at IS NOT NULL)) ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.id DESC LIMIT 200`, user.id).map((c) => presentConv(c, user.id));
+  return (await q.all(`${CONV_SQL} WHERE (c.buyer_id = ?1 OR (c.seller_id = ?1 AND c.last_message_at IS NOT NULL)) ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.id DESC LIMIT 200`, user.id)).map((c) => presentConv(c, user.id));
 }
-function getConversation(user, id) {
-  memberConversation(user, id);
-  return presentConv(q.get(`${CONV_SQL} WHERE c.id = ?2`, user.id, Number(id)), user.id);
+async function getConversation(user, id) {
+  await memberConversation(user, id);
+  return presentConv(await q.get(`${CONV_SQL} WHERE c.id = ?2`, user.id, Number(id)), user.id);
 }
 
 /** Message history, newest page first (oldest→newest within the page). `before` = message id for paging back. */
-function history(user, { conversationId, before }) {
-  const c = memberConversation(user, conversationId);
+async function history(user, { conversationId, before }) {
+  const c = await memberConversation(user, conversationId);
   const b = Number(before) > 0 ? Number(before) : Number.MAX_SAFE_INTEGER;
-  const rows = q.all('SELECT * FROM messages WHERE conversation_id = ? AND id < ? ORDER BY id DESC LIMIT ?', c.id, b, PAGE + 1);
+  const rows = await q.all('SELECT * FROM messages WHERE conversation_id = ? AND id < ? ORDER BY id DESC LIMIT ?', c.id, b, PAGE + 1);
   const more = rows.length > PAGE; if (more) rows.pop();
   return { messages: rows.reverse().map(present), hasMore: more };
 }
@@ -157,33 +157,33 @@ function history(user, { conversationId, before }) {
  * unread counts and read receipts. Because ids only increase, a client that remembers the highest id it saw can never
  * miss or double-apply a message, no matter how long it was offline.
  */
-function sync(user, after) {
+async function sync(user, after) {
   const cursor = Math.max(0, Math.floor(Number(after) || 0));
-  const rows = q.all(`SELECT m.* FROM messages m JOIN conversations c ON c.id = m.conversation_id
+  const rows = await q.all(`SELECT m.* FROM messages m JOIN conversations c ON c.id = m.conversation_id
                       WHERE m.id > ? AND (c.buyer_id = ? OR c.seller_id = ?) ORDER BY m.id LIMIT ${SYNC_LIMIT + 1}`, cursor, user.id, user.id);
   const more = rows.length > SYNC_LIMIT; if (more) rows.pop();
-  return { messages: rows.map(present), hasMore: more, conversations: listConversations(user), serverTime: Date.now() };
+  return { messages: rows.map(present), hasMore: more, conversations: await listConversations(user), serverTime: Date.now() };
 }
 
 /** Highest message id the user can see right now: the starting sync cursor for a freshly loaded page. */
-function cursorFor(userId) {
-  return q.get('SELECT COALESCE(MAX(m.id), 0) n FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.buyer_id = ? OR c.seller_id = ?', userId, userId).n;
+async function cursorFor(userId) {
+  return (await q.get('SELECT COALESCE(MAX(m.id), 0) n FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.buyer_id = ? OR c.seller_id = ?', userId, userId)).n;
 }
 
-function unreadTotal(userId) {
-  return q.get(`SELECT COUNT(*) n FROM messages m JOIN conversations c ON c.id = m.conversation_id
+async function unreadTotal(userId) {
+  return (await q.get(`SELECT COUNT(*) n FROM messages m JOIN conversations c ON c.id = m.conversation_id
     WHERE (c.buyer_id = ?1 OR c.seller_id = ?1) AND m.sender_id <> ?1
-      AND m.id > COALESCE((SELECT last_read_message_id FROM conversation_reads r WHERE r.conversation_id = c.id AND r.user_id = ?1), 0)`, userId).n;
+      AND m.id > COALESCE((SELECT last_read_message_id FROM conversation_reads r WHERE r.conversation_id = c.id AND r.user_id = ?1), 0)`, userId)).n;
 }
 
 /** The single entry point used by both transports for client→server commands. */
-function runCommand(user, cmd) {
+async function runCommand(user, cmd) {
   switch (cmd && cmd.op) {
-    case 'send': return sendMessage(user, cmd);
-    case 'read': return markRead(user, cmd);
-    case 'typing': return typing(user, cmd);
-    case 'history': return history(user, cmd);
-    case 'sync': return sync(user, cmd.after);
+    case 'send': return await sendMessage(user, cmd);
+    case 'read': return await markRead(user, cmd);
+    case 'typing': return await typing(user, cmd);
+    case 'history': return await history(user, cmd);
+    case 'sync': return await sync(user, cmd.after);
     default: throw new HttpError(400, 'Unknown command');
   }
 }

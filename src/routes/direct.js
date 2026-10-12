@@ -19,15 +19,15 @@ const SHP = require('../shipments');
 const SHIPPO = require('../shippo');
 
 const r = express.Router();
-const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
-const notFound = (req, res, what = 'Not found') => res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty(what, 'It may not exist, or it belongs to someone else.', ['/shop', 'Browse the shop']) }));
+const page = async (req, res, opts) => res.send(await V.layout({ user: req.user, path: req.path, ...opts }));
+const notFound = async (req, res, what = 'Not found') => res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty(what, 'It may not exist, or it belongs to someone else.', ['/shop', 'Browse the shop']) }));
 const reqNo = (o) => `PP-${o.id}`;
 
 // ---------- Switch the PairPlug-held cart/escrow checkout off in direct-checkout mode ----------
-r.all(['/cart', '/checkout', '/api/cart', '/api/cart/:id', '/api/checkout', '/pay/:id', '/api/sandbox/pay/:id'], (req, res, next) => {
+r.all(['/cart', '/checkout', '/api/cart', '/api/cart/:id', '/api/checkout', '/pay/:id', '/api/sandbox/pay/:id'], async (req, res, next) => {
   if (!X.isExternal()) return next();
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'The cart is not used in the private beta. Each item is purchased directly from its seller.' });
-  return page(req, res, { title: 'Checkout', body: V.empty('There is no cart in the private beta', 'Each item is bought directly from the seller through their own checkout. Open an item and choose “Continue to seller checkout”.', ['/shop', 'Browse the shop']) });
+  return await page(req, res, { title: 'Checkout', body: V.empty('There is no cart in the private beta', 'Each item is bought directly from the seller through their own checkout. Open an item and choose “Continue to seller checkout”.', ['/shop', 'Browse the shop']) });
 });
 
 const HOW_IT_WORKS = `<div class="panel notice"><h3>How payment works</h3><ul class="plain">
@@ -36,15 +36,15 @@ const HOW_IT_WORKS = `<div class="panel notice"><h3>How payment works</h3><ul cl
   <li><strong>If an issue arises, contact PairPlug.</strong> We may review the order, contact the seller, and report the problem to the payment processor with the evidence we have. We cannot promise a refund or recovery.</li></ul>${DISC.canCannot({ compact: true })}<p class="small" style="margin:8px 0 0">Details: <a href="/payments">Payments, Refunds &amp; Disputes</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></p></div>`;
 
 // ---------- Buyer: review terms + address, then reserve ----------
-r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
-  if (!X.isExternal()) return notFound(req, res);
-  const l = L.getListing(Number(req.params.id));
-  if (!l || !['active', 'reserved', 'sold'].includes(l.status)) return notFound(req, res, 'Listing not found');
-  const mine = l.reserved_checkout_id && q.get(`SELECT o.id FROM orders o WHERE o.checkout_id = ? AND o.buyer_id = ? AND o.status = 'pending_payment'`, l.reserved_checkout_id, req.user.id);
+r.get('/buy/:id(\\d+)', auth.requireUser, async (req, res) => {
+  if (!X.isExternal()) return await notFound(req, res);
+  const l = await L.getListing(Number(req.params.id));
+  if (!l || !['active', 'reserved', 'sold'].includes(l.status)) return await notFound(req, res, 'Listing not found');
+  const mine = l.reserved_checkout_id && await q.get(`SELECT o.id FROM orders o WHERE o.checkout_id = ? AND o.buyer_id = ? AND o.status = 'pending_payment'`, l.reserved_checkout_id, req.user.id);
   if (mine) return res.redirect(`/orders/${mine.id}`);
   if (l.seller_id === req.user.id) return res.redirect(`/listing/${l.id}`);
-  const p = X.purchasable(l), t = X.terms(l);
-  if (!p.ok) return page(req, res, { title: 'Unavailable', body: V.empty(l.status === 'sold' ? 'Sold' : 'Not available right now', p.reason || 'This item is not available.', [`/listing/${l.id}`, 'Back to listing']) });
+  const p = await X.purchasable(l), t = X.terms(l);
+  if (!p.ok) return await page(req, res, { title: 'Unavailable', body: V.empty(l.status === 'sold' ? 'Sold' : 'Not available right now', p.reason || 'This item is not available.', [`/listing/${l.id}`, 'Back to listing']) });
   const field = (n, label, extra = '') => `<div><label for="a_${n}">${label}</label><input id="a_${n}" name="${n}" ${extra}></div>`;
   const body = `<h1>Continue to seller checkout</h1><div class="two"><section>
     ${HOW_IT_WORKS}
@@ -54,7 +54,7 @@ r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
       <label for="a_country">Country</label><select id="a_country" name="country"><option value="US">United States</option><option value="CA">Canada</option><option value="MX">Mexico</option></select>
       <label style="font-weight:400;display:flex;gap:8px;margin-top:14px"><input type="checkbox" id="ack" name="acknowledged"> ${esc(DISC.ACK)}</label>
       <button class="btn block" style="margin-top:14px" type="submit">Reserve item &amp; continue</button>
-      <p class="small muted" style="margin-bottom:0">The item is held for you for ${getSettings().external_hold_minutes} minutes while you pay. Nothing is charged by PairPlug.</p></form></section>
+      <p class="small muted" style="margin-bottom:0">The item is held for you for ${(await getSettings()).external_hold_minutes} minutes while you pay. Nothing is charged by PairPlug.</p></form></section>
     <aside class="panel sticky"><h3>Order summary</h3><div class="line" style="grid-template-columns:56px 1fr"><a href="/listing/${l.id}">${V.img(l.images[0], 'thumb', l.title)}</a><div><strong>${esc(l.title)}</strong><div class="muted small">${esc([l.size && 'Size ' + l.size, l.condition && config.conditions[l.condition]].filter(Boolean).join(' · '))}</div></div></div>
       <div class="summary-row"><span>Item</span><span>${money(t.itemCents)}</span></div>
       <div class="summary-row"><span>Shipping${t.shippingPayer === 'seller' ? ' (seller pays)' : ' (flat fee)'}</span><span>${t.shippingCents ? money(t.shippingCents) : 'Free'}</span></div>
@@ -62,11 +62,11 @@ r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
       ${PP.buyerWarning(t, { id: 'byp-buy', reportHref: '/support#payment-mismatch' })}</aside></div>`;
   const script = `<script>document.getElementById('buyform').addEventListener('submit',async e=>{e.preventDefault();const f=e.target,b=f.querySelector('button[type=submit]');b.disabled=true;f.querySelectorAll('.err,.form-err').forEach(x=>x.remove());
     const d=Object.fromEntries(new FormData(f));try{const r=await pp.api('POST','/api/purchases',{listingId:Number(f.dataset.listing),acknowledged:f.elements.acknowledged.checked,address:d});location.href=r.redirect}catch(x){const fl=x.fields||{};for(const[k,m]of Object.entries(fl)){const el=f.elements[k];if(el&&el.insertAdjacentHTML)el.insertAdjacentHTML('afterend','<div class="err">'+m+'</div>')}f.insertAdjacentHTML('afterbegin','<div class="form-err" role="alert"></div>');f.firstChild.textContent=x.message;b.disabled=false}})</script>`;
-  res.send(V.layout({ user: req.user, path: '/buy', title: 'Continue to seller checkout', body, scripts: script }));
+  res.send(await V.layout({ user: req.user, path: '/buy', title: 'Continue to seller checkout', body, scripts: script }));
 });
 
-r.post('/api/purchases', auth.requireUser, (req, res) => {
-  const out = X.startPurchase(req.user, { listingId: req.body.listingId, address: req.body.address, acknowledged: req.body.acknowledged === true });
+r.post('/api/purchases', auth.requireUser, async (req, res) => {
+  const out = await X.startPurchase(req.user, { listingId: req.body.listingId, address: req.body.address, acknowledged: req.body.acknowledged === true });
   res.json({ ok: true, orderId: out.orderId, reference: out.reference, existing: out.existing, redirect: `/orders/${out.orderId}` });
 });
 
@@ -75,13 +75,13 @@ const stepper = (o) => {
   const steps = [['Reserved', true], ['Seller confirms payment', ['paid', 'shipped', 'delivered'].includes(o.status)], ['Shipped', ['shipped', 'delivered'].includes(o.status)], ['Delivered', o.status === 'delivered']];
   return `<ol class="steps">${steps.map(([l, done]) => `<li class="${done ? 'done' : ''}">${esc(l)}</li>`).join('')}</ol>`;
 };
-r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
-  const o = q.get('SELECT o.*, u.store_name, u.handle FROM orders o JOIN users u ON u.id = o.seller_id WHERE o.id = ? AND (o.buyer_id = ? OR o.seller_id = ?)', Number(req.params.id), req.user.id, req.user.id);
+r.get('/orders/:id(\\d+)', auth.requireUser, async (req, res, next) => {
+  const o = await q.get('SELECT o.*, u.store_name, u.handle FROM orders o JOIN users u ON u.id = o.seller_id WHERE o.id = ? AND (o.buyer_id = ? OR o.seller_id = ?)', Number(req.params.id), req.user.id, req.user.id);
   if (!o || o.payment_mode !== 'external') return next();            // not ours (or not visible): legacy handler decides
   if (o.seller_id === req.user.id) return res.redirect(`/dashboard/orders/${o.id}`);
-  const snap = JSON.parse(o.snapshot_json), item = q.get('SELECT * FROM order_items WHERE order_id = ?', o.id);
-  const ck = q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id), events = q.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id);
-  const review = q.get('SELECT * FROM reviews WHERE order_id = ?', o.id), track = trackingUrl(o.carrier, o.tracking_number), buyerLbl = SHP.realLabel(o.id);
+  const snap = JSON.parse(o.snapshot_json), item = await q.get('SELECT * FROM order_items WHERE order_id = ?', o.id);
+  const ck = await q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id), events = await q.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id);
+  const review = await q.get('SELECT * FROM reviews WHERE order_id = ?', o.id), track = trackingUrl(o.carrier, o.tracking_number), buyerLbl = await SHP.realLabel(o.id);
   const pending = o.status === 'pending_payment', until = ck.expires_at;
   const action = pending ? `<div class="panel notice strong"><h3>Step 2: pay the seller</h3>
       <p>Your item is reserved until <strong>${new Date(until * 1000).toLocaleString()}</strong>. Pay <strong>${money(o.total_cents)}</strong> on the seller's own checkout page (opens in the seller's payment provider, not PairPlug).</p>
@@ -101,30 +101,30 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
         <label for="ab_k">Country</label><select id="ab_k" name="country"><option value="US">United States</option><option value="CA">Canada</option><option value="MX">Mexico</option></select><button class="btn" type="submit" style="margin-top:10px">Save delivery address</button></form>` : ''}
       ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}${buyerLbl && buyerLbl.tracking_status ? `<p class="small" style="margin:6px 0 0">Carrier status: <strong>${esc(buyerLbl.tracking_status)}</strong></p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
     ${o.status === 'shipped' ? `<div class="panel"><h3>Received it?</h3><button class="btn" data-post="/api/orders/${o.id}/received">Mark as received</button></div>` : ''}
-    ${RV.panel(o)}
+    ${await RV.panel(o)}
     <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. If it is not resolved, report it to PairPlug below. ${esc(DISC.SHORT)}</p>${DISC.canCannot({ compact: true })}</div>
-    ${SP.buyerPanels(o)}
+    ${await SP.buyerPanels(o)}
   </section><aside class="panel sticky"><h3>Amount</h3>
     <div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div>
     <div class="summary-row total"><span>Total</span><span>${money(o.total_cents)}</span></div>
     <p class="small muted">Paid to the seller, outside PairPlug. ${o.payment_confirmed_at ? 'Seller confirmed payment on ' + date(o.payment_confirmed_at) + '.' : 'Not yet confirmed by the seller.'}</p>
     <h3 style="margin-top:16px">Progress</h3><ul class="timeline">${events.map((e) => `<li><strong>${esc(e.to_status.replace('_', ' '))}</strong> <span class="muted">${new Date(e.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')}</span>${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</li>`).join('')}</ul></aside></div>`;
-  res.send(V.layout({ user: req.user, path: '/orders', title: `Order #${o.id}`, body }));
+  res.send(await V.layout({ user: req.user, path: '/orders', title: `Order #${o.id}`, body }));
 });
 
 // Redirect to the seller's checkout. Only the buyer of a still-pending direct order; the destination is read from the DB.
-r.get('/orders/:id(\\d+)/pay', auth.requireUser, (req, res) => {
-  let url; try { url = X.payRedirect(req.user, req.params.id); } catch (e) { return res.status(e.status || 500).send(V.layout({ user: req.user, title: 'Unavailable', body: V.empty(e.status ? e.message : 'Something went wrong', '', [`/orders/${Number(req.params.id)}`, 'Back to order']) })); }
+r.get('/orders/:id(\\d+)/pay', auth.requireUser, async (req, res) => {
+  let url; try { url = await X.payRedirect(req.user, req.params.id); } catch (e) { return res.status(e.status || 500).send(await V.layout({ user: req.user, title: 'Unavailable', body: V.empty(e.status ? e.message : 'Something went wrong', '', [`/orders/${Number(req.params.id)}`, 'Back to order']) })); }
   res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }).redirect(302, url);
 });
-r.post('/api/orders/:id(\\d+)/claim-paid', auth.requireUser, (req, res) => res.json(X.buyerClaimPaid(req.user, req.params.id)));
-r.post('/api/orders/:id(\\d+)/cancel-purchase', auth.requireUser, (req, res) => res.json(X.buyerCancel(req.user, req.params.id)));
-r.post('/api/orders/:id(\\d+)/received', auth.requireUser, (req, res) => res.json(X.markReceived(req.user, req.params.id, 'buyer')));
+r.post('/api/orders/:id(\\d+)/claim-paid', auth.requireUser, async (req, res) => res.json(await X.buyerClaimPaid(req.user, req.params.id)));
+r.post('/api/orders/:id(\\d+)/cancel-purchase', auth.requireUser, async (req, res) => res.json(await X.buyerCancel(req.user, req.params.id)));
+r.post('/api/orders/:id(\\d+)/received', auth.requireUser, async (req, res) => res.json(await X.markReceived(req.user, req.params.id, 'buyer')));
 
 // ---------- Seller: checkout settings ----------
 const S = [auth.requireSeller];
-const dash = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, ...opts, body: V.dashNav(req.path) + opts.body }));
-r.get('/dashboard/settings', S, (req, res) => {
+const dash = async (req, res, opts) => res.send(await V.layout({ user: req.user, wide: true, ...opts, body: V.dashNav(req.path) + opts.body }));
+r.get('/dashboard/settings', S, async (req, res) => {
   const u = req.user, hosts = config.paymentLinkHosts.join(', ');
   const body = `<h1>Store &amp; checkout settings</h1><form class="panel form-wide" data-api="/api/seller/settings" data-method="PUT">
     <h3>Your store</h3><label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" value="${esc(u.store_name)}" required>
@@ -139,9 +139,9 @@ r.get('/dashboard/settings', S, (req, res) => {
     <label style="font-weight:400;display:flex;gap:8px;margin-top:10px"><input type="checkbox" name="checkout_url_any_amount"${u.checkout_url_any_amount ? ' checked' : ''}> This default link lets the buyer <strong>enter any amount</strong> (a “customer chooses price” link), so it can be used for any of my listings. Leave unticked if it is a fixed-price link — it will then <em>not</em> be used for listings without their own link.</label>
     <button class="btn" type="submit" style="margin-top:16px">Save settings</button></form>
     <p class="small muted">Testing tip: this link is untested with live Stripe in this beta build. Do a real test purchase of a cheap item with a friend before announcing the store.</p>`;
-  dash(req, res, { title: 'Settings', path: '/dashboard/settings', body });
+  await dash(req, res, { title: 'Settings', path: '/dashboard/settings', body });
 });
-r.put('/api/seller/settings', S, (req, res) => {
+r.put('/api/seller/settings', S, async (req, res) => {
   const f = {}, b = req.body;
   const store = cleanLine(b.store_name, 60), region = cleanLine(b.region, 60), city = cleanLine(b.city, 60), country = String(b.country || '');
   if (!store) f.store_name = 'Enter a store name.'; if (!region) f.region = 'Required'; if (!city) f.city = 'Required';
@@ -151,20 +151,20 @@ r.put('/api/seller/settings', S, (req, res) => {
   const any = b.checkout_url_any_amount === true || b.checkout_url_any_amount === 'on' ? 1 : 0;
   if (any && !url) f.checkout_url_any_amount = 'Add a default link first, or untick this.';
   if (Object.keys(f).length) throw new HttpError(422, 'Please fix the highlighted fields.', f);
-  q.run('UPDATE users SET store_name=?, region=?, city=?, country=?, bio=?, checkout_url=?, checkout_url_any_amount=? WHERE id=?', store, region, city, country, clean(b.bio, 500) || null, url, any, req.user.id);
+  await q.run('UPDATE users SET store_name=?, region=?, city=?, country=?, bio=?, checkout_url=?, checkout_url_any_amount=? WHERE id=?', store, region, city, country, clean(b.bio, 500) || null, url, any, req.user.id);
   res.json({ ok: true, message: 'Settings saved' });
 });
 
 // ---------- Seller: order page + actions ----------
-r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
-  const o = q.get('SELECT o.*, b.display_name buyer_name FROM orders o JOIN users b ON b.id = o.buyer_id WHERE o.id = ? AND o.seller_id = ?', Number(req.params.id), req.user.id);
-  if (!o) return notFound(req, res, 'Order not found');
+r.get('/dashboard/orders/:id(\\d+)', S, async (req, res, next) => {
+  const o = await q.get('SELECT o.*, b.display_name buyer_name FROM orders o JOIN users b ON b.id = o.buyer_id WHERE o.id = ? AND o.seller_id = ?', Number(req.params.id), req.user.id);
+  if (!o) return await notFound(req, res, 'Order not found');
   if (o.payment_mode !== 'external') return res.redirect(`/orders/${o.id}`);
-  const snap = JSON.parse(o.snapshot_json), item = q.get('SELECT * FROM order_items WHERE order_id = ?', o.id), ck = q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id);
-  const events = q.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id), track = trackingUrl(o.carrier, o.tracking_number);
+  const snap = JSON.parse(o.snapshot_json), item = await q.get('SELECT * FROM order_items WHERE order_id = ?', o.id), ck = await q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id);
+  const events = await q.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id), track = trackingUrl(o.carrier, o.tracking_number);
   const showAddress = Boolean(o.payment_confirmed_at) && o.status !== 'cancelled';     // data minimisation: address only once you've confirmed payment
-  const conv = q.get('SELECT id FROM conversations WHERE buyer_id = ? AND seller_id = ?', o.buyer_id, req.user.id);
-  const realLbl = SHP.realLabel(o.id), carrierName = (c) => config.carriers.find((x) => String(c || '').toLowerCase().startsWith(x.toLowerCase())) || 'Other';   // only REAL labels prefill; test labels never do
+  const conv = await q.get('SELECT id FROM conversations WHERE buyer_id = ? AND seller_id = ?', o.buyer_id, req.user.id);
+  const realLbl = await SHP.realLabel(o.id), carrierName = (c) => config.carriers.find((x) => String(c || '').toLowerCase().startsWith(x.toLowerCase())) || 'Other';   // only REAL labels prefill; test labels never do
   const panels = [];
   if (o.status === 'pending_payment') panels.push(`<div class="panel notice strong"><h3>Confirm the payment</h3>
     <p>Open your Stripe dashboard and look for a payment of <strong>${money(o.total_cents)}</strong> with client reference <strong>${reqNo(o)}</strong>. ${o.buyer_claimed_paid_at ? '<strong>The buyer says they have paid.</strong>' : 'The buyer has not said they paid yet.'}</p>
@@ -192,7 +192,7 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
     ${o.ship_note ? `<p class="small" style="margin:0 0 6px"><strong>Your message to the buyer:</strong> ${esc(o.ship_note)}</p>` : ''}<p class="small muted" style="margin:0 0 6px">${o.shipped_at ? 'Marked shipped ' + date(o.shipped_at) + '. ' : ''}${o.status === 'shipped' ? 'The order becomes <em>Delivered</em> only when the buyer confirms receipt (or a verified carrier report says so). Your own entry can\'t mark it delivered.' : 'Delivery was confirmed' + (o.delivered_at ? ' on ' + date(o.delivered_at) : '') + '.'}</p>
     ${recipient('Shipped to')}
     ${o.status === 'shipped' ? `<details><summary class="small">Correct the carrier, tracking or message</summary><form data-api="/api/seller/orders/${o.id}/tracking" data-method="PUT" data-reload class="row" style="align-items:end;margin-top:8px"><div><label for="ca2">Carrier</label><select id="ca2" name="carrier">${carrierSel(o.carrier)}</select></div><div><label for="tn2">Tracking number</label><input id="tn2" name="tracking" required maxlength="40" value="${esc(o.tracking_number)}"></div><div><label for="sn3">Message</label><input id="sn3" name="note" maxlength="200" value="${esc(o.ship_note || '')}"></div><div><button class="btn ghost" type="submit">Save correction</button></div></form></details>` : ''}</div>`);
-  panels.push(SP.sellerPanels(o));
+  panels.push(await SP.sellerPanels(o));
   const body = `<h1>Order #${o.id} ${V.orderPill(o)}</h1><p class="muted small">Reference <strong>${reqNo(o)}</strong> · Started ${date(o.created_at)} · Buyer ${esc(o.buyer_name)}${conv ? ` · <a href="/messages/${conv.id}">Message buyer</a>` : ''}</p>
   <div class="two"><section>${panels.join('')}
     <div class="panel"><h3>What was ordered (snapshot at checkout)</h3><div class="line"><a href="/listing/${item.listing_id}">${V.img(item.image, 'thumb', item.title)}</a><div><strong>${esc(snap.listing.title)}</strong><div class="muted small">${esc([snap.listing.brand, snap.listing.size && 'Size ' + snap.listing.size, snap.listing.condition && config.conditions[snap.listing.condition]].filter(Boolean).join(' · '))}</div></div><div>${money(snap.terms.itemCents)}</div></div>
@@ -201,16 +201,16 @@ r.get('/dashboard/orders/:id(\\d+)', S, (req, res, next) => {
   </section><aside class="panel sticky"><h3>Amount</h3><div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div><div class="summary-row total"><span>Buyer pays you</span><span>${money(o.total_cents)}</span></div>
     <p class="small muted">Paid directly to you. PairPlug takes no fee and holds no funds.${o.payment_reference ? ` Your note: ${esc(o.payment_reference)}.` : ''}</p>
     <h3 style="margin-top:16px">History</h3><ul class="timeline">${events.map((e) => `<li><strong>${esc(e.to_status.replace('_', ' '))}</strong> <span class="muted">${new Date(e.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')}</span>${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</li>`).join('')}</ul></aside></div>`;
-  dash(req, res, { title: `Order #${o.id}`, path: '/dashboard/orders', body, scripts: SHIPPO.enabled() ? '<script src="/shipping.js" defer></script>' : '' });
+  await dash(req, res, { title: `Order #${o.id}`, path: '/dashboard/orders', body, scripts: SHIPPO.enabled() ? '<script src="/shipping.js" defer></script>' : '' });
 });
-r.post('/api/seller/orders/:id(\\d+)/confirm-payment', S, (req, res) => res.json(X.sellerConfirmPayment(req.user, req.params.id, { reference: req.body.reference })));
-r.post('/api/seller/orders/:id(\\d+)/reject-payment', S, (req, res) => res.json(X.sellerRejectPayment(req.user, req.params.id)));
-r.post('/api/seller/orders/:id(\\d+)/received', S, (req, res) => res.json(X.markReceived(req.user, req.params.id, 'seller')));   // refused for sellers: only the buyer can confirm delivery
+r.post('/api/seller/orders/:id(\\d+)/confirm-payment', S, async (req, res) => res.json(await X.sellerConfirmPayment(req.user, req.params.id, { reference: req.body.reference })));
+r.post('/api/seller/orders/:id(\\d+)/reject-payment', S, async (req, res) => res.json(await X.sellerRejectPayment(req.user, req.params.id)));
+r.post('/api/seller/orders/:id(\\d+)/received', S, async (req, res) => res.json(await X.markReceived(req.user, req.params.id, 'seller')));   // refused for sellers: only the buyer can confirm delivery
 // Shipping for direct orders (carrier + tracking entered by the seller; PairPlug buys no postage). Other order types fall through to the legacy handler.
-const direct = (req) => { const o = q.get('SELECT payment_mode FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id); return Boolean(o && o.payment_mode === 'external'); };
-r.post('/api/seller/orders/:id(\\d+)/ship', S, (req, res, next) => (direct(req) ? res.json(X.sellerShip(req.user, req.params.id, req.body)) : next()));
-r.put('/api/seller/orders/:id(\\d+)/tracking', S, (req, res) => res.json(X.sellerCorrectTracking(req.user, req.params.id, req.body)));
-r.post('/api/seller/orders/:id(\\d+)/request-address', S, (req, res) => res.json(X.sellerRequestAddress(req.user, req.params.id)));
-r.post('/api/orders/:id(\\d+)/shipping-address', auth.requireUser, (req, res) => res.json(X.buyerSetAddress(req.user, req.params.id, req.body)));
+const direct = async (req) => { const o = await q.get('SELECT payment_mode FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id); return Boolean(o && o.payment_mode === 'external'); };
+r.post('/api/seller/orders/:id(\\d+)/ship', S, async (req, res, next) => (await direct(req) ? res.json(await X.sellerShip(req.user, req.params.id, req.body)) : next()));
+r.put('/api/seller/orders/:id(\\d+)/tracking', S, async (req, res) => res.json(await X.sellerCorrectTracking(req.user, req.params.id, req.body)));
+r.post('/api/seller/orders/:id(\\d+)/request-address', S, async (req, res) => res.json(await X.sellerRequestAddress(req.user, req.params.id)));
+r.post('/api/orders/:id(\\d+)/shipping-address', auth.requireUser, async (req, res) => res.json(await X.buyerSetAddress(req.user, req.params.id, req.body)));
 
 module.exports = { router: r };

@@ -22,20 +22,20 @@ r.get('/storefront.css', (req, res) => res.type('text/css').set('Cache-Control',
 
 const EXPECT = 'PairPlug sellers aim to reply to messages within 48 hours. This is an expectation, not a guarantee.';
 
-r.get('/s/:handle', (req, res) => {
-  const s = q.get('SELECT * FROM users WHERE handle = ? AND is_seller = 1 AND banned = 0', req.params.handle);
-  const missing = () => res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Seller not found', 'This storefront does not exist or is not available.', ['/shop', 'Browse the shop']) }));
-  if (!s) return missing();
-  if (s.selling_restricted_at && !(req.user && req.user.id === s.id)) return res.status(200).send(V.layout({ user: req.user, title: 'Store unavailable', body: V.empty('This store is temporarily unavailable', 'PairPlug is reviewing this store. Please check back later, or browse other sellers.', ['/sellers', 'Discover sellers']) }));
+r.get('/s/:handle', async (req, res) => {
+  const s = await q.get('SELECT * FROM users WHERE handle = ? AND is_seller = 1 AND banned = 0', req.params.handle);
+  const missing = async () => res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Seller not found', 'This storefront does not exist or is not available.', ['/shop', 'Browse the shop']) }));
+  if (!s) return await missing();
+  if (s.selling_restricted_at && !(req.user && req.user.id === s.id)) return res.status(200).send(await V.layout({ user: req.user, title: 'Store unavailable', body: V.empty('This store is temporarily unavailable', 'PairPlug is reviewing this store. Please check back later, or browse other sellers.', ['/sellers', 'Discover sellers']) }));
   const owner = req.user && req.user.id === s.id, wantPreview = req.query.preview === '1' && owner;   // previews are visible to the owner only
-  const { settings: st, isDraft } = SF.effective(s.id, { preview: wantPreview });
+  const { settings: st, isDraft } = await SF.effective(s.id, { preview: wantPreview });
   const featuredIds = st.featured || [];
-  const featured = featuredIds.length ? L.searchListings({ seller: s.handle, sort: 'newest' }).items.filter((l) => featuredIds.includes(l.id)).sort((a, b) => featuredIds.indexOf(a.id) - featuredIds.indexOf(b.id)) : [];
-  const result = L.searchListings({ seller: s.handle, sort: st.sort, page: req.query.page, exclude: featured.map((l) => l.id) });
-  const rate = q.get('SELECT COUNT(*) n, AVG(rating) avg FROM reviews WHERE seller_id = ?', s.id);
-  const sold = q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status IN ('delivered','released')", s.id).n;
-  const reviews = q.all('SELECT r.*, u.display_name FROM reviews r JOIN users u ON u.id = r.buyer_id WHERE r.seller_id = ? ORDER BY r.created_at DESC LIMIT 5', s.id);
-  const favs = new Set(req.user ? q.all('SELECT listing_id FROM favorites WHERE user_id = ?', req.user.id).map((f) => f.listing_id) : []);
+  const featured = featuredIds.length ? (await L.searchListings({ seller: s.handle, sort: 'newest' })).items.filter((l) => featuredIds.includes(l.id)).sort((a, b) => featuredIds.indexOf(a.id) - featuredIds.indexOf(b.id)) : [];
+  const result = await L.searchListings({ seller: s.handle, sort: st.sort, page: req.query.page, exclude: featured.map((l) => l.id) });
+  const rate = await q.get('SELECT COUNT(*) n, AVG(rating) avg FROM reviews WHERE seller_id = ?', s.id);
+  const sold = (await q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status IN ('delivered','released')", s.id)).n;
+  const reviews = await q.all('SELECT r.*, u.display_name FROM reviews r JOIN users u ON u.id = r.buyer_id WHERE r.seller_id = ? ORDER BY r.created_at DESC LIMIT 5', s.id);
+  const favs = new Set(req.user ? (await q.all('SELECT listing_id FROM favorites WHERE user_id = ?', req.user.id)).map((f) => f.listing_id) : []);
   const name = s.store_name || s.handle, place = [s.city, s.region, s.country].filter(Boolean).join(', ');
   const img = (f, cls, alt) => (f ? `<img class="${cls}" src="/uploads/${esc(f)}" alt="${esc(alt)}">` : '');
   const links = (st.links || []).map((l) => `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow ugc">${esc(l.kind)} ↗</a>`).join('');
@@ -45,8 +45,8 @@ r.get('/s/:handle', (req, res) => {
     <div class="store-head"><div class="store-id">${st.avatar ? img(st.avatar, 'avatar-img', `${name} profile picture`) : `<div class="avatar" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`}
       <div class="store-title">${st.logo ? img(st.logo, 'logo-img', `${name} logo`) : ''}<h1>${esc(name)}</h1>${st.headline ? `<p class="headline">${esc(st.headline)}</p>` : ''}
         <div class="meta">@${esc(s.handle)}${st.showLocation && place ? ` · ${esc(place)}` : ''} ${isLocalShip(s.country) && st.showLocation ? '<span class="badge-local">Local ship</span>' : ''}</div>
-        <div class="meta">${RV.line(s.id) || 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div>
-      <div class="store-actions">${owner ? '<a class="btn" href="/dashboard/storefront">Customize</a>' : `${D.heartBtn(s.handle, req.user ? D.followedSet(req.user).has(s.id) : false, 'btn ghost')}<button class="btn" data-chat-seller="${esc(s.handle)}">Contact seller</button><a class="btn ghost small" href="/support?seller=${esc(s.handle)}">Report</a>`}</div></div>
+        <div class="meta">${await RV.line(s.id) || 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div>
+      <div class="store-actions">${owner ? '<a class="btn" href="/dashboard/storefront">Customize</a>' : `${D.heartBtn(s.handle, req.user ? (await D.followedSet(req.user)).has(s.id) : false, 'btn ghost')}<button class="btn" data-chat-seller="${esc(s.handle)}">Contact seller</button><a class="btn ghost small" href="/support?seller=${esc(s.handle)}">Report</a>`}</div></div>
     ${links ? `<div class="chips" aria-label="Seller links">${links}</div>` : ''}
     ${st.announcement ? `<div class="store-announce" role="note">${esc(st.announcement)}</div>` : ''}
     ${st.about || s.bio ? `<p class="store-about">${esc(st.about || s.bio)}</p>` : ''}
@@ -55,16 +55,16 @@ r.get('/s/:handle', (req, res) => {
     <div class="sechead"><h2>${featured.length ? 'All items' : 'Available'} (${result.total + featured.length})</h2></div>
     ${result.items.length || featured.length ? (result.items.length ? `<div class="grid store-grid l-${esc(st.layout)}">${result.items.map((l) => V.card(l, { favs })).join('')}</div>${V.pager(result.page, result.pages, req.query.preview ? { preview: 1 } : {})}` : '')
       : V.empty('No listings yet', 'No listings yet — check back for their next drop. Follow this store to be notified when they publish.')}
-    ${RV.section(s.id, req.user)}
+    ${await RV.section(s.id, req.user)}
   </div>`;
-  res.send(V.layout({ user: req.user, path: '/s', title: name, body, description: (st.headline || st.about || s.bio || '').slice(0, 150), head: `<link rel="stylesheet" href="/storefront.css?v=${cssEtag}">` }));
+  res.send(await V.layout({ user: req.user, path: '/s', title: name, body, description: (st.headline || st.about || s.bio || '').slice(0, 150), head: `<link rel="stylesheet" href="/storefront.css?v=${cssEtag}">` }));
 });
 
 // ---------- Editor (seller only) ----------
 const S = [auth.requireSeller];
-r.get('/dashboard/storefront', S, (req, res) => {
-  const u = req.user, st = SF.state(u.id), w = st.working;
-  const mine = q.all("SELECT id, title FROM listings WHERE seller_id = ? AND status IN ('active','reserved') ORDER BY published_at DESC LIMIT 100", u.id);
+r.get('/dashboard/storefront', S, async (req, res) => {
+  const u = req.user, st = await SF.state(u.id), w = st.working;
+  const mine = await q.all("SELECT id, title FROM listings WHERE seller_id = ? AND status IN ('active','reserved') ORDER BY published_at DESC LIMIT 100", u.id);
   const radio = (name, map, cur, extra = () => '') => Object.entries(map).map(([k, l]) => `<label class="opt-pick"><input type="radio" name="${name}" value="${k}"${cur === k ? ' checked' : ''}> ${extra(k)}<span>${esc(l)}</span></label>`).join('');
   const links = [...(w.links || []), ...Array(SF.LIMITS.links).fill({ kind: '', url: '' })].slice(0, SF.LIMITS.links);
   const body = `<h1>Storefront</h1><p class="muted small">Make your public page your own. Changes are saved as a private <strong>draft</strong>; use <strong>Preview</strong> to see exactly what visitors will see, then <strong>Publish</strong>. ${st.publishedAt ? '' : 'Nothing is published yet, so visitors currently see the default storefront.'}</p>
@@ -91,13 +91,13 @@ r.get('/dashboard/storefront', S, (req, res) => {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px"><button type="button" class="btn ghost" id="sf-save">Save draft</button><a class="btn ghost" id="sf-preview" href="/s/${esc(u.handle)}?preview=1" target="_blank" rel="noopener">Preview draft ↗</a>
       <button type="button" class="btn" id="sf-publish">Publish</button><button type="button" class="btn ghost" id="sf-discard">Discard draft</button><a class="btn ghost" href="/s/${esc(u.handle)}" target="_blank" rel="noopener">View live storefront ↗</a></div></form>
   <script>window.__SF=${JSON.stringify({ avatar: w.avatar, logo: w.logo, banner: w.banner }).replace(/</g, '\\u003c')}</script>`;
-  res.send(V.layout({ user: req.user, wide: true, path: '/dashboard/storefront', title: 'Storefront', body: V.dashNav('/dashboard/storefront') + body, head: `<link rel="stylesheet" href="/storefront.css?v=${cssEtag}">`, scripts: '<script src="/uploader.js" defer></script><script src="/storefront-editor.js" defer></script>' }));
+  res.send(await V.layout({ user: req.user, wide: true, path: '/dashboard/storefront', title: 'Storefront', body: V.dashNav('/dashboard/storefront') + body, head: `<link rel="stylesheet" href="/storefront.css?v=${cssEtag}">`, scripts: '<script src="/uploader.js" defer></script><script src="/storefront-editor.js" defer></script>' }));
 });
-r.put('/api/seller/storefront', S, (req, res) => { const out = SF.saveDraft(req.user, req.body); res.json({ ok: true, settings: out }); });
-r.post('/api/seller/storefront/publish', S, (req, res) => {
+r.put('/api/seller/storefront', S, async (req, res) => { const out = await SF.saveDraft(req.user, req.body); res.json({ ok: true, settings: out }); });
+r.post('/api/seller/storefront/publish', S, async (req, res) => {
   // publish exactly what the editor last saved; if the form has newer edits the client saves first
-  SF.publish(req.user); res.json({ ok: true, url: `/s/${req.user.handle}` });
+  await SF.publish(req.user); res.json({ ok: true, url: `/s/${req.user.handle}` });
 });
-r.post('/api/seller/storefront/discard', S, (req, res) => { SF.discardDraft(req.user); res.json({ ok: true }); });
+r.post('/api/seller/storefront/discard', S, async (req, res) => { await SF.discardDraft(req.user); res.json({ ok: true }); });
 
 module.exports = { router: r };

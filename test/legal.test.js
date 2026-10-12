@@ -7,14 +7,14 @@ const H = require('./helpers');
 const { q } = require('../src/db');
 const LEGAL = require('../src/legal');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 const LINK = 'https://buy.stripe.com/test_legal1';
 const PAGES = ['/terms', '/privacy', '/payments', '/rules'];
 const get = async (c, u) => (await c.get(u)).text;
-const admin = async () => { const a = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
-const user = (email) => q.get('SELECT * FROM users WHERE email = ?', email);
+const admin = async () => { const a = await H.newUser('Admin'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
+const user = async (email) => await q.get('SELECT * FROM users WHERE email = ?', email);
 const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
 
 test('legal pages are public, versioned, linked from the global footer on desktop and mobile layouts, and old paths redirect', async () => {
@@ -56,27 +56,27 @@ test('sign-up needs an explicit tick; acceptance is recorded with version and ti
   assert.match(page, /name="terms"/); assert.match(page, /href="\/terms"/); assert.match(page, /href="\/privacy"/); assert.match(page, /href="\/payments"/);
   const email = `consent-${Date.now()}@example.test`, base = { email, display_name: 'Consent Person', password: 'correct-horse-9' };
   for (const bad of [{}, { terms: false }, { terms: 'on' }, { terms: 1 }]) { const r = await new H.Client().post('/api/register', { ...base, ...bad }); assert.equal(r.status, 422, JSON.stringify(bad)); assert.ok(r.json.fields && r.json.fields.terms, 'field error is shown against the checkbox'); }
-  assert.equal(user(email), undefined, 'a refused sign-up creates no account');
+  assert.equal(await user(email), undefined, 'a refused sign-up creates no account');
   const before = Math.floor(Date.now() / 1000), ok = await new H.Client().post('/api/register', { ...base, terms: true }); assert.equal(ok.status, 200);
-  const u = user(email); assert.equal(u.terms_version, LEGAL.VERSION); assert.ok(u.terms_accepted_at >= before - 1 && u.terms_accepted_at <= before + 5);
+  const u = await user(email); assert.equal(u.terms_version, LEGAL.VERSION); assert.ok(u.terms_accepted_at >= before - 1 && u.terms_accepted_at <= before + 5);
 });
 
 test('existing users are never silently marked as accepted; accepting is their own explicit action; nothing is blocked meanwhile', async () => {
   const email = `legacy-${Date.now()}@example.test`; const { hashPassword } = require('../src/auth');
-  q.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', email, hashPassword('correct-horse-9'), 'Legacy User', 1700000000);
-  assert.equal(user(email).terms_version, null); assert.equal(user(email).terms_accepted_at, null);
+  await q.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', email, hashPassword('correct-horse-9'), 'Legacy User', 1700000000);
+  assert.equal((await user(email)).terms_version, null); assert.equal((await user(email)).terms_accepted_at, null);
   const c = new H.Client(); c.email = email; assert.equal((await c.post('/api/login', { email, password: 'correct-horse-9' })).status, 200);
   const acct = await get(c, '/account'); assert.match(acct, /haven&#39;t recorded acceptance|haven't recorded acceptance/); assert.match(acct, /nothing is blocked/i);
-  await get(c, '/shop'); await get(c, '/orders'); assert.equal(user(email).terms_version, null, 'logging in and browsing does not record acceptance');
+  await get(c, '/shop'); await get(c, '/orders'); assert.equal((await user(email)).terms_version, null, 'logging in and browsing does not record acceptance');
   // checkout is not gated by a new consent box
   const seller = await H.newSeller('LegalSeller'), id = await H.makeListing(seller, { payment_url: LINK }), buy = await get(c, `/buy/${id}`);
   assert.doesNotMatch(buy, /name="terms"/); assert.match(buy, /name="acknowledged"/); assert.match(buy, /href="\/payments"/);
   const r = await c.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(r.status, 200, 'a user who never accepted can still buy');
   assert.equal((await new H.Client().post('/api/account/terms')).status, 401);
-  assert.equal((await c.post('/api/account/terms')).status, 200); const u = user(email); assert.equal(u.terms_version, LEGAL.VERSION); assert.ok(u.terms_accepted_at);
+  assert.equal((await c.post('/api/account/terms')).status, 200); const u = await user(email); assert.equal(u.terms_version, LEGAL.VERSION); assert.ok(u.terms_accepted_at);
   assert.match(await get(c, '/account'), new RegExp(`accepted version <strong>${LEGAL.VERSION}</strong>`));
-  q.run("UPDATE users SET terms_version = '2020-01-01' WHERE email = ?", email); assert.match(await get(c, '/account'), /earlier version \(2020-01-01\)/, 'an older acceptance is not treated as accepting the new version');
-  assert.equal(q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'terms_accepted'").n >= 1, true);
+  await q.run("UPDATE users SET terms_version = '2020-01-01' WHERE email = ?", email); assert.match(await get(c, '/account'), /earlier version \(2020-01-01\)/, 'an older acceptance is not treated as accepting the new version');
+  assert.equal((await q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'terms_accepted'")).n >= 1, true);
 });
 
 test('invitations: new accounts must tick the terms (nothing is consumed on refusal); sellers also see the Seller Rules', async () => {
@@ -86,11 +86,11 @@ test('invitations: new accounts must tick the terms (nothing is consumed on refu
   assert.match(form, /name="terms"/); assert.match(form, /href="\/rules"/); assert.match(form, /name="agree"/);
   const b = { token: tok, display_name: 'Invited Seller', password: 'a-long-password-1', store_name: 'Inv Store', handle: `inv${Date.now() % 100000}`, country: 'US', region: 'NY', city: 'Brooklyn', agree: true };
   const no = await anon.post('/api/invitations/accept', b); assert.equal(no.status, 422); assert.ok(no.json.fields.terms);
-  assert.equal(q.get('SELECT used_at FROM invitations WHERE token_hash IS NOT NULL ORDER BY id DESC LIMIT 1').used_at, null, 'the invitation is still usable');
+  assert.equal((await q.get('SELECT used_at FROM invitations WHERE token_hash IS NOT NULL ORDER BY id DESC LIMIT 1')).used_at, null, 'the invitation is still usable');
   assert.equal((await anon.post('/api/invitations/accept', { ...b, terms: true })).status, 200);
-  const u = q.get('SELECT * FROM users WHERE handle = ?', b.handle); assert.equal(u.terms_version, LEGAL.VERSION); assert.equal(u.is_seller, 1);
+  const u = await q.get('SELECT * FROM users WHERE handle = ?', b.handle); assert.equal(u.terms_version, LEGAL.VERSION); assert.equal(u.is_seller, 1);
   // an existing buyer who never accepted is asked at the invitation; one who already accepted the current version is not asked again
-  const old = await H.newUser('OldBuyer'); q.run('UPDATE users SET terms_version = NULL, terms_accepted_at = NULL WHERE email = ?', old.email);
+  const old = await H.newUser('OldBuyer'); await q.run('UPDATE users SET terms_version = NULL, terms_accepted_at = NULL WHERE email = ?', old.email);
   const t2 = await mk('seller', old.email); assert.match(await get(old, `/invite/${t2}`), /name="terms"/);
   assert.equal((await old.post('/api/invitations/accept', { ...b, token: t2, handle: `old${Date.now() % 100000}` })).status, 422);
   const fresh = await H.newUser('NewBuyer'), t3 = await mk('seller', fresh.email); assert.doesNotMatch(await get(fresh, `/invite/${t3}`), /name="terms"/, 'already accepted the current version');
@@ -111,12 +111,12 @@ test('policy links appear on listing and checkout screens, and the pages describ
 });
 
 test('public profiles, discovery and search never expose private account data', async () => {
-  const seller = await H.newSeller('PrivSeller'), anon = new H.Client(); q.run("UPDATE users SET bio = 'Selling vintage denim' WHERE handle = ?", seller.handle);
-  const row = q.get('SELECT * FROM users WHERE handle = ?', seller.handle); const secrets = [seller.email, row.password_hash];
+  const seller = await H.newSeller('PrivSeller'), anon = new H.Client(); await q.run("UPDATE users SET bio = 'Selling vintage denim' WHERE handle = ?", seller.handle);
+  const row = await q.get('SELECT * FROM users WHERE handle = ?', seller.handle); const secrets = [seller.email, row.password_hash];
   for (const u of [`/s/${seller.handle}`, '/sellers', '/', '/shop?q=denim&tab=sellers', '/shop?q=denim']) { const h = await get(anon, u); for (const s of secrets) assert.ok(!h.includes(s), `${u} leaks private data`); assert.doesNotMatch(h, /terms_version|terms_accepted_at/); }
   const buyer = await H.newUser('Priv'); assert.ok(!(await get(anon, `/s/${buyer.email}`)).includes(buyer.email));
-  const sr = q.get('SELECT COUNT(*) n FROM search_log WHERE term LIKE ?', `%${seller.email.slice(0, 6)}%`).n; assert.equal(sr, 0);
-  assert.deepEqual(Object.keys(q.get('SELECT * FROM search_log LIMIT 1') || { id: 1, term: 1, created_at: 1 }).sort(), ['created_at', 'id', 'term'], 'search log stores no user or address');
+  const sr = (await q.get('SELECT COUNT(*) n FROM search_log WHERE term LIKE ?', `%${seller.email.slice(0, 6)}%`)).n; assert.equal(sr, 0);
+  assert.deepEqual(Object.keys(await q.get('SELECT * FROM search_log LIMIT 1') || { id: 1, term: 1, created_at: 1 }).sort(), ['created_at', 'id', 'term'], 'search log stores no user or address');
 });
 
 test('migration 11 is additive: users created before it keep NULL acceptance (nobody is marked as having accepted)', () => {

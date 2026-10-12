@@ -18,20 +18,20 @@ const { uploader } = require('./buyer');
 const X = require('../externalCheckout');
 
 const r = express.Router();
-const page = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, ...opts, body: opts.dash ? V.dashNav(req.path) + opts.body : opts.body, scripts: opts.scripts || '' }));
+const page = async (req, res, opts) => res.send(await V.layout({ user: req.user, wide: true, ...opts, body: opts.dash ? V.dashNav(req.path) + opts.body : opts.body, scripts: opts.scripts || '' }));
 // Beta direct checkout: PairPlug charges no fee, so the calculators must not subtract one.
-const engine = () => { const st = getSettings(); if (X.isExternal()) { st.fee_bps_standard = 0; st.fee_bps_pro = 0; } return new PricingEngine(st, config.taxRateBps); };
+const engine = async () => { const st = await getSettings(); if (X.isExternal()) { st.fee_bps_standard = 0; st.fee_bps_pro = 0; } return new PricingEngine(st, config.taxRateBps); };
 
 // ---------- Onboarding ----------
-r.get('/sell', (req, res) => {
+r.get('/sell', async (req, res) => {
   if (req.user && req.user.is_seller) return res.redirect('/dashboard');
-  if (!req.user) return res.send(V.layout({ user: null, title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:520px"><h1>Sell on PairPlug</h1>
+  if (!req.user) return res.send(await V.layout({ user: null, title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:520px"><h1>Sell on PairPlug</h1>
     <p>List clothing, sneakers and accessories, manage inventory and ship from anywhere in North America.${X.isExternal() ? ' Buyers pay <strong>you</strong> directly through your own Stripe checkout link — PairPlug never holds your money.' : ' Payments are held in escrow until the buyer receives the item.'}</p>
     ${X.isExternal() ? '<ul class="muted"><li>No PairPlug fees during the private beta</li><li>You confirm payments, ship, and handle refunds and chargebacks with your own payment provider</li><li>You need a Stripe account with Payment Links</li></ul>'
-      : `<ul class="muted"><li>${(getSettings().fee_bps_standard / 100).toFixed(0)}% transaction fee on item price (${(getSettings().fee_bps_pro / 100).toFixed(0)}% on Pro)</li><li>Estimated card processing: ${(getSettings().processing_bps / 100).toFixed(1)}% + ${money(getSettings().processing_fixed_cents)}</li><li>No listing fees</li></ul>`}
+      : `<ul class="muted"><li>${((await getSettings()).fee_bps_standard / 100).toFixed(0)}% transaction fee on item price (${((await getSettings()).fee_bps_pro / 100).toFixed(0)}% on Pro)</li><li>Estimated card processing: ${((await getSettings()).processing_bps / 100).toFixed(1)}% + ${money((await getSettings()).processing_fixed_cents)}</li><li>No listing fees</li></ul>`}
     <a class="btn block" href="/register?next=/sell">Create an account to start</a><p class="small muted">Already have one? <a href="/login?next=/sell">Log in</a></p></div>` }));
-  const s = getSettings();
-  res.send(V.layout({ user: req.user, title: 'Set up your store', path: '/sell', body: `<div class="narrow panel form-wide" style="max-width:560px"><h1>Set up your store</h1>
+  const s = await getSettings();
+  res.send(await V.layout({ user: req.user, title: 'Set up your store', path: '/sell', body: `<div class="narrow panel form-wide" style="max-width:560px"><h1>Set up your store</h1>
     <p class="muted small">${X.isExternal() ? 'Private beta: no PairPlug fees. Buyers pay you directly through your own checkout link (set it up next in Settings). You handle payment confirmation, refunds and chargebacks.' : `Fees: ${(s.fee_bps_standard / 100).toFixed(0)}% transaction fee + estimated processing ${(s.processing_bps / 100).toFixed(1)}% + ${money(s.processing_fixed_cents)} per order, deducted from your payout. Funds are released from escrow after delivery is confirmed.`}</p>
     <form data-api="/api/sell/onboard" data-redirect="/dashboard">
       <label for="sn">Store name</label><input id="sn" name="store_name" required maxlength="60">
@@ -42,18 +42,18 @@ r.get('/sell', (req, res) => {
       <label style="font-weight:400;display:flex;gap:8px;margin-top:14px"><input type="checkbox" name="agree" required> I'll only list items I own and will ship within the stated time.</label>
       <button class="btn block" type="submit" style="margin-top:14px">Create store</button></form></div>` }));
 });
-r.post('/api/sell/onboard', auth.requireUser, (req, res) => {
+r.post('/api/sell/onboard', auth.requireUser, async (req, res) => {
   if (req.user.is_seller) throw new HttpError(409, 'You already have a store.');
   const f = {}, handle = String(req.body.handle || '').trim(), country = String(req.body.country || '');
   const storeName = cleanLine(req.body.store_name, 60), region = cleanLine(req.body.region, 60), city = cleanLine(req.body.city, 60);
   if (!storeName) f.store_name = 'Enter a store name.';
   if (!/^[a-zA-Z0-9_-]{3,30}$/.test(handle)) f.handle = '3–30 letters, numbers, - or _.';
-  else if (q.get('SELECT 1 x FROM users WHERE handle = ?', handle)) f.handle = 'That URL is taken.';
+  else if (await q.get('SELECT 1 x FROM users WHERE handle = ?', handle)) f.handle = 'That URL is taken.';
   if (!config.naCountries.includes(country)) f.country = 'Sellers must ship from the US, Canada or Mexico.';
   if (!region) f.region = 'Required'; if (!city) f.city = 'Required';
   if (!req.body.agree) f.agree = 'Please accept to continue.';
   if (Object.keys(f).length) throw new HttpError(422, 'Please fix the highlighted fields.', f);
-  q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', storeName, handle, country, region, city, clean(req.body.bio, 500) || null, req.user.id);
+  await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', storeName, handle, country, region, city, clean(req.body.bio, 500) || null, req.user.id);
   res.json({ ok: true });
 });
 
@@ -61,9 +61,9 @@ const S = [auth.requireSeller];
 const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ''}</div>`;
 
 // ---------- Overview ----------
-r.get('/dashboard', S, (req, res) => {
-  const o = stats.overview(req.user.id), recent = q.all(`SELECT * FROM orders WHERE seller_id = ? AND status <> 'cancelled' ORDER BY created_at DESC LIMIT 5`, req.user.id);
-  const todo = q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'paid'", req.user.id).n, toConfirm = q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND payment_mode = 'external' AND status = 'pending_payment'", req.user.id).n;
+r.get('/dashboard', S, async (req, res) => {
+  const o = await stats.overview(req.user.id), recent = await q.all(`SELECT * FROM orders WHERE seller_id = ? AND status <> 'cancelled' ORDER BY created_at DESC LIMIT 5`, req.user.id);
+  const todo = (await q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'paid'", req.user.id)).n, toConfirm = (await q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND payment_mode = 'external' AND status = 'pending_payment'", req.user.id)).n;
   const body = `<h1>Overview</h1><p class="muted small">All figures come from your orders and listings. “Gross sales” is sales volume (item prices); “Net proceeds” is revenue after fees; “Profit” also subtracts what you paid for the item.</p>
   ${toConfirm ? `<div class="panel" style="border-color:var(--accent)"><strong>${toConfirm} order${toConfirm > 1 ? 's' : ''} awaiting your payment check.</strong> <a href="/dashboard/orders?status=pending_payment">Review →</a></div>` : ''}
   ${todo ? `<div class="panel" style="border-color:var(--accent)"><strong>${todo} order${todo > 1 ? 's' : ''} waiting to ship.</strong> <a href="/dashboard/orders?status=paid">Ship now →</a></div>` : ''}
@@ -73,24 +73,24 @@ r.get('/dashboard', S, (req, res) => {
     <p class="small muted">PairPlug does not process these payments, so it shows no fees, payouts or balance for them. Check your payment provider for the money itself.</p>` : ''}
   <h2>${X.isExternal() ? 'Earlier PairPlug-processed sales' : 'Sales'}</h2><div class="stats">
     ${stat('Active listings', o.listings.active, `${o.listings.drafts} draft${o.listings.drafts === 1 ? '' : 's'}`)}${stat('Total orders', o.orders, 'paid, excluding refunds')}${stat('Completed sales', o.completed, 'funds released')}
-    ${stat('Gross sales', money(o.gross), 'item price volume')}${stat('Platform fees', money(o.platform_fees), `${(getSettings()[req.user.plan === 'pro' ? 'fee_bps_pro' : 'fee_bps_standard'] / 100).toFixed(0)}% transaction fee`)}${stat('Processing fees', money(o.processing_fees), 'estimated')}
+    ${stat('Gross sales', money(o.gross), 'item price volume')}${stat('Platform fees', money(o.platform_fees), `${((await getSettings())[req.user.plan === 'pro' ? 'fee_bps_pro' : 'fee_bps_standard'] / 100).toFixed(0)}% transaction fee`)}${stat('Processing fees', money(o.processing_fees), 'estimated')}
     ${stat('Refunds', money(o.refunds), `${o.refund_count} order${o.refund_count === 1 ? '' : 's'}`)}${stat('Net proceeds', money(o.net), 'item + shipping − fees')}
     ${stat('Estimated profit', o.profit.orders ? money(o.profit.cents) : '—', o.profit.orders ? `from ${o.profit.orders} of ${o.orders} orders with cost recorded` : 'record acquisition cost on listings')}</div>
   <h2>Balance <span class="muted small">(historical PairPlug-held funds only)</span></h2><div class="stats">${stat('Available', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'paid, awaiting delivery confirmation')}</div>
   <h2>Recent orders</h2>${recent.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Date</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>${recent.map((x) => `<tr><td><a href="${x.payment_mode === 'external' ? '/dashboard/orders/' : '/orders/'}${x.id}">#${x.id}</a></td><td>${date(x.created_at)}</td><td class="num">${money(x.total_cents)}</td><td>${V.orderPill(x)}</td></tr>`).join('')}</tbody></table></div>`
     : V.empty('No orders yet', 'Orders appear here after a buyer completes checkout.', ['/dashboard/listings/new', 'Create a listing'])}`;
-  page(req, res, { title: 'Seller dashboard', path: '/dashboard', body, dash: true });
+  await page(req, res, { title: 'Seller dashboard', path: '/dashboard', body, dash: true });
 });
 
 // ---------- Inventory ----------
-r.get('/dashboard/inventory', S, (req, res) => {
+r.get('/dashboard/inventory', S, async (req, res) => {
   const f = req.query, where = ['seller_id = ?'], p = [req.user.id];
   if (f.status && ['draft', 'active', 'reserved', 'sold', 'archived'].includes(f.status)) { where.push('status = ?'); p.push(f.status); }
   if (f.q) { const t = `%${String(f.q).slice(0, 80).replace(/[\\%_]/g, (c) => '\\' + c)}%`; where.push("(title LIKE ? ESCAPE '\\' OR sku LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\')"); p.push(t, t, t); }
   const pg = Math.max(1, parseInt(f.page, 10) || 1), per = 25;
-  const total = q.get(`SELECT COUNT(*) n FROM listings WHERE ${where.join(' AND ')}`, ...p).n;
-  const rows = q.all(`SELECT l.*, ${L.IMG_SQL} FROM listings l WHERE ${where.join(' AND ').replace(/\b(seller_id|status|title|sku|brand)\b/g, 'l.$1')} ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`, ...p, per, (pg - 1) * per);
-  const recorded = ES.recordedIds(rows.map((l) => l.id));
+  const total = (await q.get(`SELECT COUNT(*) n FROM listings WHERE ${where.join(' AND ')}`, ...p)).n;
+  const rows = await q.all(`SELECT l.*, ${L.IMG_SQL} FROM listings l WHERE ${where.join(' AND ').replace(/\b(seller_id|status|title|sku|brand)\b/g, 'l.$1')} ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`, ...p, per, (pg - 1) * per);
+  const recorded = await ES.recordedIds(rows.map((l) => l.id));
   const sale = { sold: 'Sold', reserved: 'In checkout', active: 'For sale', draft: 'Not published', archived: 'Paused' };
   const body = `<h1>Inventory <span class="muted small">${total} item${total === 1 ? '' : 's'}</span></h1>
   <form class="filterbar" method="get"><label class="sr" for="iq">Search</label><input id="iq" type="search" name="q" placeholder="Search title, SKU, brand" value="${esc(f.q || '')}">
@@ -115,11 +115,11 @@ r.get('/dashboard/inventory', S, (req, res) => {
    document.getElementById('bapply').onclick=async()=>{const ids=sel(),st=bstatus.value,pr=bprice.value.trim(),pc=bpct.value.trim();
     try{let r;if(st)r=await pp.api('POST','/api/seller/listings/bulk',{ids,action:'status',status:st});else if(pr||pc)r=await pp.api('POST','/api/seller/listings/bulk',{ids,action:'price',price:pr||undefined,percent:pc||undefined});else return pp.toast('Choose a status or price change',true);
      pp.toast(r.updated+' updated'+(r.skipped.length?', '+r.skipped.length+' skipped ('+r.skipped[0].reason+')':''),r.skipped.length&&!r.updated);setTimeout(()=>location.reload(),1200)}catch(e){pp.toast(e.message,true)}}})()</script>`;
-  page(req, res, { title: 'Inventory', path: '/dashboard/inventory', body, dash: true, scripts: script });
+  await page(req, res, { title: 'Inventory', path: '/dashboard/inventory', body, dash: true, scripts: script });
 });
 
 // ---------- Listing editor ----------
-function editor(req, res, l) {
+async function editor(req, res, l) {
   const v = (k, d = '') => esc(l && l[k] != null ? l[k] : d), cents = (k) => (l && l[k] != null ? (l[k] / 100).toFixed(2) : '');
   const opt = (items, cur) => items.map(([a, b]) => `<option value="${a}"${cur === a ? ' selected' : ''}>${esc(b)}</option>`).join('');
   const locked = l && ['sold', 'reserved'].includes(l.status);
@@ -161,56 +161,56 @@ function editor(req, res, l) {
     <button type="button" class="btn ghost small" id="pc-use" hidden style="margin-top:10px">Use recommended price</button>
     <hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><h3>Your payout at this price</h3><div id="payout" class="small muted">Enter a price.</div></aside></div>`;
   const script = `<script src="/uploader.js" defer></script><script>window.__EDIT=${JSON.stringify(l ? { images: l.images } : { images: [] }).replace(/</g, '\\u003c')};window.__PLAN=${JSON.stringify(req.user.plan)}</script><script src="/editor.js" defer></script>`;
-  page(req, res, { title: l ? 'Edit listing' : 'New listing', path: '/dashboard/listings', body, dash: true, scripts: script });
+  await page(req, res, { title: l ? 'Edit listing' : 'New listing', path: '/dashboard/listings', body, dash: true, scripts: script });
 }
-r.get('/dashboard/listings/new', S, (req, res) => editor(req, res, null));
-r.get('/dashboard/listings/:id(\\d+)/edit', S, (req, res) => {
-  const l = L.getListing(Number(req.params.id));
-  if (!l || l.seller_id !== req.user.id) return res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Listing not found', '', ['/dashboard/inventory', 'Inventory']) }));
-  editor(req, res, l);
+r.get('/dashboard/listings/new', S, async (req, res) => await editor(req, res, null));
+r.get('/dashboard/listings/:id(\\d+)/edit', S, async (req, res) => {
+  const l = await L.getListing(Number(req.params.id));
+  if (!l || l.seller_id !== req.user.id) return res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Listing not found', '', ['/dashboard/inventory', 'Inventory']) }));
+  await editor(req, res, l);
 });
 
 // ---------- Listing APIs ----------
-r.post('/api/seller/listings', S, (req, res) => { const l = L.saveListing(req.user, null, req.body); res.json({ ok: true, id: l.id, status: l.status }); });
-r.put('/api/seller/listings/:id(\\d+)', S, (req, res) => { const l = L.saveListing(req.user, Number(req.params.id), req.body); res.json({ ok: true, id: l.id, status: l.status }); });
-r.post('/api/seller/listings/:id(\\d+)/:action(pause|resume|unpublish)', S, (req, res) => res.json({ ok: true, ...L.listingAction(req.user, req.params.id, req.params.action) }));
+r.post('/api/seller/listings', S, async (req, res) => { const l = await L.saveListing(req.user, null, req.body); res.json({ ok: true, id: l.id, status: l.status }); });
+r.put('/api/seller/listings/:id(\\d+)', S, async (req, res) => { const l = await L.saveListing(req.user, Number(req.params.id), req.body); res.json({ ok: true, id: l.id, status: l.status }); });
+r.post('/api/seller/listings/:id(\\d+)/:action(pause|resume|unpublish)', S, async (req, res) => res.json({ ok: true, ...await L.listingAction(req.user, req.params.id, req.params.action) }));
 // "mark-sold" (kept for older clients) records a sale with origin "Other" and no shipping; the inventory page links to the full Record sale form instead.
-r.post('/api/seller/listings/:id(\\d+)/mark-sold', S, (req, res) => res.json({ ok: true, ...ES.record(req.user, req.params.id, { origin: 'other', fulfillment: 'pickup', ...req.body }) }));
-r.delete('/api/seller/listings/:id(\\d+)', S, (req, res) => {
-  const out = L.listingAction(req.user, req.params.id, 'delete');
-  for (const f of out.files || []) require('../images').removeIfUnreferenced(f);
+r.post('/api/seller/listings/:id(\\d+)/mark-sold', S, async (req, res) => res.json({ ok: true, ...await ES.record(req.user, req.params.id, { origin: 'other', fulfillment: 'pickup', ...req.body }) }));
+r.delete('/api/seller/listings/:id(\\d+)', S, async (req, res) => {
+  const out = await L.listingAction(req.user, req.params.id, 'delete');
+  for (const f of out.files || []) await require('../images').removeIfUnreferenced(f);
   res.json({ ok: true });
 });
-r.post('/api/seller/listings/:id(\\d+)/duplicate', S, (req, res) => res.json({ ok: true, id: L.duplicateListing(req.user, Number(req.params.id)) }));
-r.post('/api/seller/listings/bulk', S, (req, res) => res.json(L.bulkAction(req.user, req.body)));
-r.get('/api/seller/profit-calc', S, (req, res) => {
+r.post('/api/seller/listings/:id(\\d+)/duplicate', S, async (req, res) => res.json({ ok: true, id: await L.duplicateListing(req.user, Number(req.params.id)) }));
+r.post('/api/seller/listings/bulk', S, async (req, res) => res.json(await L.bulkAction(req.user, req.body)));
+r.get('/api/seller/profit-calc', S, async (req, res) => {
   const c = (k) => { const v = dollarsToCents(req.query[k]); return Number.isNaN(v) ? null : v || 0; };
   const cost = c('cost'), shipC = c('shipping'), margin = Number(req.query.margin);
   // If the seller hasn't entered a label cost, assume the shipping they charge just covers it (pass-through).
   const label = req.query.label ? c('label') : shipC;
   if (cost == null || label == null || shipC == null || !(margin >= 0 && margin < 90)) throw new HttpError(422, 'Enter valid numbers.');
-  const rec = engine().recommendPrice({ costCents: cost, labelCostCents: label, shippingChargedCents: shipC, marginPct: margin, plan: req.user.plan });
+  const rec = (await engine()).recommendPrice({ costCents: cost, labelCostCents: label, shippingChargedCents: shipC, marginPct: margin, plan: req.user.plan });
   if (!rec) throw new HttpError(422, 'That margin is not achievable after fees.');
   res.json(rec);
 });
-r.get('/api/seller/payout-preview', S, (req, res) => {
+r.get('/api/seller/payout-preview', S, async (req, res) => {
   const price = dollarsToCents(req.query.price), ship = dollarsToCents(req.query.shipping) || 0, cost = dollarsToCents(req.query.cost);
   if (price == null || Number.isNaN(price) || Number.isNaN(ship)) throw new HttpError(422, 'Enter a valid price.');
   const label = req.query.label ? dollarsToCents(req.query.label) : ship; // pass-through assumption when blank
   if (Number.isNaN(label)) throw new HttpError(422, 'Enter a valid label cost.');
-  const o = engine().priceOrder({ subtotalCents: price, shippingCents: ship, sellerPlan: req.user.plan });
+  const o = (await engine()).priceOrder({ subtotalCents: price, shippingCents: ship, sellerPlan: req.user.plan });
   res.json({ ...o, labelCents: label, profitCents: cost != null && !Number.isNaN(cost) ? o.sellerPayoutCents - cost - label : null });
 });
 
 // ---------- Orders ----------
 const FULFIL = { paid: 'Awaiting shipment', shipped: 'Shipped', delivered: 'Delivered — awaiting buyer', released: 'Completed', disputed: 'In dispute', refunded: 'Refunded', pending_payment: 'Awaiting payment', cancelled: 'Cancelled' };
-r.get('/dashboard/orders', S, (req, res) => {
+r.get('/dashboard/orders', S, async (req, res) => {
   const FILTERS = ['pending_payment', 'paid', 'shipped', 'delivered', 'released', 'disputed', 'refunded', 'cancelled'];
   const st = FILTERS.includes(req.query.status) ? req.query.status : null;
-  const orders = q.all(`SELECT o.*, b.display_name buyer_name, c.ship_city, c.ship_region FROM orders o JOIN users b ON b.id = o.buyer_id JOIN checkouts c ON c.id = o.checkout_id
+  const orders = await q.all(`SELECT o.*, b.display_name buyer_name, c.ship_city, c.ship_region FROM orders o JOIN users b ON b.id = o.buyer_id JOIN checkouts c ON c.id = o.checkout_id
     WHERE o.seller_id = ? AND (o.payment_mode = 'external' OR o.status NOT IN ('pending_payment','cancelled')) ${st ? 'AND o.status = ?' : ''} ORDER BY o.created_at DESC, o.id DESC LIMIT 200`, ...(st ? [req.user.id, st] : [req.user.id]));
-  const rowOf = (o) => {
-    const items = q.all('SELECT title FROM order_items WHERE order_id = ?', o.id);
+  const rowOf = async (o) => {
+    const items = await q.all('SELECT title FROM order_items WHERE order_id = ?', o.id);
     const ext = o.payment_mode === 'external';
     const act = ext ? `<a class="btn ${o.status === 'pending_payment' || o.status === 'paid' ? '' : 'ghost'} small" href="/dashboard/orders/${o.id}">${o.status === 'pending_payment' ? 'Confirm payment' : o.status === 'paid' ? 'Ship' : 'Details'}</a>` : o.status === 'paid' ? `<form data-api="/api/seller/orders/${o.id}/ship" data-reload style="display:flex;gap:4px;flex-wrap:wrap"><label class="sr" for="c${o.id}">Carrier</label><select id="c${o.id}" name="carrier" style="width:auto"><option>USPS</option><option>UPS</option><option>FedEx</option><option>Canada Post</option><option>Other</option></select>
         <label class="sr" for="t${o.id}">Tracking number</label><input id="t${o.id}" name="tracking" placeholder="Tracking #" required style="width:150px"><button class="btn small" type="submit">Mark shipped</button></form>
@@ -227,8 +227,8 @@ r.get('/dashboard/orders', S, (req, res) => {
     ['In dispute', '', (o) => o.status === 'disputed'],
     ['Cancelled, released and refunded', 'Never paid (or refunded). The item is only re-listed automatically if nothing else holds or has sold it.', (o) => ['cancelled', 'refunded'].includes(o.status)]];
   const head = '<thead><tr><th>Order</th><th>Items</th><th>Buyer</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th><th>Tracking</th><th>Actions</th></tr></thead>';
-  const sections = GROUPS.map(([title, note, test]) => { const list = orders.filter(test); return list.length ? `<h2 style="margin-top:20px">${title} <span class="muted small">(${list.length})</span></h2>${note ? `<p class="small muted" style="margin:0 0 8px">${note}</p>` : ''}<div class="tablewrap"><table>${head}<tbody>${list.map(rowOf).join('')}</tbody></table></div>` : ''; }).join('');
-  const extSales = st ? [] : ES.listFor(req.user), unrecorded = st ? [] : ES.unrecordedSold(req.user);
+  const sections = (await Promise.all(GROUPS.map(async ([title, note, test]) => { const list = orders.filter(test); return list.length ? `<h2 style="margin-top:20px">${title} <span class="muted small">(${list.length})</span></h2>${note ? `<p class="small muted" style="margin:0 0 8px">${note}</p>` : ''}<div class="tablewrap"><table>${head}<tbody>${(await Promise.all(list.map(rowOf))).join('')}</tbody></table></div>` : ''; }))).join('');
+  const extSales = st ? [] : await ES.listFor(req.user), unrecorded = st ? [] : await ES.unrecordedSold(req.user);
   const shipLabel = (x) => (x.voided_at ? 'Voided' : x.fulfillment === 'pickup' ? 'Local pickup' : x.fulfillment === 'ship' ? (x.shipment_status === 'shipped' ? `Shipped · ${esc(x.carrier)} ${esc(x.tracking_number)}` : ES.hasAddress(x) ? 'Awaiting shipment' : 'Awaiting recipient address') : '—');
   const unrecSection = unrecorded.length ? `<h2 style="margin-top:24px">Sold items with no sales record <span class="muted small">(${unrecorded.length})</span></h2><p class="small muted" style="margin:0 0 8px">These listings are marked Sold but have no PairPlug order and no sale record. Nothing was converted automatically: record each sale so it appears in your history.</p><div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Listed price</th><th></th></tr></thead><tbody>${unrecorded.map((l) => `<tr><td><a href="/dashboard/listings/${l.id}/edit">${esc(l.title)}</a></td><td class="num">${money(l.price_cents)}</td><td><a class="btn small" href="/dashboard/listings/${l.id}/record-sale">Record sale</a></td></tr>`).join('')}</tbody></table></div>` : '';
   const recSection = extSales.length ? `<h2 style="margin-top:24px">Recorded sales <span class="muted small">(${extSales.length})</span></h2><p class="small muted" style="margin:0 0 8px">Sales you recorded yourself (not PairPlug checkout orders). <strong>PairPlug has not verified these sales or any payment.</strong></p><div class="tablewrap"><table><thead><tr><th>Item</th><th>Origin</th><th>Sold on</th><th class="num">Price</th><th>Payment</th><th>Fulfillment</th><th></th></tr></thead><tbody>${extSales.map((x) => `<tr${x.voided_at ? ' style="opacity:.6"' : ''}><td><a href="/dashboard/sales/${x.id}">${esc(x.title)}</a></td><td>${x.origin ? esc(ES.ORIGINS[x.origin]) : '<span class="muted">Earlier record</span>'}${x.channel ? `<div class="muted small">${esc(x.channel)}</div>` : ''}</td><td>${esc(x.sold_on)}</td><td class="num">${x.price_cents == null ? '<span class="muted">not recorded</span>' : money(x.price_cents)}</td><td>${x.payment_status === 'confirmed_by_seller' ? 'Confirmed by you<div class="muted small">not verified by PairPlug</div>' : 'Not confirmed'}</td><td>${shipLabel(x)}</td><td><a class="btn ghost small" href="/dashboard/sales/${x.id}">Details</a></td></tr>`).join('')}</tbody></table></div>` : '';
@@ -238,23 +238,23 @@ r.get('/dashboard/orders', S, (req, res) => {
   <p class="small muted">${SHIPPO.enabled() ? 'Shipping labels are in <strong>test mode</strong>: open a paid order to try the Shippo label panel (test labels are not valid postage). For real shipments, buy a label with your carrier or a shipping service and enter the tracking number on the order.' : 'PairPlug does not buy shipping labels or pay postage. Buy postage from your own shipping account, then enter the carrier and tracking number on the order.'}</p>
   ${orders.length ? sections : (extSales.length || unrecorded.length) && !st ? '<p class="muted">No PairPlug orders yet. Orders appear here as soon as a buyer starts checkout, including ones still waiting for your payment confirmation.</p>' : V.empty('No orders', st ? 'No orders with this status.' : 'Orders appear here as soon as a buyer starts checkout, including ones still waiting for your payment confirmation.')}
   ${st ? '' : extSections}`;
-  page(req, res, { title: 'Orders', path: '/dashboard/orders', body, dash: true });
+  await page(req, res, { title: 'Orders', path: '/dashboard/orders', body, dash: true });
 });
-r.post('/api/seller/orders/:id(\\d+)/ship', S, (req, res) => {
+r.post('/api/seller/orders/:id(\\d+)/ship', S, async (req, res) => {
   const carrier = config.carriers.includes(req.body.carrier) ? req.body.carrier : '', tracking = cleanLine(req.body.tracking, 60).replace(/\s/g, '');
   if (!carrier) throw new HttpError(422, 'Choose a carrier.');
   if (!/^[A-Za-z0-9-]{6,40}$/.test(tracking)) throw new HttpError(422, 'Please fix the highlighted fields.', { tracking: 'Enter a valid tracking number (letters/numbers, 6–40 characters).' });
-  tx(() => {
-    const o = q.get('SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
+  await tx(async () => {
+    const o = await q.get('SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
     if (!o) throw new HttpError(404, 'Order not found');
-    try { transition(o.id, 'shipped', { actor: `seller:${req.user.id}`, note: `${carrier} ${tracking}`, set: { carrier, tracking_number: tracking, shipped_at: now(), ship_note: cleanLine(req.body.note, 200) || null } }); }
+    try { await transition(o.id, 'shipped', { actor: `seller:${req.user.id}`, note: `${carrier} ${tracking}`, set: { carrier, tracking_number: tracking, shipped_at: now(), ship_note: cleanLine(req.body.note, 200) || null } }); }
     catch (e) { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; }
-    notify(o.buyer_id, `order:${o.id}:shipped`, 'Your order shipped', `Order #${o.id} shipped with ${carrier}. Tracking: ${tracking}`, `/orders/${o.id}`);
+    await notify(o.buyer_id, `order:${o.id}:shipped`, 'Your order shipped', `Order #${o.id} shipped with ${carrier}. Tracking: ${tracking}`, `/orders/${o.id}`);
   });
   res.json({ ok: true });
 });
 r.post('/api/seller/orders/:id(\\d+)/cancel', S, wrap(async (req, res) => {
-  const o = q.get('SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
+  const o = await q.get('SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
   if (!o) throw new HttpError(404, 'Order not found');
   if (o.status !== 'paid') throw new HttpError(409, "Only orders that haven't shipped can be cancelled.");
   await escrow.refundOrder(o.id, { actor: `seller:${req.user.id}`, reason: 'Cancelled by seller before shipping', relist: false });
@@ -262,8 +262,8 @@ r.post('/api/seller/orders/:id(\\d+)/cancel', S, wrap(async (req, res) => {
 }));
 
 // ---------- Analytics ----------
-r.get('/dashboard/analytics', S, (req, res) => {
-  const a = stats.analytics(req.user.id), max = Math.max(1, ...a.days.map((d) => d.gross));
+r.get('/dashboard/analytics', S, async (req, res) => {
+  const a = await stats.analytics(req.user.id), max = Math.max(1, ...a.days.map((d) => d.gross));
   const empty = !a.orders;
   const body = `<h1>Analytics</h1><div class="stats">${stat('Items sold', a.itemsSold)}${stat('Orders', a.orders)}${stat('Average order value', a.orders ? money(a.aov) : '—')}${stat('Gross sales (all time)', money(a.gross))}</div>
   <h2>Gross sales, last 30 days</h2><div class="panel">${empty ? V.empty('No sales yet', 'Your sales chart will appear after your first paid order.') : `<div class="chart" role="img" aria-label="Daily gross sales for the last 30 days">${a.days.map((d) => `<div class="cbar" style="height:${Math.max(1, Math.round((d.gross / max) * 100))}%" title="${d.day}: ${money(d.gross)} (${d.orders} order${d.orders === 1 ? '' : 's'})"></div>`).join('')}</div>
@@ -273,14 +273,14 @@ r.get('/dashboard/analytics', S, (req, res) => {
   <h2>Item profitability</h2>${a.itemProfit.length ? `<div class="tablewrap"><table><thead><tr><th>Item</th><th>Order</th><th class="num">Sale price</th><th class="num">Cost</th><th class="num">Gross margin</th></tr></thead><tbody>
     ${a.itemProfit.map((i) => `<tr><td>${esc(i.title)}</td><td><a href="/orders/${i.order_id}">#${i.order_id}</a></td><td class="num">${money(i.price_cents)}</td><td class="num">${money(i.cost_cents)}</td><td class="num">${money(i.price_cents - i.cost_cents)}</td></tr>`).join('')}</tbody></table></div><p class="small muted">Gross margin = sale price − acquisition cost, before marketplace fees. Only items with a recorded cost are listed.</p>`
     : V.empty('No profitability data', 'Record an acquisition cost on your listings to see per-item margins after they sell.')}`;
-  page(req, res, { title: 'Analytics', path: '/dashboard/analytics', body, dash: true });
+  await page(req, res, { title: 'Analytics', path: '/dashboard/analytics', body, dash: true });
 });
 
 // ---------- Finance: earnings, wallet, tax ----------
-r.get('/dashboard/finance', S, (req, res) => {
-  const o = stats.overview(req.user.id), tax = stats.monthlyTax(req.user.id);
-  const ledger = q.all('SELECT * FROM ledger WHERE user_id = ? ORDER BY id DESC LIMIT 30', req.user.id), wd = q.all('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY id DESC LIMIT 10', req.user.id);
-  const s = getSettings();
+r.get('/dashboard/finance', S, async (req, res) => {
+  const o = await stats.overview(req.user.id), tax = await stats.monthlyTax(req.user.id);
+  const ledger = await q.all('SELECT * FROM ledger WHERE user_id = ? ORDER BY id DESC LIMIT 30', req.user.id), wd = await q.all('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY id DESC LIMIT 10', req.user.id);
+  const s = await getSettings();
   const body = `<h1>Earnings & tax</h1>${X.isExternal() ? '<div class="panel notice small">In the private beta, buyers pay you directly through your own payment provider, so those sales are <strong>not</strong> shown here and PairPlug holds no funds for them. This page covers earlier PairPlug-processed sales only. Use your payment provider\'s reports for taxes.</div>' : ''}<div class="stats">${stat('Available to withdraw', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'released after delivery')}${stat('Net proceeds (all time)', money(o.net))}</div>
   <div class="panel" style="margin-top:16px"><h3>Withdraw funds</h3><p class="small muted">Withdrawals are requests reviewed by PairPlug staff. Automated bank payouts need a Stripe Connect integration, which isn't enabled.</p>
     <form data-api="/api/seller/withdrawals" data-reload style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><div><label for="wa">Amount ($)</label><input id="wa" name="amount" inputmode="decimal" value="${(o.balance.availableCents / 100).toFixed(2)}"></div><button class="btn" type="submit"${o.balance.availableCents > 0 ? '' : ' disabled'}>Request withdrawal</button></form>
@@ -290,35 +290,35 @@ r.get('/dashboard/finance', S, (req, res) => {
   ${tax.length ? `<div class="tablewrap"><table><thead><tr><th>Month</th><th class="num">Orders</th><th class="num">Item sales</th><th class="num">Shipping</th><th class="num">Sales tax collected*</th><th class="num">Fees</th><th class="num">Net payout</th></tr></thead><tbody>${tax.map((t) => `<tr><td>${t.month}</td><td class="num">${t.orders}</td><td class="num">${money(t.gross)}</td><td class="num">${money(t.shipping)}</td><td class="num">${money(t.tax)}</td><td class="num">${money(t.fees)}</td><td class="num">${money(t.net)}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">* Tax shown is held by the marketplace for remittance and is not part of your payout. This summary is informational, not tax advice. <a href="/api/seller/tax.csv">Download CSV</a></p>` : V.empty('No completed sales yet', 'Monthly summaries appear once funds are released.')}
   <h2>Wallet activity</h2>${ledger.length ? `<div class="tablewrap"><table><tbody>${ledger.map((l) => `<tr><td>${date(l.created_at)}</td><td>${esc(l.kind.replace('_', ' '))} ${esc(l.note || '')}</td><td class="num">${money(l.amount_cents)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No wallet activity', '')}`;
-  page(req, res, { title: 'Earnings & tax', path: '/dashboard/finance', body, dash: true });
+  await page(req, res, { title: 'Earnings & tax', path: '/dashboard/finance', body, dash: true });
 });
-r.get('/api/seller/tax.csv', S, (req, res) => {
-  const rows = stats.monthlyTax(req.user.id);
+r.get('/api/seller/tax.csv', S, async (req, res) => {
+  const rows = await stats.monthlyTax(req.user.id);
   res.type('text/csv').set('Content-Disposition', 'attachment; filename="pairplug-tax-summary.csv"')
     .send(['month,orders,item_sales,shipping,sales_tax_collected,fees,net_payout', ...rows.map((t) => [t.month, t.orders, ...[t.gross, t.shipping, t.tax, t.fees, t.net].map((c) => (c / 100).toFixed(2))].join(','))].join('\n') + '\n');
 });
-r.post('/api/seller/withdrawals', S, (req, res) => {
+r.post('/api/seller/withdrawals', S, async (req, res) => {
   const amt = dollarsToCents(req.body.amount);
   if (amt == null || Number.isNaN(amt) || amt <= 0) throw new HttpError(422, 'Please fix the highlighted fields.', { amount: 'Enter a valid amount.' });
-  tx(() => {
-    const bal = stats.wallet(req.user.id).availableCents;
+  await tx(async () => {
+    const bal = (await stats.wallet(req.user.id)).availableCents;
     if (amt > bal) throw new HttpError(422, 'Please fix the highlighted fields.', { amount: `You can withdraw up to ${money(bal)}.` });
     // Reserve funds immediately with a negative ledger row so the same balance can't be requested twice.
-    const w = q.run("INSERT INTO withdrawals(user_id, amount_cents, created_at) VALUES(?,?,?)", req.user.id, amt, now());
-    q.run("INSERT INTO ledger(user_id, kind, amount_cents, note, created_at) VALUES(?, 'withdrawal', ?, ?, ?)", req.user.id, -amt, `Withdrawal #${w.lastInsertRowid}`, now());
+    const w = await q.run("INSERT INTO withdrawals(user_id, amount_cents, created_at) VALUES(?,?,?)", req.user.id, amt, now());
+    await q.run("INSERT INTO ledger(user_id, kind, amount_cents, note, created_at) VALUES(?, 'withdrawal', ?, ?, ?)", req.user.id, -amt, `Withdrawal #${w.lastInsertRowid}`, now());
   });
   res.json({ ok: true, message: 'Withdrawal requested' });
 });
 
 // ---------- CSV import ----------
-r.get('/dashboard/import', S, (req, res) => {
+r.get('/dashboard/import', S, async (req, res) => {
   const body = `<h1>CSV import</h1><div class="panel form-wide"><p>Bulk create or update inventory, matched by <strong>sku</strong>. Existing SKUs have their fields updated; new SKUs are created as <em>drafts</em> (add photos in the editor, then publish). Sold or reserved items are never changed.</p>
   <p class="small muted">Columns: <code>sku</code> (required), title, description, category, brand, size, condition (new_with_tags, like_new, good, fair), price, cost, shipping, weight_oz, length_in, width_in, height_in. Max ${config.limits.csvRows} rows.</p>
   <label for="csvf">CSV file</label><input id="csvf" type="file" accept=".csv,text/csv"><button class="btn" id="csvgo" style="margin-top:12px">Import</button><div id="csvout" aria-live="polite" style="margin-top:14px"></div></div>`;
   const script = `<script>document.getElementById('csvgo').onclick=async()=>{const f=csvf.files[0];if(!f)return pp.toast('Choose a CSV file',true);const out=document.getElementById('csvout');
    try{const r=await pp.api('POST','/api/seller/import',{csv:await f.text()});out.innerHTML='<strong>'+r.created+' created, '+r.updated+' updated, '+r.errors.length+' rows with errors.</strong>'+(r.errors.length?'<ul>'+r.errors.map(e=>'<li>Line '+e.line+': '+e.error.replace(/</g,'&lt;')+'</li>').join('')+'</ul>':'')}catch(e){out.innerHTML='<div class="form-err">'+e.message+'</div>'}}</script>`;
-  page(req, res, { title: 'CSV import', path: '/dashboard/import', body, dash: true, scripts: script });
+  await page(req, res, { title: 'CSV import', path: '/dashboard/import', body, dash: true, scripts: script });
 });
-r.post('/api/seller/import', S, express.json({ limit: '2mb' }), (req, res) => res.json(L.importCsv(req.user, req.body.csv)));
+r.post('/api/seller/import', S, express.json({ limit: '2mb' }), async (req, res) => res.json(await L.importCsv(req.user, req.body.csv)));
 
 module.exports = { router: r };

@@ -6,13 +6,13 @@ const assert = require('node:assert/strict');
 const H = require('./helpers');
 const { q } = require('../src/db');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 const LINK = 'https://buy.stripe.com/test_support123';
-const row = (id) => q.get('SELECT * FROM orders WHERE id = ?', id);
-const audits = (action) => q.all('SELECT * FROM audit_log WHERE action = ?', action);
-async function admin() { const a = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; }
+const row = async (id) => await q.get('SELECT * FROM orders WHERE id = ?', id);
+const audits = async (action) => await q.all('SELECT * FROM audit_log WHERE action = ?', action);
+async function admin() { const a = await H.newUser('Admin'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; }
 async function paidOrder() {
   const seller = await H.newSeller('Sup'), buyer = await H.newUser('Buyer');
   const id = await H.makeListing(seller, { payment_url: LINK, price: '40.00', shipping: '6.00', shipping_payer: 'buyer' });
@@ -39,8 +39,8 @@ test('order case: buyer opens, seller responds, outsiders get 404, internal note
   assert.equal((await adm.post(`/api/admin/cases/${id}/decide`, { outcome: 'resolved', resolution: 'Tracking shows delivery; buyer to check with neighbours.' })).status, 200);
   assert.equal((await buyer.post(`/api/cases/${id}/respond`, { body: 'one more thing' })).status, 409, 'closed case');
   assert.ok((await buyer.get(`/cases/${id}`)).text.includes('Tracking shows delivery'));
-  assert.ok(audits('case_decided').length >= 1 && audits('case_note_added').length >= 1);
-  assert.throws(() => q.run('UPDATE case_events SET body = ? WHERE case_id = ?', 'x', id), /append-only/);
+  assert.ok((await audits('case_decided')).length >= 1 && (await audits('case_note_added')).length >= 1);
+  await assert.rejects(async () => await q.run('UPDATE case_events SET body = ? WHERE case_id = ?', 'x', id), /append-only/);
 });
 
 test('refund: request -> seller report -> still not refunded -> buyer confirms -> refunded; cancellations only before shipping', async () => {
@@ -50,10 +50,10 @@ test('refund: request -> seller report -> still not refunded -> buyer confirms -
   assert.equal((await buyer.post(`/api/orders/${o}/refund-request`, { reason: 'again again again' })).status, 409, 'one open request');
   assert.equal((await seller.post(`/api/seller/orders/${o}/refund-response`, { action: 'report_refunded' })).status, 422, 'must attest');
   assert.equal((await seller.post(`/api/seller/orders/${o}/refund-response`, { action: 'report_refunded', confirm_refunded: true, reference: 're_abc123' })).status, 200);
-  assert.equal(row(o).status, 'paid'); assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'sold');
+  assert.equal((await row(o)).status, 'paid'); assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'sold');
   assert.ok((await buyer.get(`/orders/${o}`)).text.includes('The seller says they refunded you'));
   assert.equal((await buyer.post(`/api/orders/${o}/refund-confirm`, { received: true })).status, 200);
-  assert.equal(row(o).status, 'refunded');
+  assert.equal((await row(o)).status, 'refunded');
   assert.equal((await buyer.post(`/api/orders/${o}/refund-confirm`, { received: true })).status, 409);
 });
 
@@ -63,17 +63,17 @@ test('refund: buyer says it did not arrive -> escalates to a case; admin closes 
   await a.seller.post(`/api/seller/orders/${a.o}/refund-response`, { action: 'report_refunded', confirm_refunded: true });
   assert.equal((await a.buyer.post(`/api/orders/${a.o}/refund-confirm`, { received: false, note: 'x' })).status, 422);
   assert.equal((await a.buyer.post(`/api/orders/${a.o}/refund-confirm`, { received: false, note: 'Nothing arrived in my account.' })).status, 200);
-  const req = q.get('SELECT * FROM refund_requests WHERE order_id = ?', a.o); assert.equal(req.status, 'buyer_disputes_refund'); assert.ok(req.case_id);
-  assert.equal(row(a.o).status, 'paid');
+  const req = await q.get('SELECT * FROM refund_requests WHERE order_id = ?', a.o); assert.equal(req.status, 'buyer_disputes_refund'); assert.ok(req.case_id);
+  assert.equal((await row(a.o)).status, 'paid');
   assert.equal((await a.seller.post(`/api/admin/refunds/${req.id}/resolve`, { outcome: 'verified', note: 'trust me' })).status, 403);
   assert.equal((await adm.post(`/api/admin/refunds/${req.id}/resolve`, { outcome: 'verified', note: 'Seller provided the provider receipt; confirmed.' })).status, 200);
-  assert.equal(row(a.o).status, 'refunded'); assert.equal(q.get('SELECT status FROM refund_requests WHERE id = ?', req.id).status, 'admin_verified_refund');
+  assert.equal((await row(a.o)).status, 'refunded'); assert.equal((await q.get('SELECT status FROM refund_requests WHERE id = ?', req.id)).status, 'admin_verified_refund');
   const b = await paidOrder();
   await b.buyer.post(`/api/orders/${b.o}/refund-request`, { reason: 'I just want my money back' });
   assert.equal((await b.seller.post(`/api/seller/orders/${b.o}/refund-response`, { action: 'decline', note: 'short' })).status, 422);
   assert.equal((await b.seller.post(`/api/seller/orders/${b.o}/refund-response`, { action: 'decline', note: 'Outside the stated return window.' })).status, 200);
-  assert.equal(row(b.o).status, 'paid');
-  assert.ok(audits('refund_admin_resolved').length >= 1);
+  assert.equal((await row(b.o)).status, 'paid');
+  assert.ok((await audits('refund_admin_resolved')).length >= 1);
 });
 
 test('seller report + message report: permissions, audited admin view of ONLY reported conversations', async () => {
@@ -89,10 +89,10 @@ test('seller report + message report: permissions, audited admin view of ONLY re
   assert.equal((await adm.post(`/api/admin/cases/${unreported}/conversation`, {})).status, 404, 'no reported conversation: admin cannot read chats');
   const rep = await seller.post('/api/chat/report', { conversationId: conv, messageId: mid, reason: 'Buyer is harassing me.' });
   assert.equal(rep.status, 200);
-  const before = audits('reported_conversation_viewed').length;
+  const before = (await audits('reported_conversation_viewed')).length;
   const v = await adm.post(`/api/admin/cases/${rep.json.id}/conversation`, {});
   assert.equal(v.status, 200); assert.ok(JSON.stringify(v.json).includes('PRIVATE-CHAT-TEXT'));
-  assert.equal(audits('reported_conversation_viewed').length, before + 1);
+  assert.equal((await audits('reported_conversation_viewed')).length, before + 1);
   assert.equal((await buyer.post(`/api/admin/cases/${rep.json.id}/conversation`, {})).status, 403);
   assert.equal((await buyer.get(`/cases/${rep.json.id}`)).status, 404, 'the reported party cannot see a message report');
 });
@@ -104,10 +104,10 @@ test('admin actions: pause listing / suspend seller are audited and scoped to th
   const foreign = await H.makeListing(await H.newSeller('F'), { payment_url: LINK });
   assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'pause_listing', listingId: foreign })).status, 404);
   assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'pause_listing', listingId: live })).status, 200);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', live).status, 'archived');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', live)).status, 'archived');
   assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'suspend_seller', reason: 'Confirmed scam activity' })).status, 200);
-  assert.equal(q.get('SELECT banned FROM users WHERE handle = ?', seller.handle).banned, 1);
-  assert.ok(audits('listing_paused_for_case').length && audits('moderation_ban').length);
+  assert.equal((await q.get('SELECT banned FROM users WHERE handle = ?', seller.handle)).banned, 1);
+  assert.ok((await audits('listing_paused_for_case')).length && (await audits('moderation_ban')).length);
   assert.equal((await adm.get('/admin/orders')).status, 200);
   const page = (await adm.get('/admin/orders')).text; assert.ok(!page.includes(H.address.line1), 'no addresses in the admin order overview');
   assert.equal((await adm.get('/admin/responses')).status, 200);

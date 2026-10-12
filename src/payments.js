@@ -86,10 +86,10 @@ function getProvider() {
 const getProviderByName = (n) => (n === 'stripe' && config.stripe.secretKey ? stripe : n === 'sandbox' && config.paymentsMode === 'sandbox' && !config.stripe.secretKey ? sandbox : null);
 
 /** Release held items back to the marketplace (used on failed/expired checkouts). Call inside tx(). */
-function releaseCheckoutItems(checkoutId) {
-  const ck = q.get('SELECT mode FROM checkouts WHERE id = ?', checkoutId);
-  if (ck && ck.mode === 'external') return require('./inventory').releaseCheckout(checkoutId);     // quantity-aware: give the held unit back
-  q.run(`UPDATE listings SET status='active', reserved_until=NULL, reserved_checkout_id=NULL
+async function releaseCheckoutItems(checkoutId) {
+  const ck = await q.get('SELECT mode FROM checkouts WHERE id = ?', checkoutId);
+  if (ck && ck.mode === 'external') return await require('./inventory').releaseCheckout(checkoutId);     // quantity-aware: give the held unit back
+  await q.run(`UPDATE listings SET status='active', reserved_until=NULL, reserved_checkout_id=NULL
          WHERE reserved_checkout_id = ? AND status = 'reserved'`, checkoutId);
 }
 
@@ -97,43 +97,43 @@ function releaseCheckoutItems(checkoutId) {
  * Apply a verified provider event. Idempotent: the (provider,event_id) primary key is inserted in the
  * same transaction as the state change, so a duplicate delivery changes nothing and returns {duplicate:true}.
  */
-function handlePaymentEvent(providerName, ev) {
-  return tx(() => {
-    const ins = q.run('INSERT OR IGNORE INTO payment_events(event_id, provider, type, processed_at) VALUES(?,?,?,?)', ev.id, providerName, ev.type, now());
+async function handlePaymentEvent(providerName, ev) {
+  return await tx(async () => {
+    const ins = await q.run('INSERT OR IGNORE INTO payment_events(event_id, provider, type, processed_at) VALUES(?,?,?,?)', ev.id, providerName, ev.type, now());
     if (ins.changes === 0) return { duplicate: true };
     if (ev.type === 'ignored') return { ignored: true };
-    const checkout = q.get('SELECT * FROM checkouts WHERE id = ?', ev.checkoutId);
+    const checkout = await q.get('SELECT * FROM checkouts WHERE id = ?', ev.checkoutId);
     if (!checkout) return { ignored: true };
     // A provider webhook can never mark a seller-direct checkout paid: only the seller's own confirmation can.
     if (checkout.mode === 'external') return { ignored: true };
-    const payment = q.get('SELECT * FROM payments WHERE checkout_id = ? ORDER BY id DESC LIMIT 1', checkout.id);
+    const payment = await q.get('SELECT * FROM payments WHERE checkout_id = ? ORDER BY id DESC LIMIT 1', checkout.id);
 
     if (ev.type === 'payment_succeeded') {
       if (ev.amountCents != null && ev.amountCents !== checkout.total_cents) throw Object.assign(new Error('Amount mismatch'), { status: 400 });
       if (checkout.status !== 'pending') {
         // Paid after we gave up on the checkout (expired/failed): the items may be gone, so refund rather than ship.
-        if (payment) q.run("UPDATE payments SET status = 'needs_refund' WHERE id = ?", payment.id);
+        if (payment) await q.run("UPDATE payments SET status = 'needs_refund' WHERE id = ?", payment.id);
         return { lateSuccess: true };
       }
-      q.run("UPDATE checkouts SET status = 'paid' WHERE id = ?", checkout.id);
-      if (payment) q.run("UPDATE payments SET status = 'succeeded' WHERE id = ?", payment.id);
-      for (const o of q.all('SELECT * FROM orders WHERE checkout_id = ?', checkout.id)) {
-        transition(o.id, 'paid', { actor: 'payment', set: { paid_at: now() } });
-        q.run(`UPDATE listings SET status='sold', reserved_until=NULL WHERE id IN (SELECT listing_id FROM order_items WHERE order_id = ?)`, o.id);
-        notify(o.seller_id, `order:${o.id}:paid`, 'New order to ship', `Order #${o.id} is paid. Ship it to release your funds.`, `/dashboard/orders`);
-        notify(o.buyer_id, `order:${o.id}:paid-buyer`, 'Payment received', `Order #${o.id} is paid. Funds are held until you receive the item.`, `/orders/${o.id}`);
+      await q.run("UPDATE checkouts SET status = 'paid' WHERE id = ?", checkout.id);
+      if (payment) await q.run("UPDATE payments SET status = 'succeeded' WHERE id = ?", payment.id);
+      for (const o of await q.all('SELECT * FROM orders WHERE checkout_id = ?', checkout.id)) {
+        await transition(o.id, 'paid', { actor: 'payment', set: { paid_at: now() } });
+        await q.run(`UPDATE listings SET status='sold', reserved_until=NULL WHERE id IN (SELECT listing_id FROM order_items WHERE order_id = ?)`, o.id);
+        await notify(o.seller_id, `order:${o.id}:paid`, 'New order to ship', `Order #${o.id} is paid. Ship it to release your funds.`, `/dashboard/orders`);
+        await notify(o.buyer_id, `order:${o.id}:paid-buyer`, 'Payment received', `Order #${o.id} is paid. Funds are held until you receive the item.`, `/orders/${o.id}`);
       }
       return { paid: true };
     }
     if (ev.type === 'payment_failed') {
       if (checkout.status !== 'pending') return { ignored: true };
-      q.run("UPDATE checkouts SET status = 'failed' WHERE id = ?", checkout.id);
-      if (payment) q.run("UPDATE payments SET status = 'failed' WHERE id = ?", payment.id);
-      for (const o of q.all('SELECT * FROM orders WHERE checkout_id = ?', checkout.id)) {
-        transition(o.id, 'cancelled', { actor: 'payment', note: 'payment failed' });
-        notify(o.buyer_id, `order:${o.id}:failed`, 'Payment failed', `Order #${o.id} was not completed. Your items were released.`, '/cart');
+      await q.run("UPDATE checkouts SET status = 'failed' WHERE id = ?", checkout.id);
+      if (payment) await q.run("UPDATE payments SET status = 'failed' WHERE id = ?", payment.id);
+      for (const o of await q.all('SELECT * FROM orders WHERE checkout_id = ?', checkout.id)) {
+        await transition(o.id, 'cancelled', { actor: 'payment', note: 'payment failed' });
+        await notify(o.buyer_id, `order:${o.id}:failed`, 'Payment failed', `Order #${o.id} was not completed. Your items were released.`, '/cart');
       }
-      releaseCheckoutItems(checkout.id);
+      await releaseCheckoutItems(checkout.id);
       return { failed: true };
     }
     return { ignored: true };
@@ -141,16 +141,16 @@ function handlePaymentEvent(providerName, ev) {
 }
 
 /** Expire stale checkouts (reservation timeout). Safe to run repeatedly. */
-function expireStaleCheckouts() {
-  return tx(() => {
-    const stale = q.all("SELECT id FROM checkouts WHERE status = 'pending' AND expires_at < ?", now());
+async function expireStaleCheckouts() {
+  return await tx(async () => {
+    const stale = await q.all("SELECT id FROM checkouts WHERE status = 'pending' AND expires_at < ?", now());
     for (const c of stale) {
-      q.run("UPDATE checkouts SET status = 'expired' WHERE id = ?", c.id);
-      for (const o of q.all('SELECT id, buyer_id, payment_mode FROM orders WHERE checkout_id = ?', c.id)) {
-        transition(o.id, 'cancelled', { actor: 'system', note: 'checkout expired' });
-        if (o.payment_mode === 'external') notify(o.buyer_id, `order:${o.id}:expired`, 'Reservation expired', `Order #${o.id} was released because the seller never confirmed a payment. If you did pay, message the seller right away.`, `/orders/${o.id}`);
+      await q.run("UPDATE checkouts SET status = 'expired' WHERE id = ?", c.id);
+      for (const o of await q.all('SELECT id, buyer_id, payment_mode FROM orders WHERE checkout_id = ?', c.id)) {
+        await transition(o.id, 'cancelled', { actor: 'system', note: 'checkout expired' });
+        if (o.payment_mode === 'external') await notify(o.buyer_id, `order:${o.id}:expired`, 'Reservation expired', `Order #${o.id} was released because the seller never confirmed a payment. If you did pay, message the seller right away.`, `/orders/${o.id}`);
       }
-      releaseCheckoutItems(c.id);
+      await releaseCheckoutItems(c.id);
     }
     return stale.length;
   });

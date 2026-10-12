@@ -47,7 +47,7 @@ const defaults = () => ({ theme: 'light', accent: 'forest', layout: 'grid', sort
 const pick = (map, v, field, errors) => { if (v == null || v === '') return Object.keys(map)[0]; if (!Object.hasOwn(map, v)) { errors[field] = 'Choose one of the available options.'; return Object.keys(map)[0]; } return v; };
 
 /** Validate untrusted input into a clean settings object. Throws HttpError(422, fields) — nothing partial is ever saved. */
-function validate(user, input = {}) {
+async function validate(user, input = {}) {
   const e = {}, out = defaults();
   out.theme = pick(THEMES, input.theme, 'theme', e); out.accent = pick(ACCENTS, input.accent, 'accent', e);
   out.layout = pick(LAYOUTS, input.layout, 'layout', e); out.sort = pick(SORTS, input.sort, 'sort', e);
@@ -63,7 +63,7 @@ function validate(user, input = {}) {
   for (const k of Object.keys(imgRules)) {
     const f = input[k]; if (!f) continue;
     try {
-      ownedUploads(user.id, [f]); const d = storedDimensions(f); const r = imgRules[k];
+      await ownedUploads(user.id, [f]); const d = storedDimensions(f); const r = imgRules[k];
       if (!d) e[k] = 'That image could not be read.';
       else if (r.min && (d.w < r.min || d.h < r.min)) e[k] = `Use an image at least ${r.min}×${r.min}px.`;
       else if (r.minW && (d.w < r.minW || d.h < r.minH)) e[k] = `Use a banner at least ${r.minW}×${r.minH}px.`;
@@ -74,7 +74,7 @@ function validate(user, input = {}) {
   const ids = [...new Set((Array.isArray(input.featured) ? input.featured : []).map(Number))];
   if (ids.length > LIMITS.featured) e.featured = `Feature at most ${LIMITS.featured} items.`;
   else for (const id of ids) {
-    if (!q.get("SELECT 1 x FROM listings WHERE id = ? AND seller_id = ? AND status IN ('active','reserved')", id, user.id)) { e.featured = 'You can only feature your own items that are for sale.'; break; }
+    if (!await q.get("SELECT 1 x FROM listings WHERE id = ? AND seller_id = ? AND status IN ('active','reserved')", id, user.id)) { e.featured = 'You can only feature your own items that are for sale.'; break; }
     out.featured.push(id);
   }
   // links: allowlisted social/marketplace hosts only, https, one per kind
@@ -93,46 +93,46 @@ function validate(user, input = {}) {
 }
 
 const parse = (j) => { try { return j ? { ...defaults(), ...JSON.parse(j) } : null; } catch { return null; } };
-const row = (sellerId) => q.get('SELECT * FROM storefronts WHERE seller_id = ?', sellerId);
+const row = async (sellerId) => await q.get('SELECT * FROM storefronts WHERE seller_id = ?', sellerId);
 const imagesOf = (s) => (s ? [s.avatar, s.logo, s.banner].filter(Boolean) : []);
 
 /** What visitors see (published), or — for the owner previewing — the draft if there is one. Always merged over safe defaults. */
-function effective(sellerId, { preview = false } = {}) {
-  const r = row(sellerId);
+async function effective(sellerId, { preview = false } = {}) {
+  const r = await row(sellerId);
   const published = parse(r && r.published_json), draft = parse(r && r.draft_json);
   return { settings: (preview && draft) || published || defaults(), isDraft: Boolean(preview && draft), hasDraft: Boolean(draft), published: Boolean(published) };
 }
 
-function state(sellerId) {
-  const r = row(sellerId); const draft = parse(r && r.draft_json), published = parse(r && r.published_json);
+async function state(sellerId) {
+  const r = await row(sellerId); const draft = parse(r && r.draft_json), published = parse(r && r.published_json);
   const working = draft || published || defaults();
   return { working, published, hasUnpublished: Boolean(draft) && JSON.stringify(draft) !== JSON.stringify(published || defaults()), publishedAt: r && r.published_at };
 }
 
-function saveDraft(user, input) {
-  const clean_ = validate(user, input);
-  const before = row(user.id);
-  tx(() => {
-    q.run(`INSERT INTO storefronts(seller_id, draft_json, draft_updated_at) VALUES(?,?,?)
+async function saveDraft(user, input) {
+  const clean_ = await validate(user, input);
+  const before = await row(user.id);
+  await tx(async () => {
+    await q.run(`INSERT INTO storefronts(seller_id, draft_json, draft_updated_at) VALUES(?,?,?)
            ON CONFLICT(seller_id) DO UPDATE SET draft_json = excluded.draft_json, draft_updated_at = excluded.draft_updated_at`, user.id, JSON.stringify(clean_), now());
   });
-  for (const f of imagesOf(parse(before && before.draft_json))) if (!imagesOf(clean_).includes(f)) removeIfUnreferenced(f);   // no-op if still published/used elsewhere
+  for (const f of imagesOf(parse(before && before.draft_json))) if (!imagesOf(clean_).includes(f)) await removeIfUnreferenced(f);   // no-op if still published/used elsewhere
   return clean_;
 }
 
-function publish(user) {
-  const r = row(user.id), draft = parse(r && r.draft_json);
+async function publish(user) {
+  const r = await row(user.id), draft = parse(r && r.draft_json);
   if (!draft) throw new HttpError(409, 'There are no unpublished changes.');
   const old = parse(r.published_json);
-  q.run('UPDATE storefronts SET published_json = ?, published_at = ? WHERE seller_id = ?', JSON.stringify(draft), now(), user.id);
-  for (const f of imagesOf(old)) if (!imagesOf(draft).includes(f)) removeIfUnreferenced(f);
+  await q.run('UPDATE storefronts SET published_json = ?, published_at = ? WHERE seller_id = ?', JSON.stringify(draft), now(), user.id);
+  for (const f of imagesOf(old)) if (!imagesOf(draft).includes(f)) await removeIfUnreferenced(f);
   return draft;
 }
 
-function discardDraft(user) {
-  const r = row(user.id), draft = parse(r && r.draft_json); if (!draft) return;
-  q.run('UPDATE storefronts SET draft_json = NULL, draft_updated_at = NULL WHERE seller_id = ?', user.id);
-  for (const f of imagesOf(draft)) removeIfUnreferenced(f);
+async function discardDraft(user) {
+  const r = await row(user.id), draft = parse(r && r.draft_json); if (!draft) return;
+  await q.run('UPDATE storefronts SET draft_json = NULL, draft_updated_at = NULL WHERE seller_id = ?', user.id);
+  for (const f of imagesOf(draft)) await removeIfUnreferenced(f);
 }
 
 module.exports = { PALETTE, themeCss, THEMES, ACCENTS, LAYOUTS, SORTS, LINK_KINDS, LIMITS, defaults, validate, effective, state, saveDraft, publish, discardDraft };

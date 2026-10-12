@@ -17,7 +17,7 @@ const ROOT = path.resolve(__dirname, '..');
 const KEY = 'shippo_test_SANDBOX_TEST_ONLY_KEY_123';
 const deps = () => ({ q, now, hashPassword, setSetting, listings: require('../src/listings'), images: require('../src/images'), checkout: require('../src/externalCheckout'), png });
 const login = async (email, password) => { const c = new H.Client(); const r = await c.post('/api/login', { email, password }); return { c, status: r.status }; };
-const row = (id) => q.get('SELECT * FROM shipments WHERE order_id = ? ORDER BY id DESC LIMIT 1', id);
+const row = async (id) => await q.get('SELECT * FROM shipments WHERE order_id = ? ORDER BY id DESC LIMIT 1', id);
 let transcript = '';
 
 test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 'test' }; config.sandbox = true; SH.setTransport(sb.fakeTransport()); });
@@ -50,18 +50,18 @@ test('config.sandbox is ignored in production', () => {
 
 test('seeding creates only clearly-marked test data, one paid and one unpaid order, with fresh random one-time passwords', async () => {
   const logs = []; const orig = { log: console.log, error: console.error, warn: console.warn }; for (const k of Object.keys(orig)) console[k] = (...a) => logs.push(a.join(' '));
-  let out; try { out = sb.seed(deps()); } finally { Object.assign(console, orig); }
+  let out; try { out = await sb.seed(deps()); } finally { Object.assign(console, orig); }
   transcript += logs.join('\n');
   assert.deepEqual(Object.values(out.email).sort(), ['buyer@sandbox.invalid', 'seller@sandbox.invalid']); assert.notEqual(out.password.seller, out.password.buyer); assert.ok(out.password.seller.length >= 12);
-  const users = q.all('SELECT email, display_name, store_name FROM users'); assert.ok(users.length === 2 && users.every((u) => u.email.endsWith('@sandbox.invalid')), 'only sandbox accounts exist');
-  assert.match(q.get("SELECT display_name d FROM users WHERE email = 'seller@sandbox.invalid'").d, /\[TEST DATA\]/);
-  assert.equal(q.get("SELECT value v FROM settings WHERE key = 'sandbox'").v, '1');
-  assert.ok(q.all("SELECT title FROM listings WHERE title LIKE '[TEST DATA]%'").length >= 2);
-  const paid = q.get('SELECT * FROM orders WHERE id = ?', out.paidOrder), unpaid = q.get('SELECT * FROM orders WHERE id = ?', out.unpaidOrder);
+  const users = await q.all('SELECT email, display_name, store_name FROM users'); assert.ok(users.length === 2 && users.every((u) => u.email.endsWith('@sandbox.invalid')), 'only sandbox accounts exist');
+  assert.match((await q.get("SELECT display_name d FROM users WHERE email = 'seller@sandbox.invalid'")).d, /\[TEST DATA\]/);
+  assert.equal((await q.get("SELECT value v FROM settings WHERE key = 'sandbox'")).v, '1');
+  assert.ok((await q.all("SELECT title FROM listings WHERE title LIKE '[TEST DATA]%'")).length >= 2);
+  const paid = await q.get('SELECT * FROM orders WHERE id = ?', out.paidOrder), unpaid = await q.get('SELECT * FROM orders WHERE id = ?', out.unpaidOrder);
   assert.equal(paid.status, 'paid'); assert.equal(paid.payment_reference, 'SANDBOX-TEST-NO-REAL-PAYMENT'); assert.equal(unpaid.status, 'pending_payment'); assert.equal(paid.shipped_at, null);
-  assert.ok(!q.get('SELECT password_hash h FROM users WHERE email = ?', out.email.seller).h.includes(out.password.seller), 'only a hash is stored');
+  assert.ok(!(await q.get('SELECT password_hash h FROM users WHERE email = ?', out.email.seller)).h.includes(out.password.seller), 'only a hash is stored');
   // re-running rotates passwords, keeps one paid order, and invalidates the old password
-  const again = sb.seed(deps()); assert.equal(again.paidOrder, out.paidOrder); assert.equal(q.get("SELECT COUNT(*) n FROM orders WHERE status = 'paid'").n, 1);
+  const again = await sb.seed(deps()); assert.equal(again.paidOrder, out.paidOrder); assert.equal((await q.get("SELECT COUNT(*) n FROM orders WHERE status = 'paid'")).n, 1);
   assert.equal((await login(out.email.seller, out.password.seller)).status, 401); assert.equal((await login(again.email.seller, again.password.seller)).status, 200);
   globalThis.__sbx = again;
 });
@@ -82,8 +82,8 @@ test('the whole Shippo TEST workflow on the sandbox order: validation, rates, co
   assert.equal((await seller.post(`${base}/buy`, { rateId: 'rate_fake_usps', expectedAmountCents: 758 })).status, 422);
   assert.equal((await seller.post(`${base}/buy`, { rateId: 'rate_fake_usps', expectedAmountCents: 9, confirm: true })).status, 409);
   const b = await seller.post(`${base}/buy`, { rateId: 'rate_fake_usps', expectedAmountCents: 758, confirm: true }); assert.equal(b.status, 200); assert.equal(b.json.shipment.status, 'success'); assert.equal(b.json.shipment.test, true);
-  const sh = row(s.paidOrder); assert.equal(sh.test, 1); assert.equal(sh.price_cents, 758); assert.equal(sh.currency, 'USD'); assert.equal(sh.carrier, 'USPS'); assert.ok(sh.tracking_number && sh.label_url && sh.provider_transaction_id);
-  assert.equal(q.get('SELECT tracking_number t, status s FROM orders WHERE id = ?', s.paidOrder).t, null, 'test label is not copied into the order'); assert.equal(q.get('SELECT status s FROM orders WHERE id = ?', s.paidOrder).s, 'paid');
+  const sh = await row(s.paidOrder); assert.equal(sh.test, 1); assert.equal(sh.price_cents, 758); assert.equal(sh.currency, 'USD'); assert.equal(sh.carrier, 'USPS'); assert.ok(sh.tracking_number && sh.label_url && sh.provider_transaction_id);
+  assert.equal((await q.get('SELECT tracking_number t, status s FROM orders WHERE id = ?', s.paidOrder)).t, null, 'test label is not copied into the order'); assert.equal((await q.get('SELECT status s FROM orders WHERE id = ?', s.paidOrder)).s, 'paid');
   assert.equal((await seller.post(`${base}/buy`, { rateId: 'rate_fake_usps', expectedAmountCents: 758, confirm: true })).json.duplicate, true, 'retry returns the same label');
   // privacy: nothing sensitive in what the browser receives
   for (const t of [JSON.stringify(b.json), (await seller.get(`/dashboard/orders/${s.paidOrder}`)).text, (await buyer.get(`/orders/${s.paidOrder}`)).text]) assert.ok(!t.includes(KEY) && !t.includes(sh.provider_transaction_id) && !t.includes(sh.label_url), 'no token, transaction id or label URL in browser output');
@@ -94,9 +94,9 @@ test('the whole Shippo TEST workflow on the sandbox order: validation, rates, co
 
 test('provider failures on the sandbox order are handled without leaking details', async () => {
   const s = globalThis.__sbx;
-  const second = sb.seed({ ...deps(), gen: () => 'fixedpass-' + Math.random().toString(36).slice(2) });
-  q.run("UPDATE orders SET status = 'shipped', shipped_at = 1, carrier = 'USPS', tracking_number = 'SBX' || id WHERE id = ?", second.paidOrder);   // consume it, forcing a brand-new paid order on next seed
-  const third = sb.seed(deps()); assert.notEqual(third.paidOrder, second.paidOrder);
+  const second = await sb.seed({ ...deps(), gen: () => 'fixedpass-' + Math.random().toString(36).slice(2) });
+  await q.run("UPDATE orders SET status = 'shipped', shipped_at = 1, carrier = 'USPS', tracking_number = 'SBX' || id WHERE id = ?", second.paidOrder);   // consume it, forcing a brand-new paid order on next seed
+  const third = await sb.seed(deps()); assert.notEqual(third.paidOrder, second.paidOrder);
   const { c: seller } = await login(third.email.seller, third.password.seller); const base = `/api/seller/orders/${third.paidOrder}/shipping`;
   await seller.put('/api/seller/ship-from', { name: 'TEST Seller', line1: '965 Mission St', city: 'San Francisco', region: 'CA', postal: '94103', country: 'US' });
   assert.equal((await seller.post(`${base}/rates`, {})).status, 200);
@@ -113,9 +113,9 @@ test('the sandbox refuses a database that holds real (non-sandbox) accounts or o
   // a real seller can never see or act on sandbox orders (ownership is enforced exactly as for real orders), and vice versa
   assert.equal((await realSeller.get(base)).status, 404); assert.equal((await realSeller.post(`${base}/rates`, {})).status, 404); assert.equal((await realSeller.get(`/dashboard/orders/${s.paidOrder}/label`)).status, 404);
   assert.equal((await real.get(base)).status, 403, 'buyers have no shipping access');
-  assert.throws(() => sb.seed(deps()), /non-sandbox accounts/);
-  assert.throws(() => sb.assertSandboxDb(q), /non-sandbox/);
-  q.run('DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)', real.email);
+  await assert.rejects(async () => await sb.seed(deps()), /non-sandbox accounts/);
+  await assert.rejects(async () => await sb.assertSandboxDb(q), /non-sandbox/);
+  await q.run('DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)', real.email);
   assert.ok(!transcript.includes(KEY) && !transcript.includes('215 Clayton'), 'seeding logged nothing sensitive');
 });
 

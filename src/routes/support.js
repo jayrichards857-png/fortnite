@@ -25,13 +25,13 @@ const label = (s) => esc(String(s).replace(/_/g, ' '));
 const evidence = (b) => { try { const v = JSON.parse(b.evidence_json || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 const uploader = (name, max) => `<div class="uploader" data-uploader="${name}" data-max="${max}"><label class="up-add"><input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>+ Add photo</label></div><input type="hidden" name="${name}_json" data-uploader-value="${name}">`;
 const UP = '<script src="/uploader.js" defer></script>';
-const userPage = (req, res, opts) => res.send(V.layout({ user: req.user, path: '/support', ...opts }));
+const userPage = async (req, res, opts) => res.send(await V.layout({ user: req.user, path: '/support', ...opts }));
 
 // ------------------------------------------------------------------ shared panels used by the order pages
 /** Buyer order page: refund request / confirmation / report problem. Wording separates what each party SAYS from what PairPlug can verify. */
-function buyerPanels(o) {
+async function buyerPanels(o) {
   const out = [];
-  const req = cases.latestRequest(o.id);
+  const req = await cases.latestRequest(o.id);
   const label_ = { requested: 'Waiting for the seller to respond', seller_reported_refunded: 'The seller says they refunded you', seller_declined: 'The seller declined', buyer_confirmed_refund: 'You confirmed the refund', buyer_disputes_refund: 'You said the refund did not arrive. Support is reviewing', admin_verified_refund: 'PairPlug support verified the refund', admin_closed: 'Closed by PairPlug support' };
   if (req) {
     out.push(`<div class="panel"><h3>${req.kind === 'cancellation' ? 'Cancellation' : 'Refund'} request <span class="pill">${esc(label_[req.status] || req.status)}</span></h3>
@@ -41,14 +41,14 @@ function buyerPanels(o) {
         <details><summary class="btn ghost">I did not receive it</summary><form data-api="/api/orders/${o.id}/refund-confirm" data-reload style="margin-top:8px"><input type="hidden" name="received" value=""><label for="rn">What happened?</label><textarea id="rn" name="note" maxlength="1000" required></textarea><button class="btn danger" type="submit" style="margin-top:8px">Tell PairPlug support</button></form></details></div>` : ''}
       ${req.case_id ? `<p class="small" style="margin:8px 0 0"><a href="/cases/${req.case_id}">View support case #${req.case_id}</a></p>` : ''}</div>`);
   }
-  if (['paid', 'shipped', 'delivered'].includes(o.status) && !cases.openRequest(o.id)) {
+  if (['paid', 'shipped', 'delivered'].includes(o.status) && !await cases.openRequest(o.id)) {
     out.push(`<details class="panel"><summary><strong>Request a refund${o.status === 'paid' ? ' or cancellation' : ''}</strong></summary>
       <form data-api="/api/orders/${o.id}/refund-request" data-reload style="margin-top:10px"><label for="rk">What do you want?</label><select id="rk" name="kind"><option value="refund">Refund</option>${o.status === 'paid' ? '<option value="cancellation">Cancel before shipping</option>' : ''}</select>
         <label for="rr">Reason</label><textarea id="rr" name="reason" maxlength="2000" required></textarea>
         <p class="small muted">The seller is asked to respond. They refund you themselves in their payment provider; PairPlug cannot refund for them. If they do not respond, you can report it below.</p><button class="btn" type="submit">Send request</button></form></details>`);
   }
   if (o.payment_confirmed_at || o.buyer_claimed_paid_at || o.pay_clicked_at) {
-    const open = q.get("SELECT id FROM cases WHERE order_id = ? AND reporter_id = ? AND kind = 'order_issue' ORDER BY id DESC LIMIT 1", o.id, o.buyer_id);
+    const open = await q.get("SELECT id FROM cases WHERE order_id = ? AND reporter_id = ? AND kind = 'order_issue' ORDER BY id DESC LIMIT 1", o.id, o.buyer_id);
     out.push(`<details class="panel"><summary><strong>Report a problem to PairPlug support</strong></summary>${open ? `<p class="small" style="margin-top:8px">You have a case for this order: <a href="/cases/${open.id}">case #${open.id}</a>.</p>` : ''}
       <form data-api="/api/cases/order" data-redirect="/cases/{id}" style="margin-top:10px"><input type="hidden" name="orderId" value="${o.id}">${catSelect('cat')}<label for="cr">Tell us what happened</label><textarea id="cr" name="reason" maxlength="2000" required></textarea>
         <label>Photos <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}<p class="small muted">PairPlug reviews the evidence, can pause listings, restrict or suspend the seller's PairPlug account, and may report suspected fraud to the payment provider. PairPlug cannot move, freeze or refund money in the seller's payment account, so if you paid you should also contact your payment provider or card issuer, and keep your receipt.</p><button class="btn danger" type="submit">Open case</button></form></details>`);
@@ -56,10 +56,10 @@ function buyerPanels(o) {
   return out.join('');
 }
 /** Seller order page: respond to a refund request and see any case. */
-function sellerPanels(o) {
+async function sellerPanels(o) {
   const out = [];
-  const req = cases.latestRequest(o.id);
-  if (req && cases.openRequest(o.id)) {
+  const req = await cases.latestRequest(o.id);
+  if (req && await cases.openRequest(o.id)) {
     out.push(`<div class="panel notice strong"><h3>${req.kind === 'cancellation' ? 'Cancellation' : 'Refund'} request from the buyer</h3><p>${esc(req.reason)}</p>
       <p class="small muted">PairPlug moves no money. Refund the buyer in <strong>your</strong> payment provider, then tell us. The order is marked refunded only after the <strong>buyer</strong> confirms they received it.</p>
       ${req.status === 'requested' ? `<form data-api="/api/seller/orders/${o.id}/refund-response" data-reload><input type="hidden" name="action" value="report_refunded"><label for="rf">Refund reference <span class="opt">(optional)</span></label><input id="rf" name="reference" maxlength="80">
@@ -71,7 +71,7 @@ function sellerPanels(o) {
       <form data-api="/api/seller/orders/${o.id}/refund-response" data-reload><input type="hidden" name="action" value="report_refunded"><label for="rf2">Refund reference <span class="opt">(optional)</span></label><input id="rf2" name="reference" maxlength="80">
         <label style="font-weight:400;display:flex;gap:8px"><input type="checkbox" name="confirm_refunded" required> I have refunded the buyer in my payment provider.</label><button class="btn danger" type="submit" style="margin-top:10px">Report refund sent</button></form></details>`);
   } else if (req) out.push(`<div class="panel"><h3>Refund request</h3><p class="small muted">Status: ${label(req.status)}.</p></div>`);
-  const c = q.all("SELECT id, status FROM cases WHERE order_id = ? AND kind = 'order_issue' ORDER BY id DESC", o.id);
+  const c = await q.all("SELECT id, status FROM cases WHERE order_id = ? AND kind = 'order_issue' ORDER BY id DESC", o.id);
   if (c.length) out.push(`<div class="panel notice"><h3>Support case</h3>${c.map((x) => `<p style="margin:0"><a href="/cases/${x.id}">Case #${x.id}</a> · ${label(x.status)}</p>`).join('')}<p class="small muted">Please respond with your side and any evidence.</p></div>`);
   return out.join('');
 }
@@ -83,8 +83,8 @@ const eventLine = (e, admin) => {
   return `<li${e.internal ? ' style="background:var(--warn-bg,#fff7e0);padding:6px;border-radius:6px"' : ''}><strong>${who}</strong> <span class="muted small">${when(e.created_at)} · ${label(e.kind)}${e.internal ? ' · INTERNAL, hidden from users' : ''}</span>${body}</li>`;
 };
 
-r.get('/support', (req, res) => {
-  const mine = req.user ? cases.mine(req.user) : [];
+r.get('/support', async (req, res) => {
+  const mine = req.user ? await cases.mine(req.user) : [];
   const contact = `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, concerns about a buyer or seller, account issues and appeals, safety concerns and general questions. <a href="/contact">Open the Contact page</a> for one-click email options.</p><p class="small muted">Email is read by the operator. It does not create a case automatically and there is no guaranteed response time; to attach photos and screenshots to a tracked case, use the report forms on this page.</p>`;
   const body = `<h1>Help &amp; reporting</h1><div class="two"><section>
     <div class="panel"><h3>How problems are handled</h3><ul class="plain"><li><strong>Message the seller first.</strong> Most problems are solved in a conversation. Sellers are expected to reply within <strong>48 hours</strong>. That is an expectation, not a guarantee.</li>
@@ -93,84 +93,84 @@ r.get('/support', (req, res) => {
       <li><strong>Sellers:</strong> if a listing was removed or your selling was restricted by mistake, <a href="/dashboard/appeal">appeal from your dashboard</a>.</li>
       <li>Tracking shows where a carrier says a package is. It is not proof of delivery or of what was inside.</li></ul>${DISC.canCannot({ compact: true })}${contact}</div>
     <div class="panel" id="payment-mismatch"><h3>Report a payment mismatch</h3><p class="small muted" style="margin-top:0">Use this if the amount at the seller's Stripe checkout is different from the total PairPlug showed you. <strong>Do not complete that payment.</strong> You can cancel the purchase on the order page. PairPlug has not verified the amount at Stripe and cannot see it, so your report is how we find out.</p>
-      ${req.user ? `<form data-api="/api/cases/payment-mismatch" data-redirect="/cases/{id}"><label for="pmo">Which order?</label><select id="pmo" name="orderId" required>${q.all("SELECT o.id, o.total_cents, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id).map((o) => `<option value="${o.id}"${String(req.query.order) === String(o.id) ? ' selected' : ''}>Order #${o.id} · @${esc(o.handle)} · PairPlug total ${money(o.total_cents)}</option>`).join('')}</select>
+      ${req.user ? `<form data-api="/api/cases/payment-mismatch" data-redirect="/cases/{id}"><label for="pmo">Which order?</label><select id="pmo" name="orderId" required>${(await q.all("SELECT o.id, o.total_cents, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id)).map((o) => `<option value="${o.id}"${String(req.query.order) === String(o.id) ? ' selected' : ''}>Order #${o.id} · @${esc(o.handle)} · PairPlug total ${money(o.total_cents)}</option>`).join('')}</select>
         <label for="pma">Amount shown at checkout <span class="opt">(optional, e.g. 21.00)</span></label><input id="pma" name="seenAmount" inputmode="decimal" maxlength="12">
         <label for="pmr">What did you see? <span class="opt">(optional)</span></label><textarea id="pmr" name="reason" maxlength="1500"></textarea>
         <label>Screenshot <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}<button class="btn danger" type="submit" style="margin-top:10px">Report payment mismatch</button></form>` : `<p><a href="/login?next=${encodeURIComponent('/support#payment-mismatch')}">Log in</a> to send a report. You need an order with the seller to report one.</p>`}</div>
     <div class="panel" id="report-seller"><h3>Report a seller</h3>${req.user ? `<form data-api="/api/cases/seller" data-redirect="/cases/{id}"><label for="sh">Seller handle</label><input id="sh" name="handle" maxlength="40" value="${esc(req.query.seller || '')}" required>
-      ${catSelect('sc')}<label for="so">Related order <span class="opt">(optional)</span></label><select id="so" name="orderId"><option value="">None / not sure</option>${q.all("SELECT o.id, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id).map((o) => `<option value="${o.id}">Order #${o.id} · @${esc(o.handle)}</option>`).join('')}</select>
+      ${catSelect('sc')}<label for="so">Related order <span class="opt">(optional)</span></label><select id="so" name="orderId"><option value="">None / not sure</option>${(await q.all("SELECT o.id, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id)).map((o) => `<option value="${o.id}">Order #${o.id} · @${esc(o.handle)}</option>`).join('')}</select>
       <label for="sr">What happened?</label><textarea id="sr" name="reason" maxlength="2000" required></textarea>
       <label>Screenshots or photos <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}
       <p class="small muted">The seller is not notified of a seller report. If you paid, keep your receipt and also contact your payment provider.</p><button class="btn danger" type="submit" style="margin-top:10px">Send report</button></form>` : `<p><a href="/login?next=/support">Log in</a> to send a report.</p>`}</div>
     <div class="panel"><h3>Report a review</h3><p class="small muted" style="margin:0">Open the seller's store, log in, and use <strong>Report this review</strong> under it. Moderators can hide a review that breaks the rules and the reason is recorded.</p></div>
     <div class="panel"><h3>Report a message</h3><p class="small muted">Open the conversation and use <strong>Report</strong> on the message. Only reported conversations can be read by PairPlug support, and each view is logged.</p></div></section>
     <aside class="panel"><h3>Your cases</h3>${mine.length ? `<ul class="plain">${mine.map((c) => `<li><a href="/cases/${c.id}">Case #${c.id}</a> · ${label(c.kind)} · ${label(c.status)}</li>`).join('')}</ul>` : '<p class="muted small">No cases yet.</p>'}</aside></div>`;
-  userPage(req, res, { title: 'Help & reporting', body, scripts: UP });
+  await userPage(req, res, { title: 'Help & reporting', body, scripts: UP });
 });
 
-r.get('/cases/:id(\\d+)', U, (req, res) => {
-  let v; try { v = cases.view(req.user, req.params.id); } catch (e) { return res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Case not found', 'It may not exist, or it belongs to someone else.', ['/support', 'Help & reporting']) })); }
+r.get('/cases/:id(\\d+)', U, async (req, res) => {
+  let v; try { v = await cases.view(req.user, req.params.id); } catch (e) { return res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Case not found', 'It may not exist, or it belongs to someone else.', ['/support', 'Help & reporting']) })); }
   const c = v.case, open = cases.OPEN.includes(c.status);
   const body = `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)} · opened ${date(c.created_at)}${c.order_id && v.access !== 'admin' ? ` · <a href="${v.access === 'subject' ? '/dashboard/orders/' : '/orders/'}${c.order_id}">Order #${c.order_id}</a>` : ''}</p>
     ${c.resolution ? `<div class="panel notice strong"><h3>Decision</h3><p style="margin:0">${esc(c.resolution)}</p></div>` : ''}
     <div class="panel"><h3>Conversation</h3><ul class="timeline">${v.events.map((e) => eventLine(e)).join('')}</ul></div>
     ${open ? `<form class="panel" data-api="/api/cases/${c.id}/respond" data-reload><h3>Add a reply or evidence</h3><textarea name="body" maxlength="2000" required aria-label="Reply"></textarea>${uploader('evidence', 4)}<button class="btn" type="submit" style="margin-top:10px">Send</button></form>` : ''}
     <p class="small muted">PairPlug support cannot freeze, reverse or refund money in the seller's payment account, and cannot promise an outcome; it can review the evidence, contact both sides, restrict the seller on PairPlug and report suspected fraud to the payment processor. Typical review time depends on the founder's availability; there is no guaranteed response time.</p>`;
-  userPage(req, res, { title: `Case #${c.id}`, body, scripts: UP });
+  await userPage(req, res, { title: `Case #${c.id}`, body, scripts: UP });
 });
 
-r.post('/api/cases/order', U, (req, res) => res.json({ ok: true, id: cases.reportOrder(req.user, req.body.orderId, { reason: req.body.reason, evidence: evidence(req.body), category: req.body.category }) }));
+r.post('/api/cases/order', U, async (req, res) => res.json({ ok: true, id: await cases.reportOrder(req.user, req.body.orderId, { reason: req.body.reason, evidence: evidence(req.body), category: req.body.category }) }));
 // "Report a payment mismatch": the amount at the seller's Stripe checkout did not match the total PairPlug showed. It opens the normal order case (flagged) so staff can review it; it never changes the order's payment state.
-r.post('/api/cases/payment-mismatch', U, (req, res) => {
+r.post('/api/cases/payment-mismatch', U, async (req, res) => {
   const seen = req.body.seenAmount ? dollarsToCents(req.body.seenAmount) : null;
   if (req.body.seenAmount && (seen == null || Number.isNaN(seen) || seen < 0 || seen > 100000000)) throw new HttpError(422, 'Please fix the highlighted fields.', { seenAmount: 'Enter the amount as shown at checkout, e.g. 21.00, or leave it blank.' });
-  const o = q.get('SELECT id, total_cents FROM orders WHERE id = ? AND buyer_id = ?', Number(req.body.orderId), req.user.id); if (!o) throw new HttpError(404, 'Order not found');
+  const o = await q.get('SELECT id, total_cents FROM orders WHERE id = ? AND buyer_id = ?', Number(req.body.orderId), req.user.id); if (!o) throw new HttpError(404, 'Order not found');
   const note = String(req.body.reason || '').trim();
   const reason = `Payment mismatch. PairPlug expected ${money(o.total_cents)}${seen != null ? `; the buyer says the checkout page showed ${money(seen)}` : ''}.${note ? ` ${note}` : ''}`;
-  res.json({ ok: true, id: cases.reportOrder(req.user, o.id, { reason, evidence: evidence(req.body), category: 'suspected_scam', paymentMismatch: true }) });
+  res.json({ ok: true, id: await cases.reportOrder(req.user, o.id, { reason, evidence: evidence(req.body), category: 'suspected_scam', paymentMismatch: true }) });
 });
-r.post('/api/cases/seller', U, (req, res) => res.json({ ok: true, id: cases.reportSeller(req.user, req.body.handle, { reason: req.body.reason, evidence: evidence(req.body), orderId: req.body.orderId, category: req.body.category }) }));
-r.post('/api/chat/report', U, (req, res) => res.json({ ok: true, id: cases.reportMessage(req.user, { conversationId: req.body.conversationId, messageId: req.body.messageId, reason: req.body.reason }) }));
-r.post('/api/cases/:id(\\d+)/respond', U, (req, res) => { cases.respond(req.user, req.params.id, { body: req.body.body, evidence: evidence(req.body) }); res.json({ ok: true }); });
-r.post('/api/orders/:id(\\d+)/refund-request', U, (req, res) => res.json({ ok: true, id: cases.requestRefund(req.user, req.params.id, { kind: req.body.kind, reason: req.body.reason }) }));
-r.post('/api/orders/:id(\\d+)/refund-confirm', U, (req, res) => { cases.buyerConfirm(req.user, req.params.id, { received: req.body.received === true, note: req.body.note }); res.json({ ok: true }); });
-r.post('/api/seller/orders/:id(\\d+)/refund-response', auth.requireSeller, (req, res) => {
+r.post('/api/cases/seller', U, async (req, res) => res.json({ ok: true, id: await cases.reportSeller(req.user, req.body.handle, { reason: req.body.reason, evidence: evidence(req.body), orderId: req.body.orderId, category: req.body.category }) }));
+r.post('/api/chat/report', U, async (req, res) => res.json({ ok: true, id: await cases.reportMessage(req.user, { conversationId: req.body.conversationId, messageId: req.body.messageId, reason: req.body.reason }) }));
+r.post('/api/cases/:id(\\d+)/respond', U, async (req, res) => { await cases.respond(req.user, req.params.id, { body: req.body.body, evidence: evidence(req.body) }); res.json({ ok: true }); });
+r.post('/api/orders/:id(\\d+)/refund-request', U, async (req, res) => res.json({ ok: true, id: await cases.requestRefund(req.user, req.params.id, { kind: req.body.kind, reason: req.body.reason }) }));
+r.post('/api/orders/:id(\\d+)/refund-confirm', U, async (req, res) => { await cases.buyerConfirm(req.user, req.params.id, { received: req.body.received === true, note: req.body.note }); res.json({ ok: true }); });
+r.post('/api/seller/orders/:id(\\d+)/refund-response', auth.requireSeller, async (req, res) => {
   if (req.body.action === 'report_refunded' && !(req.body.confirm_refunded === true || req.body.confirm_refunded === 'on')) throw new HttpError(422, 'Please confirm you refunded the buyer in your payment provider.', { confirm_refunded: 'Required' });
-  cases.sellerRespond(req.user, req.params.id, { action: req.body.action, reference: req.body.reference, note: req.body.note });
+  await cases.sellerRespond(req.user, req.params.id, { action: req.body.action, reference: req.body.reference, note: req.body.note });
   res.json({ ok: true });
 });
 // Back-compat endpoint: still only a REPORT. The order does not become refunded on the seller's word alone.
-r.post('/api/seller/orders/:id(\\d+)/refunded', auth.requireSeller, (req, res) => {
+r.post('/api/seller/orders/:id(\\d+)/refunded', auth.requireSeller, async (req, res) => {
   if (!(req.body.confirm_refunded === true || req.body.confirm_refunded === 'on')) throw new HttpError(422, 'Please confirm you refunded the buyer in your payment provider.', { confirm_refunded: 'Required' });
-  cases.sellerRespond(req.user, req.params.id, { action: 'report_refunded', reference: req.body.reference });
+  await cases.sellerRespond(req.user, req.params.id, { action: 'report_refunded', reference: req.body.reference });
   res.json({ ok: true, status: 'seller_reported_refunded' });
 });
 
 // ------------------------------------------------------------------ seller appeals
-r.get('/dashboard/appeal', auth.requireSeller, (req, res) => {
-  const u = req.user, mine = q.all("SELECT id, status, created_at FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? ORDER BY id DESC LIMIT 10", u.id, u.id);
+r.get('/dashboard/appeal', auth.requireSeller, async (req, res) => {
+  const u = req.user, mine = await q.all("SELECT id, status, created_at FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? ORDER BY id DESC LIMIT 10", u.id, u.id);
   const state = u.selling_restricted_at ? `<div class="panel notice"><strong>Selling is ${u.selling_restricted_until ? 'suspended' : 'restricted'}</strong> since ${when(u.selling_restricted_at)} UTC${u.selling_restricted_until ? ` until ${when(u.selling_restricted_until)} UTC` : ' until a staff member lifts it'}. Your listings are paused; you can still handle existing orders.</div>` : '<p class="muted">Your selling is not currently restricted. You can still ask staff to review a removed listing or another decision you think was a mistake.</p>';
   const body = `<h1>Appeal a decision</h1>${state}
     <div class="panel"><form data-api="/api/seller/appeal" data-redirect="/cases/{id}"><label for="ar">What should we look at?</label><textarea id="ar" name="reason" maxlength="2000" minlength="10" required placeholder="For example: the payment link does charge item price plus shipping; here is a screenshot."></textarea>
       <label>Screenshots <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}<p class="small muted">Staff review appeals by hand, as time allows; there is no guaranteed response time. Email is not an appeal: use this form so the evidence stays with the case, or write to ${V.contactLink()}.</p><button class="btn" type="submit">Send appeal</button></form></div>
     <h2>Your appeals</h2>${mine.length ? `<ul class="plain">${mine.map((c) => `<li><a href="/cases/${c.id}">Appeal #${c.id}</a> · ${label(c.status)} · ${when(c.created_at)}</li>`).join('')}</ul>` : '<p class="muted small">None yet.</p>'}`;
-  userPage(req, res, { title: 'Appeal', path: '/dashboard/appeal', body, scripts: UP });
+  await userPage(req, res, { title: 'Appeal', path: '/dashboard/appeal', body, scripts: UP });
 });
-r.post('/api/seller/appeal', auth.requireSeller, (req, res) => res.json({ ok: true, id: cases.appeal(req.user, { reason: req.body.reason, evidence: evidence(req.body) }) }));
+r.post('/api/seller/appeal', auth.requireSeller, async (req, res) => res.json({ ok: true, id: await cases.appeal(req.user, { reason: req.body.reason, evidence: evidence(req.body) }) }));
 
 // ------------------------------------------------------------------ admin
-r.get('/admin/cases', S, (req, res) => {
+r.get('/admin/cases', S, async (req, res) => {
   const st = req.query.status === 'closed' ? 'closed' : 'open';
-  const rows = q.all(`SELECT c.*, rp.display_name reporter, sj.display_name subject FROM cases c JOIN users rp ON rp.id = c.reporter_id LEFT JOIN users sj ON sj.id = c.subject_user_id
+  const rows = await q.all(`SELECT c.*, rp.display_name reporter, sj.display_name subject FROM cases c JOIN users rp ON rp.id = c.reporter_id LEFT JOIN users sj ON sj.id = c.subject_user_id
     WHERE c.status ${st === 'open' ? "IN ('open','awaiting_seller','under_review')" : "NOT IN ('open','awaiting_seller','under_review')"} ORDER BY c.updated_at DESC LIMIT 200`);
-  adminPage(req, res, { title: 'Cases', body: `<h1>Cases</h1><p><a href="/admin/cases">Open</a> · <a href="/admin/cases?status=closed">Closed</a></p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Case</th><th>Kind</th><th>Status</th><th>Reporter</th><th>About</th><th>Updated</th></tr></thead><tbody>${rows.map((c) => `<tr><td><a href="/admin/cases/${c.id}">#${c.id}</a></td><td>${label(c.kind)}</td><td>${V.statusPill(c.status)}</td><td>${esc(c.reporter)}</td><td>${esc(c.subject || '')}${c.order_id ? ` · order #${c.order_id}` : ''}</td><td>${when(c.updated_at)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No cases', '', ['/admin', 'Back'])}` });
+  await adminPage(req, res, { title: 'Cases', body: `<h1>Cases</h1><p><a href="/admin/cases">Open</a> · <a href="/admin/cases?status=closed">Closed</a></p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Case</th><th>Kind</th><th>Status</th><th>Reporter</th><th>About</th><th>Updated</th></tr></thead><tbody>${rows.map((c) => `<tr><td><a href="/admin/cases/${c.id}">#${c.id}</a></td><td>${label(c.kind)}</td><td>${V.statusPill(c.status)}</td><td>${esc(c.reporter)}</td><td>${esc(c.subject || '')}${c.order_id ? ` · order #${c.order_id}` : ''}</td><td>${when(c.updated_at)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No cases', '', ['/admin', 'Back'])}` });
 });
-r.get('/admin/cases/:id(\\d+)', S, (req, res) => {
-  const v = cases.view(req.user, req.params.id), c = v.case, open = cases.OPEN.includes(c.status);
-  const o = c.order_id && q.get('SELECT id, status, total_cents, seller_id, buyer_id FROM orders WHERE id = ?', c.order_id);
-  const listings = c.subject_user_id ? q.all("SELECT id, title, status FROM listings WHERE seller_id = ? AND status IN ('active','draft') ORDER BY id DESC LIMIT 50", c.subject_user_id) : [];
-  const rr = c.order_id && q.get('SELECT * FROM refund_requests WHERE order_id = ? ORDER BY id DESC LIMIT 1', c.order_id);
-  const risk = c.subject_user_id && c.kind !== 'message_report' ? F.sellerRisk(c.subject_user_id) : null, provs = risk ? F.providersFor(c) : [], packets = risk ? F.packetsFor(c.id) : [];
+r.get('/admin/cases/:id(\\d+)', S, async (req, res) => {
+  const v = await cases.view(req.user, req.params.id), c = v.case, open = cases.OPEN.includes(c.status);
+  const o = c.order_id && await q.get('SELECT id, status, total_cents, seller_id, buyer_id FROM orders WHERE id = ?', c.order_id);
+  const listings = c.subject_user_id ? await q.all("SELECT id, title, status FROM listings WHERE seller_id = ? AND status IN ('active','draft') ORDER BY id DESC LIMIT 50", c.subject_user_id) : [];
+  const rr = c.order_id && await q.get('SELECT * FROM refund_requests WHERE order_id = ? ORDER BY id DESC LIMIT 1', c.order_id);
+  const risk = c.subject_user_id && c.kind !== 'message_report' ? await F.sellerRisk(c.subject_user_id) : null, provs = risk ? await F.providersFor(c) : [], packets = risk ? await F.packetsFor(c.id) : [];
   const riskPanel = risk ? `<div class="panel"><h3>Seller: ${esc(risk.user.store_name || risk.user.handle)} <span class="muted small">@${esc(risk.user.handle)}</span></h3>
       <p class="small" style="margin:0 0 6px"><strong>${risk.reporters}</strong> different buyer(s) have reported this seller (${risk.cases} case(s): ${risk.open} open, ${risk.resolved} resolved, ${risk.dismissed} dismissed; ${risk.mismatch} payment-mismatch report(s); ${risk.suspensions} earlier timed suspension(s)). Counts of reports, not findings.</p>
       <p class="small" style="margin:0 0 6px">Orders: ${risk.orders} (${risk.pending} awaiting payment confirmation, ${risk.seller_confirmed} the seller says were paid, ${risk.refunded} refunded). <em>PairPlug has not verified any of these payments.</em></p>
@@ -187,9 +187,9 @@ r.get('/admin/cases/:id(\\d+)', S, (req, res) => {
       ${packets.length ? `<ul class="plain">${packets.map((p) => `<li>#${p.id} · ${esc(F.PROVIDER_NAME[p.provider])} · ${p.status === 'submitted' ? `submitted ${when(p.submitted_at)} via ${esc(p.channel)}${p.reference ? ` (ref ${esc(p.reference)})` : ''}` : `prepared ${when(p.prepared_at)}, not yet submitted`} · <a href="/admin/processor-packets/${p.id}">Download packet</a>
         ${p.status === 'prepared' ? `<form data-api="/api/admin/processor-packets/${p.id}/submitted" data-reload style="margin-top:6px"><input name="channel" maxlength="120" placeholder="How you submitted it (e.g. provider's fraud report form)" required aria-label="Channel"><input name="reference" maxlength="120" placeholder="Provider's reference (optional)" aria-label="Reference"><button class="btn small" type="submit">I submitted this</button></form>` : ''}</li>`).join('')}</ul>` : '<p class="small">No packets yet.</p>'}
       ${(provs.length ? provs : [{ provider: 'other', host: '' }]).map((p) => `<button class="btn ghost small" data-post="/api/admin/cases/${c.id}/processor-packet" data-body='${JSON.stringify({ provider: p.provider, host: p.host })}'>Prepare ${esc(F.PROVIDER_NAME[p.provider])} packet${p.host ? ` (${esc(p.host)})` : ''}</button>`).join(' ')}</div>` : ''}` : '';
-  adminPage(req, res, { title: `Case #${c.id}`, body: `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)}${c.category ? ` · reporter says: ${esc(F.CATEGORIES[c.category])}` : ''} ${c.payment_mismatch ? ' · <strong>PAYMENT MISMATCH report</strong>' : ''} · opened ${when(c.created_at)}${o ? ` · order #${o.id} (${label(o.status)}, ${money(o.total_cents)})` : ''}</p>
+  await adminPage(req, res, { title: `Case #${c.id}`, body: `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)}${c.category ? ` · reporter says: ${esc(F.CATEGORIES[c.category])}` : ''} ${c.payment_mismatch ? ' · <strong>PAYMENT MISMATCH report</strong>' : ''} · opened ${when(c.created_at)}${o ? ` · order #${o.id} (${label(o.status)}, ${money(o.total_cents)})` : ''}</p>
     <div class="two"><section><div class="panel"><h3>Timeline</h3><ul class="timeline">${v.events.map((e) => eventLine(e, true)).join('')}</ul></div>
-      ${F.caseRecords(c.id).map((rc) => `<div class="panel"><h3>Preserved record <span class="muted small">(${when(rc.created_at)} UTC · sha256 ${esc(rc.sha256.slice(0, 12))}…)</span></h3><pre class="small" style="white-space:pre-wrap;margin:0">${esc(rc.content)}</pre><p class="small muted" style="margin:6px 0 0">Frozen when the report was filed. Staff-only; not shown to the buyer or seller.</p></div>`).join('')}
+      ${(await F.caseRecords(c.id)).map((rc) => `<div class="panel"><h3>Preserved record <span class="muted small">(${when(rc.created_at)} UTC · sha256 ${esc(rc.sha256.slice(0, 12))}…)</span></h3><pre class="small" style="white-space:pre-wrap;margin:0">${esc(rc.content)}</pre><p class="small muted" style="margin:6px 0 0">Frozen when the report was filed. Staff-only; not shown to the buyer or seller.</p></div>`).join('')}
       ${c.conversation_id ? `<div class="panel"><h3>Reported conversation</h3><p class="small muted">Opening it is recorded in the audit log.</p><button class="btn ghost" id="vc">View reported conversation</button><div id="conv"></div></div>` : ''}
       ${c.resolution ? `<div class="panel notice"><h3>Decision</h3><p>${esc(c.resolution)}</p></div>` : ''}</section>
     <aside>${riskPanel}${open ? `<form class="panel" data-api="/api/admin/cases/${c.id}/note" data-reload><h3>Internal note</h3><textarea name="body" maxlength="2000" required aria-label="Internal note"></textarea><button class="btn ghost small" type="submit">Save note (hidden from users)</button></form>
@@ -202,43 +202,43 @@ r.get('/admin/cases/:id(\\d+)', S, (req, res) => {
       ${req.user.is_admin && rr && ['requested', 'seller_reported_refunded', 'buyer_disputes_refund'].includes(rr.status) ? `<form class="panel" data-api="/api/admin/refunds/${rr.id}/resolve" data-reload><h3>Refund request (${label(rr.status)})</h3><p class="small muted">Mark verified only if you independently confirmed the refund (for example, the seller's provider receipt). Otherwise close without a refund.</p><select name="outcome" aria-label="Outcome"><option value="verified">Verified: refund happened</option><option value="closed">Close without refund</option></select><textarea name="note" maxlength="1000" required aria-label="Note"></textarea><button class="btn small" type="submit">Record outcome</button></form>` : ''}</aside></div>
     ${c.conversation_id ? `<script>document.getElementById('vc').addEventListener('click',async()=>{try{const r=await pp.api('POST','/api/admin/cases/${c.id}/conversation',{});const d=document.getElementById('conv');d.textContent='';for(const m of r.messages){const p=document.createElement('p');p.style.margin='4px 0';const s=document.createElement('strong');s.textContent=m.display_name+': ';p.append(s,document.createTextNode(m.body||''));d.append(p)}}catch(e){alert(e.message)}})</script>` : ''}` });
 });
-r.post('/api/admin/cases/:id(\\d+)/note', S, (req, res) => { cases.adminNote(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/reply', S, (req, res) => { cases.adminMessage(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/status', S, (req, res) => { cases.adminSetStatus(req.user, req.params.id, req.body.status); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/decide', S, (req, res) => { cases.adminDecide(req.user, req.params.id, { outcome: req.body.outcome, resolution: req.body.resolution }); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/action', S, (req, res) => { cases.adminAction(req.user, req.params.id, { action: req.body.action, listingId: req.body.listingId, reason: req.body.reason }); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/processor-packet', A, (req, res) => {
-  const c = q.get('SELECT * FROM cases WHERE id = ?', Number(req.params.id)); if (!c) throw new HttpError(404, 'Case not found');
-  res.json({ ok: true, id: F.preparePacket(req.user, c, String(req.body.provider || ''), String(req.body.host || '').slice(0, 100)) });
+r.post('/api/admin/cases/:id(\\d+)/note', S, async (req, res) => { await cases.adminNote(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/reply', S, async (req, res) => { await cases.adminMessage(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/status', S, async (req, res) => { await cases.adminSetStatus(req.user, req.params.id, req.body.status); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/decide', S, async (req, res) => { await cases.adminDecide(req.user, req.params.id, { outcome: req.body.outcome, resolution: req.body.resolution }); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/action', S, async (req, res) => { await cases.adminAction(req.user, req.params.id, { action: req.body.action, listingId: req.body.listingId, reason: req.body.reason }); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/processor-packet', A, async (req, res) => {
+  const c = await q.get('SELECT * FROM cases WHERE id = ?', Number(req.params.id)); if (!c) throw new HttpError(404, 'Case not found');
+  res.json({ ok: true, id: await F.preparePacket(req.user, c, String(req.body.provider || ''), String(req.body.host || '').slice(0, 100)) });
 });
-r.post('/api/admin/processor-packets/:id(\\d+)/submitted', A, (req, res) => { F.markSubmitted(req.user, req.params.id, { channel: req.body.channel, reference: req.body.reference, note: req.body.note }); res.json({ ok: true }); });
-r.get('/admin/processor-packets/:id(\\d+)', A, (req, res) => {
-  const p = q.get('SELECT * FROM processor_reports WHERE id = ?', Number(req.params.id)); if (!p) return res.status(404).send('Not found');
-  audit(req.user, 'processor_packet_downloaded', { type: 'case', id: p.case_id, detail: { packet: p.id } });
+r.post('/api/admin/processor-packets/:id(\\d+)/submitted', A, async (req, res) => { await F.markSubmitted(req.user, req.params.id, { channel: req.body.channel, reference: req.body.reference, note: req.body.note }); res.json({ ok: true }); });
+r.get('/admin/processor-packets/:id(\\d+)', A, async (req, res) => {
+  const p = await q.get('SELECT * FROM processor_reports WHERE id = ?', Number(req.params.id)); if (!p) return res.status(404).send('Not found');
+  await audit(req.user, 'processor_packet_downloaded', { type: 'case', id: p.case_id, detail: { packet: p.id } });
   res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="pairplug-case-${p.case_id}-${p.provider}-packet.txt"`, 'Cache-Control': 'no-store' }).send(p.packet);
 });
-r.get('/admin/risk', S, (req, res) => {
-  const rows = F.repeatReported();
-  adminPage(req, res, { title: 'Reported sellers', body: `<h1>Sellers reported by more than one buyer</h1><p class="small muted">Counts of reports by different buyers, not findings. Open the newest case to review evidence and act.</p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Seller</th><th class="num">Different reporters</th><th class="num">Cases</th><th class="num">Open</th><th>State</th><th>Latest</th><th></th></tr></thead><tbody>${rows.map((s) => `<tr><td>${esc(s.store_name || s.handle)} <span class="muted small">@${esc(s.handle)}</span></td><td class="num">${s.reporters}</td><td class="num">${s.cases}</td><td class="num">${s.open}</td><td>${s.banned ? 'suspended' : s.selling_restricted_at ? 'selling restricted' : '—'}</td><td>${when(s.latest)}</td><td><a href="/admin/cases">Cases</a></td></tr>`).join('')}</tbody></table></div>` : V.empty('No repeat reports', 'No seller has been reported by two or more different buyers.')}` });
+r.get('/admin/risk', S, async (req, res) => {
+  const rows = await F.repeatReported();
+  await adminPage(req, res, { title: 'Reported sellers', body: `<h1>Sellers reported by more than one buyer</h1><p class="small muted">Counts of reports by different buyers, not findings. Open the newest case to review evidence and act.</p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Seller</th><th class="num">Different reporters</th><th class="num">Cases</th><th class="num">Open</th><th>State</th><th>Latest</th><th></th></tr></thead><tbody>${rows.map((s) => `<tr><td>${esc(s.store_name || s.handle)} <span class="muted small">@${esc(s.handle)}</span></td><td class="num">${s.reporters}</td><td class="num">${s.cases}</td><td class="num">${s.open}</td><td>${s.banned ? 'suspended' : s.selling_restricted_at ? 'selling restricted' : '—'}</td><td>${when(s.latest)}</td><td><a href="/admin/cases">Cases</a></td></tr>`).join('')}</tbody></table></div>` : V.empty('No repeat reports', 'No seller has been reported by two or more different buyers.')}` });
 });
-r.post('/api/admin/cases/:id(\\d+)/conversation', S, (req, res) => res.set('Cache-Control', 'no-store').json({ ok: true, messages: cases.adminConversation(req.user, req.params.id).map((m) => ({ display_name: m.display_name, body: m.body, created_at: m.created_at })) }));
-r.post('/api/admin/refunds/:id(\\d+)/resolve', A, (req, res) => { cases.adminResolveRefund(req.user, req.params.id, { outcome: req.body.outcome, note: req.body.note }); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/conversation', S, async (req, res) => res.set('Cache-Control', 'no-store').json({ ok: true, messages: (await cases.adminConversation(req.user, req.params.id)).map((m) => ({ display_name: m.display_name, body: m.body, created_at: m.created_at })) }));
+r.post('/api/admin/refunds/:id(\\d+)/resolve', A, async (req, res) => { await cases.adminResolveRefund(req.user, req.params.id, { outcome: req.body.outcome, note: req.body.note }); res.json({ ok: true }); });
 
 /** Orders overview: no addresses, no payment links, no message content. */
-r.get('/admin/orders', A, (req, res) => {
-  const rows = q.all(`SELECT o.id, o.status, o.payment_mode, o.total_cents, o.created_at, o.carrier, o.tracking_number, b.display_name buyer, s.store_name seller, s.handle,
+r.get('/admin/orders', A, async (req, res) => {
+  const rows = await q.all(`SELECT o.id, o.status, o.payment_mode, o.total_cents, o.created_at, o.carrier, o.tracking_number, b.display_name buyer, s.store_name seller, s.handle,
       (SELECT status FROM refund_requests rr WHERE rr.order_id = o.id ORDER BY rr.id DESC LIMIT 1) refund, (SELECT COUNT(*) FROM cases c WHERE c.order_id = o.id AND c.status IN ('open','awaiting_seller','under_review')) open_cases
     FROM orders o JOIN users b ON b.id = o.buyer_id JOIN users s ON s.id = o.seller_id WHERE o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 200`);
-  adminPage(req, res, { title: 'Orders', body: `<h1>Orders</h1><p class="small muted">Direct-checkout orders. PairPlug holds no funds. Addresses and message content are not shown here.</p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Status</th><th>Buyer</th><th>Seller</th><th class="num">Total</th><th>Refund</th><th>Open cases</th><th>Started</th></tr></thead><tbody>${rows.map((o) => `<tr><td>#${o.id}</td><td>${V.orderPill(o)}</td><td>${esc(o.buyer)}</td><td>${esc(o.seller || o.handle)}</td><td class="num">${money(o.total_cents)}</td><td>${o.refund ? label(o.refund) : '—'}</td><td>${o.open_cases || '—'}</td><td>${when(o.created_at)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No orders yet', '', ['/admin', 'Back'])}` });
+  await adminPage(req, res, { title: 'Orders', body: `<h1>Orders</h1><p class="small muted">Direct-checkout orders. PairPlug holds no funds. Addresses and message content are not shown here.</p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Order</th><th>Status</th><th>Buyer</th><th>Seller</th><th class="num">Total</th><th>Refund</th><th>Open cases</th><th>Started</th></tr></thead><tbody>${rows.map((o) => `<tr><td>#${o.id}</td><td>${V.orderPill(o)}</td><td>${esc(o.buyer)}</td><td>${esc(o.seller || o.handle)}</td><td class="num">${money(o.total_cents)}</td><td>${o.refund ? label(o.refund) : '—'}</td><td>${o.open_cases || '—'}</td><td>${when(o.created_at)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No orders yet', '', ['/admin', 'Back'])}` });
 });
 
 /** Response-time visibility: conversations whose last message is from the buyer and has waited more than 48 hours. Metadata only; no message text. Informational, never an automatic penalty. */
-r.get('/admin/responses', A, (req, res) => {
+r.get('/admin/responses', A, async (req, res) => {
   const cutoff = now() - 48 * 3600;
-  const rows = q.all(`SELECT c.id, c.seller_id, s.store_name, s.handle, m.created_at last_at FROM conversations c JOIN users s ON s.id = c.seller_id
+  const rows = await q.all(`SELECT c.id, c.seller_id, s.store_name, s.handle, m.created_at last_at FROM conversations c JOIN users s ON s.id = c.seller_id
     JOIN messages m ON m.id = (SELECT MAX(id) FROM messages WHERE conversation_id = c.id) WHERE m.sender_id = c.buyer_id AND m.created_at < ? ORDER BY m.created_at`, cutoff);
   const by = new Map(); rows.forEach((x) => by.set(x.seller_id, { name: x.store_name || x.handle, n: (by.get(x.seller_id)?.n || 0) + 1, oldest: Math.min(by.get(x.seller_id)?.oldest || x.last_at, x.last_at) }));
-  adminPage(req, res, { title: 'Response times', body: `<h1>Unanswered conversations</h1><p class="small muted">Buyer messages that have waited more than 48 hours without a reply. Elapsed time only; nothing is penalised automatically. Use it to check in with a seller.</p>
+  await adminPage(req, res, { title: 'Response times', body: `<h1>Unanswered conversations</h1><p class="small muted">Buyer messages that have waited more than 48 hours without a reply. Elapsed time only; nothing is penalised automatically. Use it to check in with a seller.</p>
     ${by.size ? `<div class="tablewrap"><table><thead><tr><th>Seller</th><th class="num">Unanswered over 48h</th><th>Oldest waiting since</th></tr></thead><tbody>${[...by.values()].map((s) => `<tr><td>${esc(s.name)}</td><td class="num">${s.n}</td><td>${when(s.oldest)} (${Math.floor((now() - s.oldest) / 3600)}h)</td></tr>`).join('')}</tbody></table></div>` : V.empty('Nothing waiting', 'No buyer message has gone unanswered for more than 48 hours.', ['/admin', 'Back'])}` });
 });
 

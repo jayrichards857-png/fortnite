@@ -26,40 +26,40 @@ function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, man
 }
 
 /** The sandbox database must be empty or contain ONLY sandbox data. Anything else is treated as real data and the sandbox refuses to touch it. */
-function assertSandboxDb(q) {
-  const foreign = q.get(`SELECT COUNT(*) n FROM users WHERE email NOT LIKE '%@${DOMAIN}'`).n;
-  const orders = q.get(`SELECT COUNT(*) n FROM orders o JOIN users b ON b.id = o.buyer_id WHERE b.email NOT LIKE '%@${DOMAIN}'`).n;
+async function assertSandboxDb(q) {
+  const foreign = (await q.get(`SELECT COUNT(*) n FROM users WHERE email NOT LIKE '%@${DOMAIN}'`)).n;
+  const orders = (await q.get(`SELECT COUNT(*) n FROM orders o JOIN users b ON b.id = o.buyer_id WHERE b.email NOT LIKE '%@${DOMAIN}'`)).n;
   if (foreign || orders) throw new Error('This database contains non-sandbox accounts or orders. The shipping sandbox only runs on its own throwaway database (use --reset to rebuild it).');
 }
 
 const generate = () => crypto.randomBytes(12).toString('base64url');
 
 /** Seed (or refresh) the sandbox. Returns what the operator needs: emails, FRESH one-time passwords, and the order numbers. Prints nothing itself. */
-function seed({ q, now, hashPassword, setSetting, listings, images, checkout, png, gen = generate }) {
-  assertSandboxDb(q);
-  setSetting('sandbox', '1');
+async function seed({ q, now, hashPassword, setSetting, listings, images, checkout, png, gen = generate }) {
+  await assertSandboxDb(q);
+  await setSetting('sandbox', '1');
   const pw = { seller: gen(), buyer: gen() }, email = { seller: `seller@${DOMAIN}`, buyer: `buyer@${DOMAIN}` };
-  const upsert = (key, fields) => {
-    const row = q.get('SELECT id FROM users WHERE email = ?', email[key]);
-    if (row) { q.run('UPDATE users SET password_hash = ?, banned = 0 WHERE id = ?', hashPassword(pw[key]), row.id); q.run('DELETE FROM sessions WHERE user_id = ?', row.id); return row.id; }
-    return Number(q.run(`INSERT INTO users(email, password_hash, display_name, is_seller, handle, store_name, country, region, city, email_verified_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-      email[key], hashPassword(pw[key]), fields.name, fields.seller ? 1 : 0, fields.handle || null, fields.store || null, fields.seller ? 'US' : null, fields.seller ? 'CA' : null, fields.seller ? 'San Francisco' : null, now(), now()).lastInsertRowid);
+  const upsert = async (key, fields) => {
+    const row = await q.get('SELECT id FROM users WHERE email = ?', email[key]);
+    if (row) { await q.run('UPDATE users SET password_hash = ?, banned = 0 WHERE id = ?', hashPassword(pw[key]), row.id); await q.run('DELETE FROM sessions WHERE user_id = ?', row.id); return row.id; }
+    return Number((await q.run(`INSERT INTO users(email, password_hash, display_name, is_seller, handle, store_name, country, region, city, email_verified_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      email[key], hashPassword(pw[key]), fields.name, fields.seller ? 1 : 0, fields.handle || null, fields.store || null, fields.seller ? 'US' : null, fields.seller ? 'CA' : null, fields.seller ? 'San Francisco' : null, now(), now())).lastInsertRowid);
   };
-  const sellerId = upsert('seller', { name: `${MARK} Seller`, seller: true, handle: 'sandbox-test', store: `${MARK} Store` });
-  const buyerId = upsert('buyer', { name: `${MARK} Buyer` });
-  const user = (id) => q.get('SELECT * FROM users WHERE id = ?', id);
-  const makeOrder = (label, confirm) => {
-    const file = images.saveUpload(sellerId, png(240, 300, (x, y) => [150 - (y >> 4), 120, 90 + (x >> 4)]));
-    const saved = listings.saveListing(user(sellerId), null, { title: `${MARK} ${label}`, description: 'Sandbox listing. Not a real item.', category: 'outerwear', brand: 'Sandbox', size: 'M', condition: 'good', price: '40.00', shipping: '6.00', shipping_payer: 'buyer',
+  const sellerId = await upsert('seller', { name: `${MARK} Seller`, seller: true, handle: 'sandbox-test', store: `${MARK} Store` });
+  const buyerId = await upsert('buyer', { name: `${MARK} Buyer` });
+  const user = async (id) => await q.get('SELECT * FROM users WHERE id = ?', id);
+  const makeOrder = async (label, confirm) => {
+    const file = await images.saveUpload(sellerId, png(240, 300, (x, y) => [150 - (y >> 4), 120, 90 + (x >> 4)]));
+    const saved = await listings.saveListing(await user(sellerId), null, { title: `${MARK} ${label}`, description: 'Sandbox listing. Not a real item.', category: 'outerwear', brand: 'Sandbox', size: 'M', condition: 'good', price: '40.00', shipping: '6.00', shipping_payer: 'buyer',
       weight_oz: 20, length_in: 12, width_in: 9, height_in: 4, payment_url: 'https://buy.stripe.com/test_sandbox_not_a_real_link', payment_amount_ack: true, images: [file], status: 'active' });
     const listingId = typeof saved === 'object' ? saved.id : saved;
-    const { orderId } = checkout.startPurchase(user(buyerId), { listingId, address: FIXTURE_ADDRESS, acknowledged: true });
-    if (confirm) checkout.sellerConfirmPayment(user(sellerId), orderId, { reference: 'SANDBOX-TEST-NO-REAL-PAYMENT' });
+    const { orderId } = await checkout.startPurchase(await user(buyerId), { listingId, address: FIXTURE_ADDRESS, acknowledged: true });
+    if (confirm) await checkout.sellerConfirmPayment(await user(sellerId), orderId, { reference: 'SANDBOX-TEST-NO-REAL-PAYMENT' });
     return orderId;
   };
-  const open = (st) => q.get(`SELECT o.id FROM orders o WHERE o.buyer_id = ? AND o.status = ? ORDER BY o.id DESC LIMIT 1`, buyerId, st);
-  const paid = (open('paid') || {}).id || makeOrder('Jacket (ready for a label)', true);
-  const pending = (open('pending_payment') || {}).id || makeOrder('Sweater (payment not confirmed)', false);
+  const open = async (st) => await q.get(`SELECT o.id FROM orders o WHERE o.buyer_id = ? AND o.status = ? ORDER BY o.id DESC LIMIT 1`, buyerId, st);
+  const paid = (await open('paid') || {}).id || await makeOrder('Jacket (ready for a label)', true);
+  const pending = (await open('pending_payment') || {}).id || await makeOrder('Sweater (payment not confirmed)', false);
   return { email, password: pw, handle: 'sandbox-test', paidOrder: paid, unpaidOrder: pending };
 }
 

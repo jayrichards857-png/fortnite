@@ -40,9 +40,9 @@ test('the live seller order page explains the manual workflow in plain steps and
 test('manual shipping works end to end: carrier + tracking + note, buyer notified, no postage claim', async () => {
   const { seller, buyer, o } = await order();
   const r = await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: '9400111899223344', note: 'Left at the front desk' }); assert.equal(r.status, 200, r.text);
-  const row = q.get('SELECT status, carrier, tracking_number, ship_note FROM orders WHERE id = ?', o); assert.deepEqual({ ...row }, { status: 'shipped', carrier: 'USPS', tracking_number: '9400111899223344', ship_note: 'Left at the front desk' });
+  const row = await q.get('SELECT status, carrier, tracking_number, ship_note FROM orders WHERE id = ?', o); assert.deepEqual({ ...row }, { status: 'shipped', carrier: 'USPS', tracking_number: '9400111899223344', ship_note: 'Left at the front desk' });
   const bp = (await buyer.get(`/orders/${o}`)).text; assert.match(bp, /9400111899223344/); assert.match(bp, /Left at the front desk/); assert.match(bp, /not proof of delivery/);
-  assert.equal(q.get('SELECT COUNT(*) n FROM shipments').n, 0, 'no label/shipment record was created');
+  assert.equal((await q.get('SELECT COUNT(*) n FROM shipments')).n, 0, 'no label/shipment record was created');
   assert.equal(calls.length, 0, 'no provider call');
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: '9400111899223355' })).status, 409, 'cannot ship twice');
   // refunds keep working on a shipped order (request -> seller report -> buyer confirms)
@@ -52,13 +52,13 @@ test('manual shipping works end to end: carrier + tracking + note, buyer notifie
 test('existing safeguards still apply: payment must be confirmed, ownership, roles, input validation', async () => {
   const unpaid = await order({ confirm: false }), paid = await order(), other = await H.newSeller('Other');
   assert.notEqual((await unpaid.seller.post(`/api/seller/orders/${unpaid.o}/ship`, { carrier: 'USPS', tracking: '9400111899223366' })).status, 200, 'unpaid orders cannot ship');
-  assert.equal(q.get('SELECT status s FROM orders WHERE id = ?', unpaid.o).s, 'pending_payment');
+  assert.equal((await q.get('SELECT status s FROM orders WHERE id = ?', unpaid.o)).s, 'pending_payment');
   assert.equal((await other.post(`/api/seller/orders/${paid.o}/ship`, { carrier: 'USPS', tracking: '9400111899223377' })).status, 404);
   assert.equal((await other.get(`/dashboard/orders/${paid.o}`)).status, 404);
   assert.equal((await paid.buyer.post(`/api/seller/orders/${paid.o}/ship`, { carrier: 'USPS', tracking: '9400111899223377' })).status, 403);
   assert.equal((await paid.seller.post(`/api/seller/orders/${paid.o}/ship`, { carrier: 'Teleport', tracking: '9400111899223377' })).status, 422);
   assert.equal((await paid.seller.post(`/api/seller/orders/${paid.o}/ship`, { carrier: 'USPS', tracking: 'x' })).status, 422);
-  assert.equal(q.get('SELECT status s FROM orders WHERE id = ?', paid.o).s, 'paid');
+  assert.equal((await q.get('SELECT status s FROM orders WHERE id = ?', paid.o)).s, 'paid');
   assert.ok(!(await unpaid.seller.get(`/dashboard/orders/${unpaid.o}`)).text.includes('Mark shipped'), 'no shipping form before payment is confirmed');
 });
 

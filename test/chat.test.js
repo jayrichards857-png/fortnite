@@ -5,13 +5,13 @@ const WebSocket = require('ws');
 const H = require('./helpers');
 const { q } = require('../src/db');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 const uid = () => `c-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-const count = (sql, ...p) => q.get(sql, ...p).n;
+const count = async (sql, ...p) => (await q.get(sql, ...p)).n;
 const cmd = async (c, body) => c.post('/api/chat/command', body);
-const send = (c, conversationId, body, clientId = uid()) => cmd(c, { op: 'send', conversationId, clientId, body });
+const send = async (c, conversationId, body, clientId = uid()) => await cmd(c, { op: 'send', conversationId, clientId, body });
 
 /** Minimal WebSocket test client with the same frame protocol the browser uses. */
 class Sock {
@@ -54,7 +54,7 @@ test('authentication: every chat surface requires an active session', async () =
   // a banned user's existing session stops working everywhere, including new sockets
   const { buyer } = await scene();
   assert.equal((await buyer.get('/api/chat/sync')).status, 200);
-  q.run('UPDATE users SET banned = 1 WHERE email = ?', buyer.email);
+  await q.run('UPDATE users SET banned = 1 WHERE email = ?', buyer.email);
   assert.equal((await buyer.get('/api/chat/sync')).status, 401);
   await assert.rejects(new Sock(buyer).opened, (e) => e.status === 401);
 });
@@ -76,9 +76,9 @@ test('websocket: a revoked session is dropped on the next command', async () => 
 
 test('conversations: one per buyer/seller pair, seller derived from the listing, never from the client', async () => {
   const { seller, buyer, listing, conv } = await scene();
-  const sellerId = q.get('SELECT id FROM users WHERE handle = ?', seller.handle).id;
-  const buyerId = q.get('SELECT id FROM users WHERE email = ?', buyer.email).id;
-  const row = q.get('SELECT * FROM conversations WHERE id = ?', conv);
+  const sellerId = (await q.get('SELECT id FROM users WHERE handle = ?', seller.handle)).id;
+  const buyerId = (await q.get('SELECT id FROM users WHERE email = ?', buyer.email)).id;
+  const row = await q.get('SELECT * FROM conversations WHERE id = ?', conv);
   assert.equal(row.buyer_id, buyerId); assert.equal(row.seller_id, sellerId); assert.equal(row.listing_id, listing);
   // forged ids in the request body are ignored
   const forged = await buyer.post('/api/chat/conversations', { listingId: listing, sellerId: 1, buyerId: 999 });
@@ -86,12 +86,12 @@ test('conversations: one per buyer/seller pair, seller derived from the listing,
   // second listing from the same seller → same conversation, context moves
   const l2 = await H.makeListing(seller, { title: 'Second item' });
   assert.equal((await buyer.post('/api/chat/conversations', { listingId: l2 })).json.id, conv);
-  assert.equal(q.get('SELECT listing_id FROM conversations WHERE id = ?', conv).listing_id, l2);
+  assert.equal((await q.get('SELECT listing_id FROM conversations WHERE id = ?', conv)).listing_id, l2);
   // 8 parallel creates by a new buyer produce exactly one row
   const b2 = await H.newUser();
   const ids = await Promise.all(Array.from({ length: 8 }, () => b2.post('/api/chat/conversations', { listingId: listing })));
   assert.equal(new Set(ids.map((r) => r.json.id)).size, 1);
-  assert.equal(count('SELECT COUNT(*) n FROM conversations WHERE seller_id = ? AND buyer_id = (SELECT id FROM users WHERE email = ?)', sellerId, b2.email), 1);
+  assert.equal(await count('SELECT COUNT(*) n FROM conversations WHERE seller_id = ? AND buyer_id = (SELECT id FROM users WHERE email = ?)', sellerId, b2.email), 1);
   // can't message yourself; drafts/unknown listings 404
   assert.equal((await seller.post('/api/chat/conversations', { listingId: listing })).status, 403);
   const draft = await H.makeListing(seller, { status: 'draft' });
@@ -107,15 +107,15 @@ test('privacy: non-members cannot read, send, mark read, type or see the convers
     assert.equal((await cmd(stranger, body)).status, 404, body.op);
   }
   assert.equal((await send(stranger, conv, 'hijack')).status, 404);
-  assert.equal(count('SELECT COUNT(*) n FROM messages WHERE conversation_id = ?', conv), 1);
+  assert.equal(await count('SELECT COUNT(*) n FROM messages WHERE conversation_id = ?', conv), 1);
   assert.equal((await stranger.get(`/messages/${conv}`)).status, 404);
   const sync = (await stranger.get('/api/chat/sync?after=0')).json;
   assert.equal(sync.messages.length, 0); assert.equal(sync.conversations.length, 0);
   // the page HTML for the stranger must not contain the message
   assert.doesNotMatch((await stranger.get('/messages')).text, /my size is M/);
   // participants do see it; a forged senderId in the body is ignored
-  const forged = await cmd(seller, { op: 'send', conversationId: conv, clientId: uid(), body: 'yes', senderId: q.get('SELECT id FROM users WHERE email = ?', buyer.email).id });
-  assert.equal(forged.json.data.message.senderId, q.get('SELECT id FROM users WHERE handle = ?', seller.handle).id);
+  const forged = await cmd(seller, { op: 'send', conversationId: conv, clientId: uid(), body: 'yes', senderId: (await q.get('SELECT id FROM users WHERE email = ?', buyer.email)).id });
+  assert.equal(forged.json.data.message.senderId, (await q.get('SELECT id FROM users WHERE handle = ?', seller.handle)).id);
   const wsStranger = new Sock(stranger); await wsStranger.opened;
   const wr = await wsStranger.rpc({ op: 'history', conversationId: conv }); assert.equal(wr.status, 404);
   wsStranger.close();
@@ -125,7 +125,7 @@ test('persistence: ack implies the row is committed; history survives a "reload"
   const { buyer, seller, conv } = await scene();
   const r = await send(buyer, conv, 'line one\nline two');
   assert.equal(r.status, 200);
-  const row = q.get('SELECT * FROM messages WHERE id = ?', r.json.data.message.id);   // checked immediately after the ack
+  const row = await q.get('SELECT * FROM messages WHERE id = ?', r.json.data.message.id);   // checked immediately after the ack
   assert.ok(row); assert.equal(row.body, 'line one\nline two');
   await send(seller, conv, 'second');
   // brand-new client (as after a page reload) rebuilds the thread in order
@@ -156,11 +156,11 @@ test('duplicates: idempotency key + UNIQUE constraint → exactly one row, even 
   assert.equal(first.json.data.duplicate, false); assert.equal(again.json.data.duplicate, true);
   assert.equal(first.json.data.message.id, again.json.data.message.id);
   const key2 = uid();
-  const rs = await Promise.all(Array.from({ length: 10 }, () => send(buyer, conv, 'racing', key2)));
+  const rs = await Promise.all(Array.from({ length: 10 }, async () => await send(buyer, conv, 'racing', key2)));
   assert.ok(rs.every((r) => r.status === 200)); assert.equal(new Set(rs.map((r) => r.json.data.message.id)).size, 1);
-  assert.equal(count('SELECT COUNT(*) n FROM messages WHERE client_id IN (?, ?)', key, key2), 2);
+  assert.equal(await count('SELECT COUNT(*) n FROM messages WHERE client_id IN (?, ?)', key, key2), 2);
   // the database itself rejects a duplicate even if application code is bypassed
-  assert.throws(() => q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, created_at) SELECT conversation_id, sender_id, body, client_id, created_at FROM messages WHERE client_id = ?', key), /UNIQUE/);
+  await assert.rejects(async () => await q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, created_at) SELECT conversation_id, sender_id, body, client_id, created_at FROM messages WHERE client_id = ?', key), /UNIQUE/);
   // the same key from the *other* participant is a different message
   const other = await send(seller, conv, 'hello', key); assert.equal(other.json.data.duplicate, false);
   // duplicates must not push a second event to the recipient
@@ -196,14 +196,14 @@ test('real time over WebSocket: message push, typing (ephemeral, only to the oth
   const bb = new Sock(buyer); await bb.opened; await bb.waitFor((e) => e.t === 'ready');
   const ack = await bb.rpc({ op: 'send', conversationId: conv, clientId: uid(), body: 'live hello' });
   assert.equal(ack.ok, true);
-  assert.ok(q.get('SELECT 1 x FROM messages WHERE id = ?', ack.data.message.id), 'row exists by the time the ack is delivered');
+  assert.ok(await q.get('SELECT 1 x FROM messages WHERE id = ?', ack.data.message.id), 'row exists by the time the ack is delivered');
   const pushed = await sb.waitFor((e) => e.t === 'message' && e.message.body === 'live hello');
   assert.equal(pushed.message.conversationId, conv);
   await bb.rpc({ op: 'typing', conversationId: conv });
   await sb.waitFor((e) => e.t === 'typing' && e.conversationId === conv);
   await new Promise((r) => setTimeout(r, 100));
   assert.ok(!bb.events.some((e) => e.t === 'typing'), 'typist does not get their own typing event');
-  assert.equal(count("SELECT COUNT(*) n FROM messages WHERE body LIKE '%typing%'"), 0, 'typing is never stored');
+  assert.equal(await count("SELECT COUNT(*) n FROM messages WHERE body LIKE '%typing%'"), 0, 'typing is never stored');
   sb.close(); bb.close();
 });
 
@@ -249,7 +249,7 @@ test('offline recovery: reconnect with the last cursor returns exactly the misse
   await send(buyer, conv, 'queued while offline', key);          // first attempt reached the server, but the ack was "lost"
   const retry = await send(buyer, conv, 'queued while offline', key);
   assert.equal(retry.json.data.duplicate, true);
-  assert.equal(count("SELECT COUNT(*) n FROM messages WHERE body = 'queued while offline'"), 1);
+  assert.equal(await count("SELECT COUNT(*) n FROM messages WHERE body = 'queued while offline'"), 1);
   // paging in sync: more than the page limit is reported via hasMore and can be drained
   for (let i = 0; i < 205; i++) await send(buyer, conv, 'flood ' + i);
   const p1 = (await seller.get(`/api/chat/sync?after=${cursor}`)).json; assert.equal(p1.hasMore, true); assert.equal(p1.messages.length, 200);

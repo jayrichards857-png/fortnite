@@ -11,14 +11,14 @@ const { q } = require('../src/db');
 const { esc } = require('../src/util');
 const DISC = require('../src/disclosure');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 const LINK = 'https://buy.stripe.com/test_disc2';
 const get = async (c, u) => (await c.get(u)).text;
 const text = (html) => html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
 const oid = (r) => Number(String(r.json.redirect).match(/(\d+)/)[1]);
-const mkAdmin = async () => { const a = await H.newUser('Op'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
+const mkAdmin = async () => { const a = await H.newUser('Op'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
 async function scene(over = {}) {
   const seller = await H.newSeller('Disc'), buyer = await H.newUser('Disc'), id = await H.makeListing(seller, { payment_url: LINK, ...over });
   const o = oid(await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })); return { seller, buyer, id, o };
@@ -60,15 +60,15 @@ test('listing, order, help and policy pages carry the same disclosure and none s
 
 test('seller restrictions and bans never mark external money as frozen, refunded or reversed, and the pages say so', async () => {
   const adm = await mkAdmin(); const { seller, buyer, o } = await scene({ price: '50.00' }); await seller.post(`/api/seller/orders/${o}/confirm-payment`, {});
-  const o2 = (await scene()).o; const before = q.all('SELECT id, status, total_cents, refunded_cents, payment_confirmed_at, payment_confirmed_by FROM orders ORDER BY id').map((r) => ({ ...r }));
+  const o2 = (await scene()).o; const before = (await q.all('SELECT id, status, total_cents, refunded_cents, payment_confirmed_at, payment_confirmed_by FROM orders ORDER BY id')).map((r) => ({ ...r }));
   const cid = (await buyer.post('/api/cases/order', { orderId: o, reason: 'Seller went silent after confirming payment.', category: 'non_delivery' })).json.id;
   assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'restrict_selling', reason: 'Documented risk review: non-delivery complaint' })).status, 200);
   assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'suspend_seller', reason: 'No response to repeated contact' })).status, 200);
-  const after = q.all('SELECT id, status, total_cents, refunded_cents, payment_confirmed_at, payment_confirmed_by FROM orders ORDER BY id').map((r) => ({ ...r }));
+  const after = (await q.all('SELECT id, status, total_cents, refunded_cents, payment_confirmed_at, payment_confirmed_by FROM orders ORDER BY id')).map((r) => ({ ...r }));
   const paid = after.find((r) => r.id === o), was = before.find((r) => r.id === o); assert.deepEqual(paid, was, 'the confirmed order is exactly as it was: not refunded, not reversed, not frozen'); assert.equal(paid.refunded_cents, 0);
   assert.equal(after.find((r) => r.id === o2).status, 'pending_payment');
-  assert.equal(q.get('SELECT COUNT(*) n FROM refund_requests WHERE order_id = ?', o).n, 0); assert.equal(q.get("SELECT COUNT(*) n FROM order_events WHERE order_id = ? AND to_status IN ('refunded','cancelled')", o).n, 0);
-  assert.equal(q.get('SELECT COUNT(*) n FROM ledger').n, 0, 'no ledger entry: no money moved'); assert.equal(q.get('SELECT COUNT(*) n FROM refunds').n, 0);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM refund_requests WHERE order_id = ?', o)).n, 0); assert.equal((await q.get("SELECT COUNT(*) n FROM order_events WHERE order_id = ? AND to_status IN ('refunded','cancelled')", o)).n, 0);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM ledger')).n, 0, 'no ledger entry: no money moved'); assert.equal((await q.get('SELECT COUNT(*) n FROM refunds')).n, 0);
   const staff = text(await get(adm, `/admin/cases/${cid}`)), mine = text(await get(buyer, `/orders/${o}`)), support = text(await get(buyer, `/cases/${cid}`));
   assert.match(staff, /does not freeze, hold or reverse anything in their Stripe\/PayPal account/); for (const t of [staff, mine, support]) assert.doesNotMatch(t, /funds (are|have been|were) (frozen|held|returned)|payment (was|has been|is) (frozen|refunded|reversed)|your money (was|has been) (returned|refunded)/i);
   assert.match(mine, /Payment confirmed/); assert.match(mine, /freeze, hold, reverse or refund money in the seller's Stripe, PayPal or other payment account/);
@@ -81,16 +81,16 @@ test('a reported order is preserved as a frozen, staff-only record; messages sta
   await seller.post(`/api/seller/orders/${o}/confirm-payment`, {}); await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: '9400111899225566' });
   const conv = (await buyer.post('/api/chat/conversations', { listingId: id })).json.id; assert.ok(conv);
   const cid = (await buyer.post('/api/cases/order', { orderId: o, reason: 'Tracking never moved and the seller stopped replying.', category: 'non_delivery' })).json.id;
-  const rec = q.get('SELECT * FROM case_records WHERE case_id = ?', cid); assert.ok(rec); assert.equal(rec.sha256, crypto.createHash('sha256').update(rec.content).digest('hex'));
+  const rec = await q.get('SELECT * FROM case_records WHERE case_id = ?', cid); assert.ok(rec); assert.equal(rec.sha256, crypto.createHash('sha256').update(rec.content).digest('hex'));
   const c = JSON.parse(rec.content); assert.equal(c.order.tracking_entered_by_seller, '9400111899225566'); assert.equal(c.order.payment_independently_verified, false); assert.ok(c.order.seller_said_payment_received_at); assert.equal(c.order.status, 'shipped'); assert.match(c.note, /not verified any external payment/);
-  assert.throws(() => q.run("UPDATE case_records SET content = 'x' WHERE id = ?", rec.id), /append-only/); assert.throws(() => q.run('DELETE FROM case_records WHERE id = ?', rec.id), /append-only/);
+  await assert.rejects(async () => await q.run("UPDATE case_records SET content = 'x' WHERE id = ?", rec.id), /append-only/); await assert.rejects(async () => await q.run('DELETE FROM case_records WHERE id = ?', rec.id), /append-only/);
   assert.match(await get(adm, `/admin/cases/${cid}`), /Preserved record/); for (const who of [buyer, seller]) assert.doesNotMatch(await get(who, `/cases/${cid}`), /Preserved record|sha256/);
   // contacting both sides and recording the decision
-  assert.equal((await adm.post(`/api/admin/cases/${cid}/reply`, { body: 'We have asked the seller for proof of shipment.' })).status, 200); assert.ok(q.get("SELECT 1 x FROM notifications WHERE title LIKE 'PairPlug replied%' AND user_id = (SELECT id FROM users WHERE email = ?)", buyer.email)); assert.ok(q.get("SELECT 1 x FROM notifications WHERE title LIKE 'PairPlug replied%' AND user_id = (SELECT id FROM users WHERE email = ?)", seller.email));
+  assert.equal((await adm.post(`/api/admin/cases/${cid}/reply`, { body: 'We have asked the seller for proof of shipment.' })).status, 200); assert.ok(await q.get("SELECT 1 x FROM notifications WHERE title LIKE 'PairPlug replied%' AND user_id = (SELECT id FROM users WHERE email = ?)", buyer.email)); assert.ok(await q.get("SELECT 1 x FROM notifications WHERE title LIKE 'PairPlug replied%' AND user_id = (SELECT id FROM users WHERE email = ?)", seller.email));
   assert.equal((await adm.post(`/api/admin/cases/${cid}/decide`, { outcome: 'resolved', resolution: 'Seller restricted; buyer told to contact the payment provider for the refund.' })).status, 200);
-  for (const a of ['case_opened', 'case_replied', 'case_decided']) assert.ok(q.get('SELECT 1 x FROM audit_log WHERE action = ?', a), a);
+  for (const a of ['case_opened', 'case_replied', 'case_decided']) assert.ok(await q.get('SELECT 1 x FROM audit_log WHERE action = ?', a), a);
   // a ban does not delete the conversation, order or evidence
-  const msgsBefore = q.get('SELECT COUNT(*) n FROM messages').n; await adm.post(`/api/admin/cases/${cid}/action`, { action: 'suspend_seller', reason: 'Confirmed non-delivery' }); assert.equal(q.get('SELECT COUNT(*) n FROM messages').n, msgsBefore); assert.equal(q.get('SELECT COUNT(*) n FROM case_records WHERE case_id = ?', cid).n, 1);
+  const msgsBefore = (await q.get('SELECT COUNT(*) n FROM messages')).n; await adm.post(`/api/admin/cases/${cid}/action`, { action: 'suspend_seller', reason: 'Confirmed non-delivery' }); assert.equal((await q.get('SELECT COUNT(*) n FROM messages')).n, msgsBefore); assert.equal((await q.get('SELECT COUNT(*) n FROM case_records WHERE case_id = ?', cid)).n, 1);
 });
 
 test('the future payment-protection design is documented as design-only, makes no unsupported claims, and migration 15 is additive', () => {

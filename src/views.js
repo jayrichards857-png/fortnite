@@ -77,11 +77,11 @@ function header(user, path, counts, wide) {
 </header>`;
 }
 
-function layout({ title, body, user, path = '/', description = '', wide = false, scripts = '', head = '' }) {
+async function layout({ title, body, user, path = '/', description = '', wide = false, scripts = '', head = '' }) {
   const counts = user ? {
-    cart: q.get('SELECT COUNT(*) n FROM cart_items WHERE user_id = ?', user.id).n,
-    notifications: q.get('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id).n,
-    messages: require('./chat/service').unreadTotal(user.id),
+    cart: (await q.get('SELECT COUNT(*) n FROM cart_items WHERE user_id = ?', user.id)).n,
+    notifications: (await q.get('SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id)).n,
+    messages: await require('./chat/service').unreadTotal(user.id),
   } : {};
   const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey && config.checkoutMode === 'platform'
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';

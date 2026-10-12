@@ -18,13 +18,14 @@ function reject(socket, status, text) {
 function attachWebSocket(httpServer, { heartbeatMs = HEARTBEAT_MS } = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
 
-  httpServer.on('upgrade', (req, socket, head) => {
+  httpServer.on('upgrade', async (req, socket, head) => {
     if (!req.url.split('?')[0].startsWith('/api/chat/ws')) return reject(socket, 404, 'Not Found');
     if (!hostAllowed(req)) return reject(socket, 421, 'Misdirected Request');
     // Cross-site WebSocket hijacking guard: browsers always send Origin; it must be this site.
     const origin = req.headers.origin;
     if (origin) { let host; try { host = new URL(origin).host; } catch { host = ''; } if (host !== req.headers.host) return reject(socket, 403, 'Forbidden'); }
-    const user = userFromRequest(req);
+    let user;
+    try { user = await userFromRequest(req); } catch (e) { console.error(e); return reject(socket, 500, 'Internal Server Error'); }
     if (!user) return reject(socket, 401, 'Unauthorized');
     wss.handleUpgrade(req, socket, head, (ws) => { ws.user = user; ws.req = req; wss.emit('connection', ws); });
   });
@@ -34,21 +35,24 @@ function attachWebSocket(httpServer, { heartbeatMs = HEARTBEAT_MS } = {}) {
     const unsubscribe = getHub().subscribe(ws.user.id, send);
     ws.alive = true;
     ws.on('pong', () => { ws.alive = true; });
-    const beat = setInterval(() => {
+    const beat = setInterval(async () => {
       // detect dead peers, and drop sockets whose session was revoked/expired or whose user was banned
-      if (!ws.alive || !userFromRequest(ws.req)) return ws.close(!ws.alive ? 4000 : 4401, !ws.alive ? 'timeout' : 'session ended');
-      ws.alive = false; ws.ping();
+      try {
+        if (!ws.alive || !await userFromRequest(ws.req)) return ws.close(!ws.alive ? 4000 : 4401, !ws.alive ? 'timeout' : 'session ended');
+        ws.alive = false; ws.ping();
+      } catch (e) { console.error(e); }       // transient database error: try again on the next beat
     }, heartbeatMs);
     send({ t: 'ready', userId: ws.user.id });
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       let cmd; try { cmd = JSON.parse(raw.toString()); } catch { return send({ t: 'res', ok: false, status: 400, error: 'Invalid frame' }); }
       const reqId = cmd && cmd.reqId;
       if (cmd && cmd.op === 'ping') return send({ t: 'res', reqId, ok: true, data: {} });
       // Re-check the session on every command so logout / ban takes effect immediately.
-      const user = userFromRequest(ws.req);
+      let user;
+      try { user = await userFromRequest(ws.req); } catch (e) { console.error(e); return send({ t: 'res', reqId, ok: false, status: 500, error: 'Something went wrong' }); }
       if (!user) { send({ t: 'res', reqId, ok: false, status: 401, error: 'Session ended. Please log in again.' }); return ws.close(4401, 'session ended'); }
-      try { send({ t: 'res', reqId, ok: true, data: service.runCommand(user, cmd) }); }
+      try { send({ t: 'res', reqId, ok: true, data: await service.runCommand(user, cmd) }); }
       catch (e) { send({ t: 'res', reqId, ok: false, status: e.status || 500, error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
     });
     ws.on('close', () => { clearInterval(beat); unsubscribe(); });

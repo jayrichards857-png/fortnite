@@ -31,9 +31,10 @@ const { hashPassword } = require('../src/auth');
 const SH = require('../src/shippo');
 const config = require('../src/config');
 if (fake) SH.setTransport(sandbox.fakeTransport());
+(async () => {
 let out;
 try {
-  out = sandbox.seed({ q, now, hashPassword, setSetting, listings: require('../src/listings'), images: require('../src/images'), checkout: require('../src/externalCheckout'), png: require('./png').png });
+  out = await sandbox.seed({ q, now, hashPassword, setSetting, listings: require('../src/listings'), images: require('../src/images'), checkout: require('../src/externalCheckout'), png: require('./png').png });
 } catch (e) { die(e.message); }
 require('../src/server').createServer().listen(port, '127.0.0.1', () => {
   const base = `http://localhost:${port}`;
@@ -49,3 +50,4 @@ require('../src/server').createServer().listen(port, '127.0.0.1', () => {
   console.log('Press Ctrl+C to stop. Nothing here is a real customer, payment or order.');
   void config;
 });
+})().catch((e) => die(e.message));

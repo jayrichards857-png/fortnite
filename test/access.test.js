@@ -7,19 +7,19 @@ const assert = require('node:assert/strict');
 const H = require('./helpers');
 const { q } = require('../src/db');
 
-test.before(async () => { await H.start(); q.run("UPDATE settings SET value = '3' WHERE key = 'seller_cap'"); });
+test.before(async () => { await H.start(); await q.run("UPDATE settings SET value = '3' WHERE key = 'seller_cap'"); });
 test.after(() => H.stop());
 
 const LINK = 'https://buy.stripe.com/test_access123';
 const tokenOf = (link) => link.split('/').pop();
-async function admin() { const a = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; }
+async function admin() { const a = await H.newUser('Admin'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; }
 async function approvedSeller(adm, key) {
   const email = `${key}-${Date.now()}@example.test`;
   const inv = await adm.post('/api/admin/invitations', { kind: 'seller', email }); assert.equal(inv.status, 200, inv.text);
   const c = new H.Client(); c.email = email; c.handle = `${key}${Date.now() % 100000}`;
   const r = await c.post('/api/invitations/accept', { token: tokenOf(inv.json.link), display_name: `Seller ${key}`, password: 'a-long-password-1', store_name: `Store ${key}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true });
   assert.equal(r.status, 200, r.text);
-  q.run("UPDATE users SET email_verified_at = strftime('%s','now') WHERE email = ?", email);
+  await q.run("UPDATE users SET email_verified_at = strftime('%s','now') WHERE email = ?", email);
   return c;
 }
 const listingBody = (file) => ({ title: 'Wool sweater', description: 'Warm', category: 'clothing', condition: 'good', size: 'M', price: '30.00', shipping: '5.00', shipping_payer: 'buyer', weight_oz: 20, payment_url: LINK, images: [file], status: 'active' });
@@ -46,15 +46,15 @@ test('the Sell link shows Coming Soon to visitors, buyers and even admins; no on
   // server enforcement: hiding the button is not the control
   assert.equal((await anon.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky1', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 401);
   for (const who of [buyer, adm]) assert.equal((await who.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky2', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403);
-  assert.equal(q.get('SELECT is_seller s FROM users WHERE email = ?', buyer.email).s, 0);
-  assert.equal(q.get('SELECT is_seller s FROM users WHERE email = ?', adm.email).s, 0);
+  assert.equal((await q.get('SELECT is_seller s FROM users WHERE email = ?', buyer.email)).s, 0);
+  assert.equal((await q.get('SELECT is_seller s FROM users WHERE email = ?', adm.email)).s, 0);
 });
 
 test('buyer registration and login work; sign-up can never grant seller or admin privileges', async () => {
   const c = new H.Client(), email = `buyer-${Date.now()}@example.test`;
   const reg = await c.post('/api/register', { email, display_name: 'Buyer One', terms: true, password: 'a-long-password-1', is_seller: 1, is_admin: 1, role: 'admin', handle: 'x', store_name: 'x' });
   assert.equal(reg.status, 200, reg.text);
-  assert.deepEqual({ ...q.get('SELECT is_seller, is_admin, handle FROM users WHERE email = ?', email) }, { is_seller: 0, is_admin: 0, handle: null });
+  assert.deepEqual({ ...await q.get('SELECT is_seller, is_admin, handle FROM users WHERE email = ?', email) }, { is_seller: 0, is_admin: 0, handle: null });
   const login = new H.Client();
   assert.equal((await login.post('/api/login', { email, password: 'wrong-password-1' })).status, 401);
   assert.equal((await login.post('/api/login', { email, password: 'a-long-password-1' })).status, 200);
@@ -74,25 +74,25 @@ test('buyers cannot publish listings or reach seller-only pages and endpoints', 
   assert.equal((await new H.Client().post('/api/seller/listings', listingBody(file))).status, 401);
   const lid = await H.makeListing(seller, { payment_url: LINK });
   assert.equal((await buyer.post(`/api/seller/listings/${lid}/pause`)).status, 403);
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', lid).status, 'active');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', lid)).status, 'active');
 });
 
 test('seller cap counts sellers only: buyers never use a slot; the 4th seller is refused; sign-up stays open', async () => {
-  const before = q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1').n;
+  const before = (await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n;
   const adm = await admin();
   for (let i = 0; i < 6; i++) await H.newUser('Many');                 // buyers, many more than 3
   const sellers = [];
   for (let i = before; i < 3; i++) sellers.push(await approvedSeller(adm, `cap${i}`));
-  assert.equal(q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1').n, 3);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n, 3);
   assert.equal((await adm.post('/api/admin/invitations', { kind: 'seller', email: 'fourth@example.test' })).status, 409, 'the 4th seller invitation is refused');
-  assert.throws(() => q.run("INSERT INTO users(email, password_hash, display_name, is_seller, handle, created_at) VALUES('x4@x.test','x','X',1,'x4',1)"), /seller cap reached/);
+  await assert.rejects(async () => await q.run("INSERT INTO users(email, password_hash, display_name, is_seller, handle, created_at) VALUES('x4@x.test','x','X',1,'x4',1)"), /seller cap reached/);
   assert.equal((await adm.post('/api/admin/invitations', { kind: 'buyer', email: 'buyer-invite@example.test' })).status, 200, 'buyer invitations are unaffected');
   assert.equal((await new H.Client().post('/api/register', { email: `after-cap-${Date.now()}@example.test`, display_name: 'Late Buyer', terms: true, password: 'a-long-password-1' })).status, 200, 'buyer sign-up still works at the cap');
 });
 
 test('approved sellers keep seller access after logging in again', async () => {
   const adm = await admin();
-  let s = q.get("SELECT email, handle FROM users WHERE is_seller = 1 AND banned = 0 LIMIT 1");
+  let s = await q.get("SELECT email, handle FROM users WHERE is_seller = 1 AND banned = 0 LIMIT 1");
   const email = s ? s.email : null;
   const seller = email ? Object.assign(new H.Client(), { email, handle: s.handle }) : await approvedSeller(adm, 'keeper');
   const re = new H.Client();
@@ -106,26 +106,26 @@ test('approved sellers keep seller access after logging in again', async () => {
 
 test('admins can approve seller access via an invitation (cap-aware) and manage the admin role with password confirmation and audit logging', async () => {
   const adm = await admin(), target = await H.newUser('Target'), other = await H.newUser('Other');
-  const tid = q.get('SELECT id FROM users WHERE email = ?', target.email).id;
+  const tid = (await q.get('SELECT id FROM users WHERE email = ?', target.email)).id;
   assert.equal((await target.post(`/api/admin/users/${tid}/seller-invite`)).status, 403, 'non-admin cannot');
   // approve seller: cap is full in this file by now => refused, then works after a slot is freed
-  assert.equal(q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1').n, 3, 'earlier tests filled the 3 slots');
+  assert.equal((await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n, 3, 'earlier tests filled the 3 slots');
   assert.equal((await adm.post(`/api/admin/users/${tid}/seller-invite`)).status, 409, 'cap full => refused');
-  q.run("UPDATE settings SET value = '4' WHERE key = 'seller_cap'");            // simulate a freed slot / raised cap
+  await q.run("UPDATE settings SET value = '4' WHERE key = 'seller_cap'");            // simulate a freed slot / raised cap
   const inv = await adm.post(`/api/admin/users/${tid}/seller-invite`);
   assert.equal(inv.status, 200); assert.match(inv.json.link, /\/invite\/pp_inv_/);
-  q.run("UPDATE settings SET value = '3' WHERE key = 'seller_cap'");
+  await q.run("UPDATE settings SET value = '3' WHERE key = 'seller_cap'");
   // admin role
-  const oid = q.get('SELECT id FROM users WHERE email = ?', other.email).id;
+  const oid = (await q.get('SELECT id FROM users WHERE email = ?', other.email)).id;
   assert.equal((await adm.post(`/api/admin/users/${oid}/admin`, { admin: true, password: 'wrong-password' })).status, 403);
   assert.equal((await target.post(`/api/admin/users/${oid}/admin`, { admin: true, password: 'a-long-password-1' })).status, 403);
   assert.equal((await adm.post(`/api/admin/users/${oid}/admin`, { admin: true, password: 'correct-horse-9' })).status, 200);
-  assert.equal(q.get('SELECT is_admin a FROM users WHERE id = ?', oid).a, 1);
+  assert.equal((await q.get('SELECT is_admin a FROM users WHERE id = ?', oid)).a, 1);
   assert.equal((await other.get('/admin')).status, 200);
-  const admId = q.get('SELECT id FROM users WHERE email = ?', adm.email).id;
+  const admId = (await q.get('SELECT id FROM users WHERE email = ?', adm.email)).id;
   assert.equal((await adm.post(`/api/admin/users/${admId}/admin`, { admin: false, password: 'correct-horse-9' })).status, 400, 'not yourself');
   assert.equal((await adm.post(`/api/admin/users/${oid}/admin`, { admin: false, password: 'correct-horse-9' })).status, 200);
   assert.notEqual((await other.get('/admin')).status, 200);
-  const acts = q.all("SELECT action FROM audit_log WHERE action IN ('admin_granted','admin_revoked')").map((a) => a.action);
+  const acts = (await q.all("SELECT action FROM audit_log WHERE action IN ('admin_granted','admin_revoked')")).map((a) => a.action);
   assert.ok(acts.includes('admin_granted') && acts.includes('admin_revoked'));
 });

@@ -8,14 +8,14 @@ const { q } = require('../src/db');
 const M = require('../src/moderation');
 const config = require('../src/config');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 const EMAIL = 'pairplugservice@gmail.com';
 const get = async (c, u) => (await c.get(u)).text;
 const visible = (html) => html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '');
-const mkAdmin = async () => { const a = await H.newUser('Owner'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
-const uid = (email) => q.get('SELECT id FROM users WHERE email = ?', email).id;
+const mkAdmin = async () => { const a = await H.newUser('Owner'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
+const uid = async (email) => (await q.get('SELECT id FROM users WHERE email = ?', email)).id;
 
 test('the login page renders a real mailto link (no leaked template syntax) and links to the Contact page', async () => {
   const anon = new H.Client(), html = await get(anon, '/login');
@@ -33,7 +33,7 @@ test('no page leaks template syntax, [object Object], undefined or NaN (public, 
     [new H.Client(), ['/', '/shop', '/shop?q=jacket', '/shop?q=jacket&tab=sellers', '/sellers', '/login', '/register', '/contact', '/support', '/legal', '/terms', '/privacy', '/payments', '/rules', '/forgot-password', '/sell', `/listing/${id}`, `/s/${seller.handle}`]],
     [buyer, ['/account', '/orders', `/orders/${String(o.json.redirect).match(/(\d+)/)[1]}`, '/notifications', '/following', '/favorites', '/messages', '/support']],
     [seller, ['/dashboard', '/dashboard/inventory', '/dashboard/orders', '/dashboard/storefront', '/dashboard/listings/new', `/dashboard/listings/${id}/edit`, '/dashboard/analytics', '/dashboard/finance', '/account']],
-    [mod, ['/moderation', '/moderation/users?q=Scan', `/moderation/users/${uid(seller.email)}`, '/moderation/log', '/moderation/reviews', '/admin/cases', '/admin/risk']],
+    [mod, ['/moderation', '/moderation/users?q=Scan', `/moderation/users/${await uid(seller.email)}`, '/moderation/log', '/moderation/reviews', '/admin/cases', '/admin/risk']],
     [adm, ['/admin', '/admin/accounts', '/admin/moderators', '/admin/invitations', '/admin/users', '/admin/cases', '/admin/orders', '/admin/audit', '/admin/sellers', '/moderation']],
   ];
   for (const [who, pages] of sets) for (const p of pages) {
@@ -76,65 +76,65 @@ test('every Contact link in the header, footer and on sign-in, sign-up, help, le
 // ---------------------------------------------------------------- Account Management
 const link = (r) => r.json.link.split('/').pop();
 const post = (c, body) => c.post('/api/admin/accounts/invite', body);
-const clear = () => { q.run('UPDATE users SET is_moderator = 0 WHERE is_moderator = 1'); q.run("UPDATE moderator_invites SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); q.run("UPDATE invitations SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); };
+const clear = async () => { await q.run('UPDATE users SET is_moderator = 0 WHERE is_moderator = 1'); await q.run("UPDATE moderator_invites SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); await q.run("UPDATE invitations SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); };
 
 test('Account Management: only the owner/admin can open it or create invitations; everyone else is refused server-side', async () => {
-  clear(); const adm = await mkAdmin(), seller = await H.newSeller('Sly'), buyer = await H.newUser('Pal'), inv = await adm.post('/api/admin/moderators/invite', { email: `m${Date.now()}@example.test` });
-  const mod = new H.Client(); mod.email = inv.json.link && q.get('SELECT email FROM moderator_invites ORDER BY id DESC LIMIT 1').email; await mod.post('/api/moderator/setup', { token: link(inv), display_name: 'Staff Mod', password: 'a-very-long-passphrase', terms: true });
+  await clear(); const adm = await mkAdmin(), seller = await H.newSeller('Sly'), buyer = await H.newUser('Pal'), inv = await adm.post('/api/admin/moderators/invite', { email: `m${Date.now()}@example.test` });
+  const mod = new H.Client(); mod.email = inv.json.link && (await q.get('SELECT email FROM moderator_invites ORDER BY id DESC LIMIT 1')).email; await mod.post('/api/moderator/setup', { token: link(inv), display_name: 'Staff Mod', password: 'a-very-long-passphrase', terms: true });
   const body = { role: 'seller', email: `new${Date.now()}@example.test`, name: 'New Person', confirm: true };
   for (const who of [new H.Client(), buyer, seller, mod]) {
     const s = (await who.get('/admin/accounts')).status; assert.ok([401, 302, 403].includes(s), `page ${s}`);
     for (const role of ['seller', 'moderator', 'buyer']) assert.ok([401, 403].includes((await post(who, { ...body, role })).status), role);
   }
-  assert.equal(q.get('SELECT COUNT(*) n FROM users WHERE email = ?', body.email).n, 0); assert.equal(q.get('SELECT COUNT(*) n FROM invitations WHERE email = ?', body.email).n, 0);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM users WHERE email = ?', body.email)).n, 0); assert.equal((await q.get('SELECT COUNT(*) n FROM invitations WHERE email = ?', body.email)).n, 0);
   // role self-escalation attempts
-  assert.equal((await mod.post(`/api/admin/users/${uid(mod.email)}/admin`, { admin: true, password: 'x' })).status, 403); assert.equal((await seller.req('PATCH', '/api/account', { display_name: 'Sly', is_admin: 1, is_moderator: 1 })).status, 200);
-  assert.deepEqual({ ...q.get('SELECT is_admin a, is_moderator m FROM users WHERE email = ?', seller.email) }, { a: 0, m: 0 });
+  assert.equal((await mod.post(`/api/admin/users/${await uid(mod.email)}/admin`, { admin: true, password: 'x' })).status, 403); assert.equal((await seller.req('PATCH', '/api/account', { display_name: 'Sly', is_admin: 1, is_moderator: 1 })).status, 200);
+  assert.deepEqual({ ...await q.get('SELECT is_admin a, is_moderator m FROM users WHERE email = ?', seller.email) }, { a: 0, m: 0 });
   // CSRF: no custom header, no action
   const raw = await fetch(`${H.base}/api/admin/accounts/invite`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: adm.cookie }, body: JSON.stringify(body) }); assert.equal(raw.status, 403);
 });
 
 test('Account Management: confirmation required, links are bound to email+role, shown once, never stored/logged in plaintext, not emailed', async () => {
-  clear(); const adm = await mkAdmin(), page = await get(adm, '/admin/accounts');
+  await clear(); const adm = await mkAdmin(), page = await get(adm, '/admin/accounts');
   assert.match(page, /Account management/); assert.match(page, /confirm\(/); assert.match(page, /not emailed/); assert.match(page, /Seller slots used/); assert.match(page, /Moderator slots used/); assert.doesNotMatch(page, /password_hash|scrypt/);
   const email = `seller${Date.now()}@example.test`;
-  assert.equal((await post(adm, { role: 'seller', email, name: 'Nina Seller' })).status, 422, 'no confirmation, no invitation'); assert.equal(q.get('SELECT COUNT(*) n FROM invitations WHERE email = ?', email).n, 0);
+  assert.equal((await post(adm, { role: 'seller', email, name: 'Nina Seller' })).status, 422, 'no confirmation, no invitation'); assert.equal((await q.get('SELECT COUNT(*) n FROM invitations WHERE email = ?', email)).n, 0);
   assert.equal((await post(adm, { role: 'admin', email, confirm: true })).status, 422, 'admins cannot be created here'); assert.equal((await post(adm, { role: 'seller', email: 'nope', confirm: true })).status, 422);
   const r = await post(adm, { role: 'seller', email: ` ${email.toUpperCase()} `, name: 'Nina Seller', note: 'friend of the owner', confirm: true }); assert.equal(r.status, 200, r.text); assert.equal(r.headers.get('cache-control'), 'no-store');
-  const raw = link(r), row = q.get('SELECT * FROM invitations WHERE email = ?', email); assert.equal(row.kind, 'seller'); assert.equal(row.suggested_name, 'Nina Seller'); assert.notEqual(row.token_hash, raw);
-  const dump = JSON.stringify([q.all('SELECT * FROM invitations'), q.all('SELECT * FROM audit_log'), q.all('SELECT * FROM email_outbox')]); assert.ok(!dump.includes(raw), 'the token is stored nowhere'); assert.equal(q.get('SELECT COUNT(*) n FROM email_outbox WHERE to_email = ?', email).n, 0, 'nothing was emailed');
-  assert.ok(q.get("SELECT 1 x FROM audit_log WHERE action = 'admin_account_invite' AND detail LIKE ?", `%${email}%`)); assert.ok(q.get("SELECT 1 x FROM audit_log WHERE action = 'invitation_created'"));
+  const raw = link(r), row = await q.get('SELECT * FROM invitations WHERE email = ?', email); assert.equal(row.kind, 'seller'); assert.equal(row.suggested_name, 'Nina Seller'); assert.notEqual(row.token_hash, raw);
+  const dump = JSON.stringify([await q.all('SELECT * FROM invitations'), await q.all('SELECT * FROM audit_log'), await q.all('SELECT * FROM email_outbox')]); assert.ok(!dump.includes(raw), 'the token is stored nowhere'); assert.equal((await q.get('SELECT COUNT(*) n FROM email_outbox WHERE to_email = ?', email)).n, 0, 'nothing was emailed');
+  assert.ok(await q.get("SELECT 1 x FROM audit_log WHERE action = 'admin_account_invite' AND detail LIKE ?", `%${email}%`)); assert.ok(await q.get("SELECT 1 x FROM audit_log WHERE action = 'invitation_created'"));
   const listed = await get(adm, '/admin/accounts'); assert.match(listed, new RegExp(email)); assert.match(listed, /pending/); assert.ok(!listed.includes(raw), 'the link is never shown again');
   // the invited person sets their own password; the suggested name is pre-filled; the account is a seller and nothing more
   const anon = new H.Client(); assert.match(await get(anon, `/invite/${raw}`), /value="Nina Seller"/);
   const body = { token: raw, display_name: 'Nina Seller', password: 'a-long-password-1', store_name: 'Nina Store', handle: 'nina' + Date.now() % 1e5, country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true };
-  assert.equal((await anon.post('/api/invitations/accept', body)).status, 200); const u = q.get('SELECT * FROM users WHERE email = ?', email); assert.deepEqual({ s: u.is_seller, a: u.is_admin, m: u.is_moderator }, { s: 1, a: 0, m: 0 });
+  assert.equal((await anon.post('/api/invitations/accept', body)).status, 200); const u = await q.get('SELECT * FROM users WHERE email = ?', email); assert.deepEqual({ s: u.is_seller, a: u.is_admin, m: u.is_moderator }, { s: 1, a: 0, m: 0 });
   assert.equal((await new H.Client().post('/api/invitations/accept', body)).status, 400, 'one-time use'); assert.match(await get(adm, '/admin/accounts'), /used/);
   // duplicates, revocation and expiry
   assert.equal((await post(adm, { role: 'seller', email, confirm: true })).status, 409, 'that seller already exists');
   const e2 = `rev${Date.now()}@example.test`, i2 = await post(adm, { role: 'buyer', email: e2, confirm: true }); assert.equal((await post(adm, { role: 'buyer', email: e2, confirm: true })).status, 409, 'one live link per email');
-  const id2 = q.get('SELECT id FROM invitations WHERE email = ?', e2).id; assert.equal((await adm.post(`/api/admin/invitations/${id2}/revoke`, {})).status, 200); assert.equal((await new H.Client().post('/api/invitations/accept', { token: link(i2), display_name: 'Rev Buyer', password: 'a-long-password-1', terms: true })).status, 400);
-  const e3 = `exp${Date.now()}@example.test`, i3 = await post(adm, { role: 'buyer', email: e3, confirm: true }); q.run('UPDATE invitations SET expires_at = 5 WHERE email = ?', e3); assert.equal((await new H.Client().post('/api/invitations/accept', { token: link(i3), display_name: 'Old Buyer', password: 'a-long-password-1', terms: true })).status, 400);
+  const id2 = (await q.get('SELECT id FROM invitations WHERE email = ?', e2)).id; assert.equal((await adm.post(`/api/admin/invitations/${id2}/revoke`, {})).status, 200); assert.equal((await new H.Client().post('/api/invitations/accept', { token: link(i2), display_name: 'Rev Buyer', password: 'a-long-password-1', terms: true })).status, 400);
+  const e3 = `exp${Date.now()}@example.test`, i3 = await post(adm, { role: 'buyer', email: e3, confirm: true }); await q.run('UPDATE invitations SET expires_at = 5 WHERE email = ?', e3); assert.equal((await new H.Client().post('/api/invitations/accept', { token: link(i3), display_name: 'Old Buyer', password: 'a-long-password-1', terms: true })).status, 400);
 });
 
 test('Account Management: moderator links share the five-slot cap, are bound to the moderator role, and creating one never grants admin', async () => {
-  clear(); const adm = await mkAdmin(); const made = [];
+  await clear(); const adm = await mkAdmin(); const made = [];
   for (let i = 0; i < 5; i++) { const r = await post(adm, { role: 'moderator', email: `acm${i}-${Date.now()}@example.test`, name: `Mod ${i}`, confirm: true }); assert.equal(r.status, 200, r.text); made.push(r); }
   const sixth = await post(adm, { role: 'moderator', email: `acm6-${Date.now()}@example.test`, confirm: true }); assert.equal(sixth.status, 409); assert.match(sixth.text, /moderator slots/i);
   assert.equal((await post(adm, { role: 'seller', email: `okseller${Date.now()}@example.test`, confirm: true })).status, 200, 'seller slots are separate');
   assert.match(await get(adm, '/admin/accounts'), /5 \/ 5/);
   const c = new H.Client(); assert.match(await get(c, `/moderator/setup/${link(made[0])}`), /value="Mod 0"/);
   assert.equal((await c.post('/api/moderator/setup', { token: link(made[0]), display_name: 'Mod Zero', password: 'a-very-long-passphrase', terms: true })).status, 200);
-  const u = q.get("SELECT is_admin a, is_moderator m, is_seller s FROM users WHERE display_name = 'Mod Zero'"); assert.deepEqual({ ...u }, { a: 0, m: 1, s: 0 });
+  const u = await q.get("SELECT is_admin a, is_moderator m, is_seller s FROM users WHERE display_name = 'Mod Zero'"); assert.deepEqual({ ...u }, { a: 0, m: 1, s: 0 });
   assert.equal((await c.get('/admin/accounts')).status, 403); assert.equal((await post(c, { role: 'moderator', email: 'x@example.test', confirm: true })).status, 403, 'a moderator cannot create moderators');
-  assert.equal(M.slots().available, 0); const rev = q.get("SELECT id FROM moderator_invites WHERE email LIKE 'acm1-%'").id; assert.equal((await adm.post(`/api/admin/moderators/invites/${rev}/revoke`, {})).status, 200); assert.equal(M.slots().available, 1);
+  assert.equal((await M.slots()).available, 0); const rev = (await q.get("SELECT id FROM moderator_invites WHERE email LIKE 'acm1-%'")).id; assert.equal((await adm.post(`/api/admin/moderators/invites/${rev}/revoke`, {})).status, 200); assert.equal((await M.slots()).available, 1);
   assert.equal((await new H.Client().post('/api/moderator/setup', { token: link(made[1]), display_name: 'Revoked Mod', password: 'a-very-long-passphrase', terms: true })).status, 400);
 });
 
 test('no fake accounts are ever created: a fresh database has no users, and an existing owner keeps working', async () => {
   const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); const d = new DatabaseSync(':memory:'); for (const m of MIGRATIONS) d.exec(m);
   for (const t of ['users', 'listings', 'orders', 'seller_reviews', 'invitations', 'moderator_invites']) assert.equal(d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n, 0, `${t} starts empty`); d.close();
-  const adm = await mkAdmin(); const before = q.get('SELECT * FROM users WHERE email = ?', adm.email); assert.equal((await new H.Client().post('/api/login', { email: adm.email, password: 'correct-horse-9' })).status, 200);
-  await post(adm, { role: 'seller', email: `fine${Date.now()}@example.test`, confirm: true }); const after = q.get('SELECT * FROM users WHERE email = ?', adm.email); assert.equal(after.password_hash, before.password_hash, 'the owner\'s credentials are untouched'); assert.equal(after.is_admin, 1);
+  const adm = await mkAdmin(); const before = await q.get('SELECT * FROM users WHERE email = ?', adm.email); assert.equal((await new H.Client().post('/api/login', { email: adm.email, password: 'correct-horse-9' })).status, 200);
+  await post(adm, { role: 'seller', email: `fine${Date.now()}@example.test`, confirm: true }); const after = await q.get('SELECT * FROM users WHERE email = ?', adm.email); assert.equal(after.password_hash, before.password_hash, 'the owner\'s credentials are untouched'); assert.equal(after.is_admin, 1);
   void config;
 });

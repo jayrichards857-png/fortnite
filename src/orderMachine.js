@@ -31,15 +31,15 @@ const canTransition = (from, to) => (TRANSITIONS[from] || []).includes(to);
  * Atomically move an order. The UPDATE is conditional on the current status, so two concurrent
  * actors (e.g. buyer confirm + auto-release job) can't both win. Must be called inside tx().
  */
-function transition(orderId, to, { actor, note = null, set = {} } = {}) {
-  const order = q.get('SELECT status FROM orders WHERE id = ?', orderId);
+async function transition(orderId, to, { actor, note = null, set = {} } = {}) {
+  const order = await q.get('SELECT status FROM orders WHERE id = ?', orderId);
   if (!order) throw Object.assign(new Error('Order not found'), { status: 404 });
   if (!canTransition(order.status, to)) throw new TransitionError(order.status, to);
   const cols = Object.keys(set);
   const sql = `UPDATE orders SET status = ?, updated_at = ?${cols.map((c) => `, ${c} = ?`).join('')} WHERE id = ? AND status = ?`;
-  const res = q.run(sql, to, now(), ...cols.map((c) => set[c]), orderId, order.status);
+  const res = await q.run(sql, to, now(), ...cols.map((c) => set[c]), orderId, order.status);
   if (res.changes !== 1) throw new TransitionError(order.status, to);
-  q.run('INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?,?,?,?,?,?)',
+  await q.run('INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?,?,?,?,?,?)',
     orderId, order.status, to, actor || 'system', note, now());
   return order.status;
 }

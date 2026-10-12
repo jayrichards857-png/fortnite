@@ -12,7 +12,7 @@ const { trackingUrl, LABEL_PROVIDERS } = require('../paymentLinks');
 
 const r = express.Router();
 const S = [auth.requireSeller];
-const wrap = (req, res, title, body, status = 200) => res.status(status).send(V.layout({ user: req.user, path: '/dashboard/orders', title, body: V.dashNav('/dashboard/orders') + body }));
+const wrap = async (req, res, title, body, status = 200) => res.status(status).send(await V.layout({ user: req.user, path: '/dashboard/orders', title, body: V.dashNav('/dashboard/orders') + body }));
 const originOpts = (cur = '') => `<option value="">Choose…</option>${Object.entries(ES.ORIGINS).map(([k, v]) => `<option value="${k}"${cur === k ? ' selected' : ''}>${esc(v)}</option>`).join('')}`;
 const carrierOpts = (cur = '') => config.carriers.map((c) => `<option${cur === c ? ' selected' : ''}>${esc(c)}</option>`).join('');
 const countryOpts = (cur = 'US') => ['US', 'CA', 'MX'].map((c) => `<option${cur === c ? ' selected' : ''}>${c}</option>`).join('');
@@ -23,18 +23,18 @@ const addrFields = (p, v = {}) => `<label for="${p}n">Recipient's full name</lab
 const NOT_VERIFIED = 'Recording a sale documents the transaction. It does <strong>not</strong> independently verify any payment: PairPlug cannot see your payment provider.';
 
 // ------------------------------------------------------------------ record form
-const gone = (req, res) => res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Not found', 'It may not exist, or it belongs to someone else.', ['/dashboard/inventory', 'Inventory']) }));
+const gone = async (req, res) => res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Not found', 'It may not exist, or it belongs to someone else.', ['/dashboard/inventory', 'Inventory']) }));
 r.get('/dashboard/listings/:id(\\d+)/external-sale', S, (req, res) => res.redirect(301, `/dashboard/listings/${req.params.id}/record-sale`));
-r.get('/dashboard/listings/:id(\\d+)/record-sale', S, (req, res) => {
-  const l = q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
-  if (!l) return gone(req, res);
+r.get('/dashboard/listings/:id(\\d+)/record-sale', S, async (req, res) => {
+  const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
+  if (!l) return await gone(req, res);
   const back = '<p><a class="btn ghost" href="/dashboard/inventory">Back to inventory</a></p>';
-  const done = q.get('SELECT id FROM external_sales WHERE listing_id = ? AND voided_at IS NULL', l.id);
-  if (done) return wrap(req, res, 'Record sale', `<div class="narrow panel"><h1>Already recorded</h1><p>A sale is already recorded for <strong>${esc(l.title)}</strong>.</p><p><a class="btn" href="/dashboard/sales/${done.id}">Open the sale</a></p>${back}</div>`);
-  if (ES.hasOrder(l.id)) return wrap(req, res, 'Record sale', `<div class="narrow panel"><h1>This item already has a PairPlug order</h1><p>${esc(l.title)} came through a PairPlug checkout, so that order <em>is</em> its sale record: confirm payment and ship from the order. Recording it here as well would duplicate it.</p><p><a class="btn" href="/dashboard/orders">Go to Orders</a></p>${back}</div>`);
-  if (!['active', 'sold'].includes(l.status)) return wrap(req, res, 'Record sale', `<div class="narrow panel"><h1>Not available</h1><p>Only items that are for sale, or already marked Sold, can be recorded as a sale. This item is <strong>${esc(l.status)}</strong>.</p>${back}</div>`);
+  const done = await q.get('SELECT id FROM external_sales WHERE listing_id = ? AND voided_at IS NULL', l.id);
+  if (done) return await wrap(req, res, 'Record sale', `<div class="narrow panel"><h1>Already recorded</h1><p>A sale is already recorded for <strong>${esc(l.title)}</strong>.</p><p><a class="btn" href="/dashboard/sales/${done.id}">Open the sale</a></p>${back}</div>`);
+  if (await ES.hasOrder(l.id)) return await wrap(req, res, 'Record sale', `<div class="narrow panel"><h1>This item already has a PairPlug order</h1><p>${esc(l.title)} came through a PairPlug checkout, so that order <em>is</em> its sale record: confirm payment and ship from the order. Recording it here as well would duplicate it.</p><p><a class="btn" href="/dashboard/orders">Go to Orders</a></p>${back}</div>`);
+  if (!['active', 'sold'].includes(l.status)) return await wrap(req, res, 'Record sale', `<div class="narrow panel"><h1>Not available</h1><p>Only items that are for sale, or already marked Sold, can be recorded as a sale. This item is <strong>${esc(l.status)}</strong>.</p>${back}</div>`);
   const today = new Date().toISOString().slice(0, 10);
-  wrap(req, res, 'Record sale', `<h1>Record sale</h1><div class="narrow panel form-wide" style="max-width:640px">
+  await wrap(req, res, 'Record sale', `<h1>Record sale</h1><div class="narrow panel form-wide" style="max-width:640px">
     <p><strong>${esc(l.title)}</strong> <span class="muted">listed at ${money(l.price_cents)}</span></p>
     <div class="panel notice">${NOT_VERIFIED} ${l.status === 'active' ? 'The item is marked <strong>Sold</strong> as soon as you save, so no one else can buy it here.' : 'The item is already marked Sold.'} No buyer account or checkout order is created.</div>
     <form id="rsform" data-api="/api/seller/listings/${l.id}/record-sale" data-redirect="/dashboard/orders">
@@ -53,15 +53,15 @@ r.get('/dashboard/listings/:id(\\d+)/record-sale', S, (req, res) => {
       <button class="btn" type="submit" style="margin-top:14px">Record sale</button> <a class="btn ghost" href="/dashboard/inventory" style="margin-top:14px">Cancel</a></form></div>
     <script>(function(){var o=document.getElementById('or'),f=document.getElementById('fu');function sync(){var v=o.value;document.getElementById('or-pp').hidden=v!=='pairplug';document.getElementById('or-detail').hidden=!(v==='other_marketplace'||v==='social'||v==='other');var s=f.value==='ship';document.getElementById('fu-ship').hidden=!s;document.getElementById('fu-pickup').hidden=s}o.addEventListener('change',sync);f.addEventListener('change',sync);sync()})()</script>`);
 });
-r.post('/api/seller/listings/:id(\\d+)/record-sale', S, (req, res) => res.json({ ok: true, ...ES.record(req.user, req.params.id, req.body) }));
-r.post('/api/seller/listings/:id(\\d+)/external-sale', S, (req, res) => res.json({ ok: true, ...ES.record(req.user, req.params.id, req.body) }));   // older clients
+r.post('/api/seller/listings/:id(\\d+)/record-sale', S, async (req, res) => res.json({ ok: true, ...await ES.record(req.user, req.params.id, req.body) }));
+r.post('/api/seller/listings/:id(\\d+)/external-sale', S, async (req, res) => res.json({ ok: true, ...await ES.record(req.user, req.params.id, req.body) }));   // older clients
 
 // ------------------------------------------------------------------ sale page (recipient, shipping, payment, corrections, void)
 const originLabel = (s) => (s.origin ? esc(ES.ORIGINS[s.origin]) : 'Earlier record (origin not captured)');
 const payLabel = (s) => (s.payment_status === 'confirmed_by_seller' ? 'Confirmed by you · not verified by PairPlug' : 'Not confirmed');
-r.get('/dashboard/sales/:id(\\d+)', S, (req, res) => {
-  let s; try { s = ES.mine(req.user, req.params.id); } catch { return gone(req, res); }
-  const events = ES.eventsFor(req.user, s.id), track = s.tracking_number ? trackingUrl(s.carrier, s.tracking_number) : null, voided = Boolean(s.voided_at), shipped = s.shipment_status === 'shipped';
+r.get('/dashboard/sales/:id(\\d+)', S, async (req, res) => {
+  let s; try { s = await ES.mine(req.user, req.params.id); } catch { return await gone(req, res); }
+  const events = await ES.eventsFor(req.user, s.id), track = s.tracking_number ? trackingUrl(s.carrier, s.tracking_number) : null, voided = Boolean(s.voided_at), shipped = s.shipment_status === 'shipped';
   const fulfil = !s.fulfillment ? `<p class="muted">Fulfillment wasn't captured for this earlier record. You can set it below.</p>` : s.fulfillment === 'pickup' ? '<p><strong>Local pickup / no shipping required.</strong> No address or tracking number is needed.</p>' : '';
   const shipBlock = voided ? '' : s.fulfillment === 'ship' ? `<h3>Ship this sale</h3>
     ${ES.hasAddress(s) ? `<p style="margin:0 0 6px"><strong>Recipient</strong><br>${esc(s.recipient_name)}<br>${esc(s.recipient_line1)}${s.recipient_line2 ? '<br>' + esc(s.recipient_line2) : ''}<br>${esc(s.recipient_city)}, ${esc(s.recipient_region)} ${esc(s.recipient_postal)}<br>${esc(s.recipient_country)}</p>` : '<div class="form-err">The recipient\'s delivery address is not complete. Add it below before marking this shipped.</div>'}
@@ -82,13 +82,13 @@ r.get('/dashboard/sales/:id(\\d+)', S, (req, res) => {
     ${shipped ? '' : `<form class="panel" data-api="/api/seller/sales/${s.id}/void" data-reload><h3>Void this record</h3><p class="small muted">For an accidental record. It stays in your history, and the item is <strong>paused</strong>, not re-listed; resume it from Inventory if it is really still for sale.</p><label for="vr">Reason</label><input id="vr" name="reason" required minlength="5" maxlength="300"><button class="btn danger" type="submit" style="margin-top:8px" >Void record</button></form>`}`}
     <div class="panel"><h3>History</h3><ul class="timeline">${events.map((e) => `<li><strong>${esc(e.action.replace(/_/g, ' '))}</strong> <span class="muted small">${new Date(e.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')}</span></li>`).join('') || '<li class="muted">No changes recorded since this record was created.</li>'}</ul></div>
   </aside></div>`;
-  wrap(req, res, 'Sale', body);
+  await wrap(req, res, 'Sale', body);
 });
-r.put('/api/seller/sales/:id(\\d+)', S, (req, res) => res.json(ES.correct(req.user, req.params.id, req.body)));
-r.post('/api/seller/sales/:id(\\d+)/confirm-payment', S, (req, res) => res.json(ES.confirmPayment(req.user, req.params.id)));
-r.put('/api/seller/sales/:id(\\d+)/fulfillment', S, (req, res) => res.json(ES.saveFulfillment(req.user, req.params.id, req.body)));
-r.post('/api/seller/sales/:id(\\d+)/ship', S, (req, res) => res.json(ES.ship(req.user, req.params.id, req.body)));
-r.put('/api/seller/sales/:id(\\d+)/tracking', S, (req, res) => res.json(ES.correctTracking(req.user, req.params.id, req.body)));
-r.post('/api/seller/sales/:id(\\d+)/void', S, (req, res) => res.json(ES.voidSale(req.user, req.params.id, req.body)));
+r.put('/api/seller/sales/:id(\\d+)', S, async (req, res) => res.json(await ES.correct(req.user, req.params.id, req.body)));
+r.post('/api/seller/sales/:id(\\d+)/confirm-payment', S, async (req, res) => res.json(await ES.confirmPayment(req.user, req.params.id)));
+r.put('/api/seller/sales/:id(\\d+)/fulfillment', S, async (req, res) => res.json(await ES.saveFulfillment(req.user, req.params.id, req.body)));
+r.post('/api/seller/sales/:id(\\d+)/ship', S, async (req, res) => res.json(await ES.ship(req.user, req.params.id, req.body)));
+r.put('/api/seller/sales/:id(\\d+)/tracking', S, async (req, res) => res.json(await ES.correctTracking(req.user, req.params.id, req.body)));
+r.post('/api/seller/sales/:id(\\d+)/void', S, async (req, res) => res.json(await ES.voidSale(req.user, req.params.id, req.body)));
 
 module.exports = { router: r };

@@ -10,11 +10,11 @@ const r = express.Router();
 const LONG_POLL_MS = 20000;
 
 // ---------- Pages ----------
-const shell = (req, res) => {
+const shell = async (req, res) => {
   const convId = req.params.id ? Number(req.params.id) : null;
   let active = null;
-  if (convId) { try { active = service.getConversation(req.user, convId); } catch { return res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Conversation not found', 'It may not exist, or it belongs to someone else.', ['/messages', 'Back to messages']) })); } }
-  const boot = { me: { id: req.user.id, name: req.user.display_name }, conversations: service.listConversations(req.user), cursor: service.cursorFor(req.user.id), active: convId, forcedTransport: ['polling', 'ws'].includes(req.query.transport) ? req.query.transport : null };
+  if (convId) { try { active = await service.getConversation(req.user, convId); } catch { return res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Conversation not found', 'It may not exist, or it belongs to someone else.', ['/messages', 'Back to messages']) })); } }
+  const boot = { me: { id: req.user.id, name: req.user.display_name }, conversations: await service.listConversations(req.user), cursor: await service.cursorFor(req.user.id), active: convId, forcedTransport: ['polling', 'ws'].includes(req.query.transport) ? req.query.transport : null };
   const body = `<div class="chat${convId ? ' has-active' : ''}" id="chat">
     <aside class="chat-list" aria-label="Conversations"><div class="chat-list-head"><h1>Messages</h1><span class="conn conn-list" data-state="connecting"><i></i><span>Connecting…</span></span></div><div id="conv-list" role="list"></div></aside>
     <section class="chat-thread" aria-label="Conversation">
@@ -28,14 +28,14 @@ const shell = (req, res) => {
       <div class="chat-empty" id="chat-empty" ${convId ? 'hidden' : ''}>${V.empty('Pick a conversation', 'Message a seller from any listing to start one.', ['/shop', 'Browse the shop'])}</div>
     </section></div>
     <script id="chat-boot" type="application/json">${JSON.stringify(boot).replace(/</g, '\\u003c')}</script>`;
-  res.send(V.layout({ user: req.user, path: '/messages', title: active ? `Chat with ${active.otherName}` : 'Messages', body, wide: true, scripts: '<script src="/chat.js" defer></script>' }));
+  res.send(await V.layout({ user: req.user, path: '/messages', title: active ? `Chat with ${active.otherName}` : 'Messages', body, wide: true, scripts: '<script src="/chat.js" defer></script>' }));
 };
 r.get('/messages', auth.requireUser, shell);
 r.get('/messages/:id(\\d+)', auth.requireUser, shell);
 
 // ---------- HTTP API (same service the WebSocket uses) ----------
-r.post('/api/chat/conversations', auth.requireUser, (req, res) => res.json({ id: service.startConversation(req.user, { listingId: req.body.listingId, sellerHandle: req.body.sellerHandle }) }));
-r.post('/api/chat/command', auth.requireUser, (req, res) => res.json({ ok: true, data: service.runCommand(req.user, req.body) }));
+r.post('/api/chat/conversations', auth.requireUser, async (req, res) => res.json({ id: await service.startConversation(req.user, { listingId: req.body.listingId, sellerHandle: req.body.sellerHandle }) }));
+r.post('/api/chat/command', auth.requireUser, async (req, res) => res.json({ ok: true, data: await service.runCommand(req.user, req.body) }));
 
 /**
  * Long-polling fallback. GET /api/chat/sync?after=<cursor>&wait=<seconds>
@@ -50,13 +50,13 @@ r.get('/api/chat/sync', auth.requireUser, wrap(async (req, res) => {
   const unsub = getHub().subscribe(req.user.id, (ev) => { if (ev.t === 'typing') ephemeral.push(ev); wake(); });
   let gone = false; req.on('close', () => { gone = true; wake(); });
   try {
-    let out = service.sync(req.user, after);
+    let out = await service.sync(req.user, after);
     if (wait && !out.messages.length && !ephemeral.length) {
       await Promise.race([woke, new Promise((resolve) => setTimeout(resolve, Math.min(wait, LONG_POLL_MS)))]);
       if (gone) return;
       // the session may have ended (logout/ban) while the request was held: re-validate before answering
-      if (!auth.userFromRequest(req)) return res.status(401).json({ error: 'Please log in' });
-      out = service.sync(req.user, after);
+      if (!await auth.userFromRequest(req)) return res.status(401).json({ error: 'Please log in' });
+      out = await service.sync(req.user, after);
     }
     res.json({ ...out, typing: ephemeral });
   } finally { unsub(); }

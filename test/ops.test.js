@@ -14,7 +14,7 @@ const config = require('../src/config');
 const { backup } = require('../scripts/backup');
 const { assertProductionConfig } = require('../src/server');
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 test('migration 3 upgrades a populated v2 database without losing or rewriting history', () => {
@@ -34,10 +34,12 @@ test('migration 3 upgrades a populated v2 database without losing or rewriting h
   old.close();
   const out = JSON.parse(execFileSync(process.execPath, ['-e', `
     const {q}=require('./src/db');
-    const o=q.get('SELECT * FROM orders WHERE id=1');
-    let del='none'; try{q.run('DELETE FROM orders WHERE id=1')}catch(e){del=e.message}
-    console.log(JSON.stringify({v:q.get('PRAGMA user_version').user_version, order:{status:o.status,mode:o.payment_mode,total:o.total_cents,fee:o.platform_fee_cents,payout:o.seller_payout_cents,snap:o.snapshot_json},
-      ledger:q.all('SELECT amount_cents a FROM ledger'), wd:q.all('SELECT status s FROM withdrawals'), ship:q.all('SELECT id,shipping_payer p FROM listings ORDER BY id'), ck:q.get('SELECT mode FROM checkouts WHERE id=1').mode, del}));`], {
+    (async()=>{
+    const o=await q.get('SELECT * FROM orders WHERE id=1');
+    let del='none'; try{await q.run('DELETE FROM orders WHERE id=1')}catch(e){del=e.message}
+    console.log(JSON.stringify({v:(await q.get('PRAGMA user_version')).user_version, order:{status:o.status,mode:o.payment_mode,total:o.total_cents,fee:o.platform_fee_cents,payout:o.seller_payout_cents,snap:o.snapshot_json},
+      ledger:await q.all('SELECT amount_cents a FROM ledger'), wd:await q.all('SELECT status s FROM withdrawals'), ship:await q.all('SELECT id,shipping_payer p FROM listings ORDER BY id'), ck:(await q.get('SELECT mode FROM checkouts WHERE id=1')).mode, del}));
+    })();`], {
     cwd: path.resolve(__dirname, '..'), env: { ...process.env, PAIRPLUG_DB: file, PAIRPLUG_UPLOADS: path.join(dir, 'up') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
   assert.equal(out.v, MIGRATIONS.length);
   assert.deepEqual(out.order, { status: 'released', mode: 'platform', total: 4700, fee: 400, payout: 4134, snap: null }, 'historical order is untouched and marked as a PairPlug-processed (platform) order');
@@ -53,8 +55,8 @@ test('backup: consistent snapshot, integrity-checked, incremental photos, retent
   const a = backup({ dir, keep: 1, stamp: '2030-01-01-00-00-00' });
   assert.equal(a.integrity, 'ok'); assert.ok(a.photosCopied >= 1);
   const snap = new DatabaseSync(a.database, { readOnly: true });
-  assert.equal(snap.prepare('SELECT COUNT(*) n FROM users').get().n, q.get('SELECT COUNT(*) n FROM users').n);
-  assert.equal(snap.prepare('SELECT COUNT(*) n FROM listings').get().n, q.get('SELECT COUNT(*) n FROM listings').n);
+  assert.equal(snap.prepare('SELECT COUNT(*) n FROM users').get().n, (await q.get('SELECT COUNT(*) n FROM users')).n);
+  assert.equal(snap.prepare('SELECT COUNT(*) n FROM listings').get().n, (await q.get('SELECT COUNT(*) n FROM listings')).n);
   assert.equal(snap.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length); snap.close();
   const b = backup({ dir, keep: 1, stamp: '2030-01-02-00-00-00' });
   assert.equal(b.photosCopied, 0, 'uploads are copied once');
@@ -117,15 +119,17 @@ test('migration 4 on a populated v3 database with MORE sellers than the cap: not
   old.close();
   const out = JSON.parse(execFileSync(process.execPath, ['-e', `
     const {q}=require('./src/db');
-    let blocked='no'; try{q.run("INSERT INTO users(email,password_hash,display_name,is_seller,handle,store_name,country,created_at) VALUES('n@x.test','h','N',1,'nn','NN','US',1)")}catch(e){blocked=e.message}
-    let upgrade='no'; try{q.run('UPDATE users SET is_seller=1, handle=?, store_name=?, country=? WHERE id=6','bb','BB','US')}catch(e){upgrade=e.message}
-    console.log(JSON.stringify({v:q.get('PRAGMA user_version').user_version, sellers:q.get('SELECT COUNT(*) n FROM users WHERE is_seller=1').n, users:q.get('SELECT COUNT(*) n FROM users').n, cap:q.get("SELECT value FROM settings WHERE key='seller_cap'").value, blocked, upgrade}))`],
+    (async()=>{
+    let blocked='no'; try{await q.run("INSERT INTO users(email,password_hash,display_name,is_seller,handle,store_name,country,created_at) VALUES('n@x.test','h','N',1,'nn','NN','US',1)")}catch(e){blocked=e.message}
+    let upgrade='no'; try{await q.run('UPDATE users SET is_seller=1, handle=?, store_name=?, country=? WHERE id=6','bb','BB','US')}catch(e){upgrade=e.message}
+    console.log(JSON.stringify({v:(await q.get('PRAGMA user_version')).user_version, sellers:(await q.get('SELECT COUNT(*) n FROM users WHERE is_seller=1')).n, users:(await q.get('SELECT COUNT(*) n FROM users')).n, cap:(await q.get("SELECT value FROM settings WHERE key='seller_cap'")).value, blocked, upgrade}))
+    })();`],
     { cwd: path.resolve(__dirname, '..'), env: { ...process.env, PAIRPLUG_DB: file, PAIRPLUG_UPLOADS: path.join(dir, 'up') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
   assert.equal(out.v, MIGRATIONS.length); assert.equal(out.sellers, 5, 'existing sellers preserved'); assert.equal(out.users, 6); assert.equal(out.cap, '3');
   assert.match(out.blocked, /seller/i, 'a new seller is refused while over the cap'); assert.match(out.upgrade, /seller/i, 'a buyer cannot become a seller while over the cap');
 });
 
-test('backup files are owner-only; restore verifies integrity and schema version, refuses to overwrite without --force, keeps a pre-restore copy', () => {
+test('backup files are owner-only; restore verifies integrity and schema version, refuses to overwrite without --force, keeps a pre-restore copy', async () => {
   const { restore } = require('../scripts/restore');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-rst-'));
   const a = backup({ dir, stamp: '2031-01-01-00-00-00' });
@@ -134,7 +138,7 @@ test('backup files are owner-only; restore verifies integrity and schema version
   const r = restore({ snapshot: a.database, dbFile: target, uploadDir: up, photosDir: path.join(dir, 'uploads'), supportedVersion: MIGRATIONS.length });
   assert.equal(r.integrity, 'ok'); assert.equal(r.schemaVersion, MIGRATIONS.length); assert.ok(r.photosRestored >= 0);
   const back = new DatabaseSync(target, { readOnly: true });
-  assert.equal(back.prepare('SELECT COUNT(*) n FROM users').get().n, q.get('SELECT COUNT(*) n FROM users').n); back.close();
+  assert.equal(back.prepare('SELECT COUNT(*) n FROM users').get().n, (await q.get('SELECT COUNT(*) n FROM users')).n); back.close();
   assert.throws(() => restore({ snapshot: a.database, dbFile: target, uploadDir: up, supportedVersion: MIGRATIONS.length }), /refusing to overwrite/);
   const forced = restore({ snapshot: a.database, dbFile: target, uploadDir: up, force: true, supportedVersion: MIGRATIONS.length });
   assert.ok(fs.existsSync(forced.preRestore), 'previous database kept');

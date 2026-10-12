@@ -210,9 +210,9 @@ function index() {
 }
 const accepted = (u) => Boolean(u && u.terms_version === VERSION && u.terms_accepted_at);
 /** Record an explicit acceptance of the current policy set. Only ever called from an action the user took. */
-function recordAcceptance(userId) {
+async function recordAcceptance(userId) {
   const { q, now } = require('./db');
-  q.run('UPDATE users SET terms_version = ?, terms_accepted_at = ? WHERE id = ?', VERSION, now(), Number(userId));
+  await q.run('UPDATE users SET terms_version = ?, terms_accepted_at = ? WHERE id = ?', VERSION, now(), Number(userId));
 }
 /** Small inline link strip used at sign-up, listing, checkout and in the footer. */
 const links = (keys = ['terms', 'privacy', 'payments', 'rules']) => keys.map((k) => link(k)).join(' · ');

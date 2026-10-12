@@ -23,9 +23,9 @@ const roleLabel = (u) => (u.is_admin ? 'administrator' : u.is_moderator ? 'moder
 const stateBadges = (u) => `${u.banned ? '<span class="pill s-disputed">banned</span> ' : ''}${u.selling_restricted_at ? '<span class="pill s-pending_payment">selling restricted</span> ' : ''}`;
 
 // ------------------------------------------------------------------ setup link (public, individual, single-use)
-r.get('/moderator/setup/:token', (req, res) => {
+r.get('/moderator/setup/:token', async (req, res) => {
   noStore(res); auth.rateLimit(`modsetup-view:${req.ip}`, 60, 3600);
-  const inv = M.lookup(req.params.token);
+  const inv = await M.lookup(req.params.token);
   const body = !inv ? V.empty('This setup link is invalid, expired or already used', 'Ask a PairPlug administrator for a new one.', ['/', 'Home'])
     : `<div class="narrow panel form-wide" style="max-width:520px"><h1>Set up your moderator account</h1>
     <p class="muted small">For <strong>${esc(inv.email)}</strong> · link expires ${when(inv.expires_at)} UTC. You choose your own password; nobody else sees it. This is a personal account: do not share it.</p>
@@ -34,21 +34,21 @@ r.get('/moderator/setup/:token', (req, res) => {
       <label for="p">Password <span class="opt">(${M.MIN_PASSWORD}+ characters)</span></label><input id="p" name="password" type="password" autocomplete="new-password" minlength="${M.MIN_PASSWORD}" required>
       <label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="terms" required> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and have read the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
       <button class="btn block" style="margin-top:14px" type="submit">Create moderator account</button></form></div>`;
-  res.send(V.layout({ user: req.user, title: 'Moderator setup', body }));
+  res.send(await V.layout({ user: req.user, title: 'Moderator setup', body }));
 });
-r.post('/api/moderator/setup', (req, res) => {
+r.post('/api/moderator/setup', async (req, res) => {
   noStore(res); auth.rateLimit(`modsetup:${req.ip}`, 20, 3600);
-  const uid = M.accept(String(req.body.token || ''), req.body);
-  auth.createSession(res, uid);
+  const uid = await M.accept(String(req.body.token || ''), req.body);
+  await auth.createSession(res, uid);
   res.json({ ok: true });
 });
 
 // ------------------------------------------------------------------ interface
-r.get('/moderation', S, (req, res) => {
-  const open = q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')").n;
-  const restricted = q.get('SELECT COUNT(*) n FROM users WHERE selling_restricted_at IS NOT NULL AND banned = 0').n, banned = q.get('SELECT COUNT(*) n FROM users WHERE banned = 1').n;
-  const log = M.recentActions(8);
-  adminPage(req, res, { title: 'Moderation', body: `<h1>Moderation</h1>
+r.get('/moderation', S, async (req, res) => {
+  const open = (await q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')")).n;
+  const restricted = (await q.get('SELECT COUNT(*) n FROM users WHERE selling_restricted_at IS NOT NULL AND banned = 0')).n, banned = (await q.get('SELECT COUNT(*) n FROM users WHERE banned = 1')).n;
+  const log = await M.recentActions(8);
+  await adminPage(req, res, { title: 'Moderation', body: `<h1>Moderation</h1>
     <div class="stats">${stat('Open cases', open)}${stat('Selling restricted', restricted)}${stat('Banned accounts', banned)}</div>
     <form class="panel" action="/moderation/users" style="margin:12px 0"><label for="uq">Find a user <span class="opt">(name, store, handle or email)</span></label><div class="row" style="align-items:end"><div><input id="uq" name="q" minlength="2" required></div><div><button class="btn" type="submit">Search</button></div></div></form>
     <p><a class="btn ghost" href="/admin/cases">Review cases →</a> <a class="btn ghost" href="/admin/risk">Sellers reported by several buyers →</a></p>
@@ -56,15 +56,15 @@ r.get('/moderation', S, (req, res) => {
     <p class="small muted">Every ban, unban, restriction and reversal needs a reason and is recorded permanently. Email is not a case: the contact inbox is ${V.contactLink()} and reports sent there must be entered or investigated by hand.</p>` });
 });
 const actionTable = (rows) => (rows.length ? `<div class="tablewrap"><table><thead><tr><th>When (UTC)</th><th>By</th><th>Action</th><th>Account</th><th>Reason</th><th>Case</th></tr></thead><tbody>${rows.map((a) => `<tr><td>${when(a.created_at)}</td><td>${esc(a.actor)} <span class="muted small">${a.actor_role}</span></td><td>${label(a.action)}</td><td><a href="/moderation/users/${a.target_id}">${esc(a.targetName || '')}${a.handle ? ` @${esc(a.handle)}` : ''}</a></td><td>${esc(a.reason)}</td><td>${a.case_id ? `<a href="/admin/cases/${a.case_id}">#${a.case_id}</a>` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No moderation actions yet.</p>');
-r.get('/moderation/log', S, (req, res) => adminPage(req, res, { title: 'Moderation log', body: `<h1>Moderation log</h1><p class="small muted">Append-only. Showing the latest 200.</p>${actionTable(M.recentActions(200))}` }));
-r.get('/moderation/users', S, (req, res) => {
-  const term = String(req.query.q || ''), rows = M.searchUsers(term);
-  adminPage(req, res, { title: 'Find users', body: `<h1>Find users</h1><form class="panel" style="margin-bottom:12px"><label for="uq">Name, store, handle or email</label><div class="row" style="align-items:end"><div><input id="uq" name="q" value="${esc(term)}" minlength="2" required></div><div><button class="btn" type="submit">Search</button></div></div></form>
+r.get('/moderation/log', S, async (req, res) => await adminPage(req, res, { title: 'Moderation log', body: `<h1>Moderation log</h1><p class="small muted">Append-only. Showing the latest 200.</p>${actionTable(await M.recentActions(200))}` }));
+r.get('/moderation/users', S, async (req, res) => {
+  const term = String(req.query.q || ''), rows = await M.searchUsers(term);
+  await adminPage(req, res, { title: 'Find users', body: `<h1>Find users</h1><form class="panel" style="margin-bottom:12px"><label for="uq">Name, store, handle or email</label><div class="row" style="align-items:end"><div><input id="uq" name="q" value="${esc(term)}" minlength="2" required></div><div><button class="btn" type="submit">Search</button></div></div></form>
     ${term.length < 2 ? '<p class="muted">Enter at least 2 characters.</p>' : rows.length ? `<div class="tablewrap"><table><thead><tr><th>User</th><th>Role</th><th>Email (masked)</th><th>State</th><th>Joined</th></tr></thead><tbody>${rows.map((u) => `<tr><td><a href="/moderation/users/${u.id}">${esc(u.display_name)}</a>${u.handle ? ` <span class="muted small">@${esc(u.handle)}</span>` : ''}</td><td>${roleLabel(u)}</td><td class="muted">${esc(u.emailMasked)}</td><td>${stateBadges(u) || '—'}</td><td>${date(u.created_at)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No matching users', 'Try a different name, store or handle.')}` });
 });
-r.get('/moderation/users/:id(\\d+)', S, (req, res) => {
-  const v = M.userView(req.params.id);
-  if (!v) return adminPage(req, res, { title: 'Not found', body: V.empty('User not found', '', ['/moderation/users', 'Find users']) });
+r.get('/moderation/users/:id(\\d+)', S, async (req, res) => {
+  const v = await M.userView(req.params.id);
+  if (!v) return await adminPage(req, res, { title: 'Not found', body: V.empty('User not found', '', ['/moderation/users', 'Find users']) });
   const u = v.user, me = req.user, staffTarget = u.is_admin || u.is_moderator, self = u.id === me.id;
   const blocked = self ? 'This is your own account.' : staffTarget && !me.is_admin ? 'Moderators cannot act on administrator or moderator accounts.' : '';
   const adminBan = u.banned && !me.is_admin && (!u.bannedBy || u.bannedBy.admin) ? 'This ban was placed by an administrator (or predates the moderation log); only an administrator can lift it.' : '';
@@ -79,7 +79,7 @@ r.get('/moderation/users/:id(\\d+)', S, (req, res) => {
       if(reason.length<5){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent='Write a reason of at least 5 characters first.';return}
       if(!confirm('Really '+T[b.dataset.mod]+' this account?\\n\\nReason: '+reason))return;
       try{await pp.api('POST','/api/moderation/users/${u.id}/'+b.dataset.mod,{reason:reason,caseId:f.caseId.value||null});location.href='/moderation/users/${u.id}?done='+b.dataset.mod}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})})()</script>`;
-  const risk = u.is_seller ? F.sellerRisk(u.id) : null, maxDays = PP.maxSuspensionDays();
+  const risk = u.is_seller ? await F.sellerRisk(u.id) : null, maxDays = PP.maxSuspensionDays();
   const suspendForm = blocked || u.banned || u.selling_restricted_at || !u.is_seller ? '' : `<form id="suspform" class="panel" aria-labelledby="susp-h"><h3 id="susp-h">Temporary selling suspension (up to ${maxDays} day${maxDays === 1 ? '' : 's'})</h3>
     <p class="small muted" style="margin-top:0">For payment-link or checkout-accuracy violations after a documented review. Never automatic. ${risk ? `This seller has <strong>${risk.reporters}</strong> different reporter(s), ${risk.mismatch} payment-mismatch report(s) and ${risk.suspensions} earlier timed suspension(s) on record.${risk.reporters <= 1 ? ' <strong>Only one reporter so far: check the order and the seller\'s side before suspending.</strong>' : ''}` : ''} The seller keeps their login, can handle existing orders, and can appeal.</p>
     <div class="row"><div><label for="sd">Days</label><select id="sd" name="days">${Array.from({ length: maxDays }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select></div><div><label for="sc2">Case number <span class="opt">(required)</span></label><input id="sc2" name="caseId" inputmode="numeric" pattern="[0-9]+" required></div></div>
@@ -90,7 +90,7 @@ r.get('/moderation/users/:id(\\d+)', S, (req, res) => {
       if(!confirm('Suspend selling for '+d.days+' day(s)?\\n\\nCase #'+d.caseId+'\\nReason: '+d.reason))return;d.confirm=true;
       try{await pp.api('POST','/api/moderation/users/${u.id}/suspend',d);location.href='/moderation/users/${u.id}?done=suspend'}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>`;
   const done = { suspend: 'Selling suspended for the chosen number of days.', ban: 'Account banned. Sessions ended and listings paused.', unban: 'Account unbanned.', restrict: 'Selling restricted.', lift: 'Selling restriction lifted.' }[req.query.done];
-  adminPage(req, res, { title: u.display_name, body: `<p><a href="/moderation/users">← Find users</a></p><h1>${esc(u.display_name)} ${stateBadges(u)}</h1>
+  await adminPage(req, res, { title: u.display_name, body: `<p><a href="/moderation/users">← Find users</a></p><h1>${esc(u.display_name)} ${stateBadges(u)}</h1>
     ${done ? `<div class="panel notice strong" role="status">${esc(done)}</div>` : ''}
     <p class="muted small">${roleLabel(u)}${u.handle ? ` · @${esc(u.handle)}` : ''}${u.store_name ? ` · store “${esc(u.store_name)}”` : ''} · joined ${date(u.created_at)} · ${esc(u.emailMasked)} · ${v.orders.asBuyer} order(s) as buyer, ${v.orders.asSeller} as seller${u.handle && !u.banned && !u.selling_restricted_at ? ` · <a href="/s/${esc(u.handle)}" target="_blank" rel="noopener">public profile ↗</a>` : ''}</p>
     ${u.banned ? `<div class="panel notice"><strong>Banned</strong> ${when(u.banned_at)} UTC${u.bannedBy ? ` by ${esc(u.bannedBy.name)} (${u.bannedBy.admin ? 'administrator' : 'moderator'})` : ' (before the moderation log existed)'}.<br>Reason: ${esc(u.banned_reason || 'not recorded')}</div>` : ''}
@@ -101,27 +101,27 @@ r.get('/moderation/users/:id(\\d+)', S, (req, res) => {
     <aside><div class="panel"><h3>Reports &amp; cases</h3>${v.cases.length ? `<ul class="plain">${v.cases.map((c) => `<li><a href="/admin/cases/${c.id}">Case #${c.id}</a> · ${label(c.kind)} · ${label(c.status)} · they are the ${c.role}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}</div>
       <div class="panel"><h3>Moderation history</h3>${v.actions.length ? `<ul class="plain">${v.actions.map((a) => `<li>${when(a.created_at)} · <strong>${label(a.action)}</strong> by ${esc(a.actor)} (${a.actor_role}) — ${esc(a.reason)}${a.case_id ? ` · case #${a.case_id}` : ''}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}</div></aside></div>` });
 });
-const act = (fn) => (req, res) => { limit(req); const o = fn(req.user, req.params.id, req.body.reason, req.body.caseId); res.set('Cache-Control', 'no-store').json({ ok: true, ...(o || {}) }); };
+const act = (fn) => async (req, res) => { limit(req); const o = await fn(req.user, req.params.id, req.body.reason, req.body.caseId); res.set('Cache-Control', 'no-store').json({ ok: true, ...(o || {}) }); };
 r.post('/api/moderation/users/:id(\\d+)/ban', S, act(M.ban));
 r.post('/api/moderation/users/:id(\\d+)/unban', S, act(M.unban));
 r.post('/api/moderation/users/:id(\\d+)/restrict', S, act(M.restrictSelling));
 r.post('/api/moderation/users/:id(\\d+)/lift', S, act(M.liftRestriction));
-r.post('/api/moderation/users/:id(\\d+)/suspend', S, (req, res) => { limit(req); const o = M.suspendSelling(req.user, req.params.id, { days: req.body.days, reason: req.body.reason, caseId: req.body.caseId, confirm: req.body.confirm }); res.set('Cache-Control', 'no-store').json({ ok: true, ...o }); });
+r.post('/api/moderation/users/:id(\\d+)/suspend', S, async (req, res) => { limit(req); const o = await M.suspendSelling(req.user, req.params.id, { days: req.body.days, reason: req.body.reason, caseId: req.body.caseId, confirm: req.body.confirm }); res.set('Cache-Control', 'no-store').json({ ok: true, ...o }); });
 
 // ------------------------------------------------------------------ payment-link review (staff): mistakes, suspicious links, repeated violations, appeals
-r.get('/moderation/payment-links', S, (req, res) => {
-  const changes = q.all(`SELECT a.id, a.action, a.detail, a.created_at, a.target_id, l.title, u.handle FROM audit_log a LEFT JOIN listings l ON l.id = CAST(a.target_id AS INTEGER) LEFT JOIN users u ON u.id = l.seller_id
+r.get('/moderation/payment-links', S, async (req, res) => {
+  const changes = await q.all(`SELECT a.id, a.action, a.detail, a.created_at, a.target_id, l.title, u.handle FROM audit_log a LEFT JOIN listings l ON l.id = CAST(a.target_id AS INTEGER) LEFT JOIN users u ON u.id = l.seller_id
     WHERE a.action IN ('listing_payment_link_changed','listing_payment_total_acknowledged','listing_payment_ack_cleared') ORDER BY a.id DESC LIMIT 100`);
-  const mism = q.all("SELECT c.id, c.status, c.created_at, c.order_id, s.handle, s.id sid FROM cases c JOIN users s ON s.id = c.subject_user_id WHERE c.payment_mismatch = 1 ORDER BY c.id DESC LIMIT 50");
-  const repeat = q.all(`SELECT u.id, u.handle, u.selling_restricted_at, u.selling_restricted_until,
+  const mism = await q.all("SELECT c.id, c.status, c.created_at, c.order_id, s.handle, s.id sid FROM cases c JOIN users s ON s.id = c.subject_user_id WHERE c.payment_mismatch = 1 ORDER BY c.id DESC LIMIT 50");
+  const repeat = await q.all(`SELECT u.id, u.handle, u.selling_restricted_at, u.selling_restricted_until,
       (SELECT COUNT(DISTINCT reporter_id) FROM cases c WHERE c.subject_user_id = u.id AND c.payment_mismatch = 1) mismatch_reporters,
       (SELECT COUNT(*) FROM audit_log a WHERE a.action = 'seller_suspended_temporarily' AND a.target_id = CAST(u.id AS TEXT)) suspensions
     FROM users u WHERE u.is_seller = 1 AND ((SELECT COUNT(DISTINCT reporter_id) FROM cases c WHERE c.subject_user_id = u.id AND c.payment_mismatch = 1) >= 2 OR (SELECT COUNT(*) FROM audit_log a WHERE a.action = 'seller_suspended_temporarily' AND a.target_id = CAST(u.id AS TEXT)) >= 1) ORDER BY mismatch_reporters DESC, suspensions DESC LIMIT 50`);
-  const appeals = q.all("SELECT c.id, c.status, c.created_at, s.handle FROM cases c JOIN users s ON s.id = c.subject_user_id WHERE c.kind = 'seller_issue' AND c.reporter_id = c.subject_user_id ORDER BY (c.status IN ('open','awaiting_seller','under_review')) DESC, c.id DESC LIMIT 50");
-  const unconfirmed = q.all("SELECT l.id, l.title, s.handle FROM listings l JOIN users s ON s.id = l.seller_id WHERE l.status = 'active' AND l.payment_url IS NOT NULL AND l.payment_total_ack_cents IS NULL ORDER BY l.id DESC LIMIT 100");
+  const appeals = await q.all("SELECT c.id, c.status, c.created_at, s.handle FROM cases c JOIN users s ON s.id = c.subject_user_id WHERE c.kind = 'seller_issue' AND c.reporter_id = c.subject_user_id ORDER BY (c.status IN ('open','awaiting_seller','under_review')) DESC, c.id DESC LIMIT 50");
+  const unconfirmed = await q.all("SELECT l.id, l.title, s.handle FROM listings l JOIN users s ON s.id = l.seller_id WHERE l.status = 'active' AND l.payment_url IS NOT NULL AND l.payment_total_ack_cents IS NULL ORDER BY l.id DESC LIMIT 100");
   const det = (d) => { try { const o = JSON.parse(d || '{}'); return Object.entries(o).map(([k, v]) => `${k}: ${v === null ? '—' : v}`).join(' · '); } catch { return d || ''; } };
   const tbl = (head, rows) => (rows.length ? `<div class="tablewrap"><table><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '<p class="muted small">Nothing to show.</p>');
-  adminPage(req, res, { title: 'Payment-link review', body: `<h1>Payment-link review</h1>
+  await adminPage(req, res, { title: 'Payment-link review', body: `<h1>Payment-link review</h1>
     <p class="small muted">Beta rule: Stripe-hosted links only, charging the listing price plus disclosed shipping (<code>docs/PAYMENT_LINK_POLICY.md</code>). PairPlug checks the link's address but <strong>cannot see the amount Stripe charges</strong>; nothing here is automatic. Suspensions last at most ${PP.maxSuspensionDays()} day(s), need a linked case and a documented reason, and can be appealed.</p>
     <h2>Payment-mismatch reports (${mism.length})</h2>${tbl(['Case', 'Seller', 'Order', 'Status', 'Reported (UTC)'], mism.map((c) => `<tr><td><a href="/admin/cases/${c.id}">#${c.id}</a></td><td><a href="/moderation/users/${c.sid}">@${esc(c.handle)}</a></td><td>#${c.order_id || '—'}</td><td>${label(c.status)}</td><td>${when(c.created_at)}</td></tr>`))}
     <h2>Possible repeat violations</h2>${tbl(['Seller', 'Different buyers reporting a mismatch', 'Earlier timed suspensions', 'Now'], repeat.map((s) => `<tr><td><a href="/moderation/users/${s.id}">@${esc(s.handle)}</a></td><td class="num">${s.mismatch_reporters}</td><td class="num">${s.suspensions}</td><td>${s.selling_restricted_at ? `restricted${s.selling_restricted_until ? ` until ${when(s.selling_restricted_until)}` : ''}` : '—'}</td></tr>`))}
@@ -131,9 +131,9 @@ r.get('/moderation/payment-links', S, (req, res) => {
 });
 
 // ------------------------------------------------------------------ administrator-only: moderator slots
-r.get('/admin/moderators', A, (req, res) => {
-  const s = M.slots(), ro = M.roster(), st = (i) => (i.used_at ? 'used' : i.revoked_at ? 'revoked' : i.expires_at <= now() ? 'expired' : 'pending');
-  adminPage(req, res, { title: 'Moderators', body: `<h1>Moderators</h1>
+r.get('/admin/moderators', A, async (req, res) => {
+  const s = await M.slots(), ro = await M.roster(), st = (i) => (i.used_at ? 'used' : i.revoked_at ? 'revoked' : i.expires_at <= now() ? 'expired' : 'pending');
+  await adminPage(req, res, { title: 'Moderators', body: `<h1>Moderators</h1>
     <div class="stats">${stat('Moderator slots', `${s.active + s.pending} / ${s.cap}`, 'active moderators plus unused setup links')}${stat('Active moderators', s.active)}${stat('Unused setup links', s.pending)}${stat('Free slots', s.available)}</div>
     <div class="panel form-wide" style="margin-top:16px"><h3>Create a setup link</h3><p class="small muted">Creates one individual, single-use link (valid ${M.TTL_HOURS} hours) for a <strong>new</strong> email address. PairPlug does <strong>not</strong> email it: copy it and send it to that person yourself. Only a hash is stored, so it is shown once. The person chooses their own password.</p>
       <form id="mform" class="row" style="align-items:end"><div><label for="me">Moderator's email</label><input id="me" name="email" type="email" required></div><div><label for="mn">Note <span class="opt">(private)</span></label><input id="mn" name="note" maxlength="200"></div><div><button class="btn" type="submit"${s.available ? '' : ' disabled'}>Create setup link</button></div></form><div id="mout" aria-live="polite"></div></div>
@@ -142,25 +142,25 @@ r.get('/admin/moderators', A, (req, res) => {
     <script>document.getElementById('mform').addEventListener('submit',async e=>{e.preventDefault();var f=e.target,o=document.getElementById('mout');o.textContent='';try{var r=await pp.api('POST','/api/admin/moderators/invite',Object.fromEntries(new FormData(f)));o.innerHTML='<div class="panel notice strong" style="margin-top:12px"><strong>Copy this link now — it will not be shown again:</strong><p style="word-break:break-all;user-select:all"></p></div>';o.querySelector('p').textContent=r.link;f.reset()}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}});
     document.querySelectorAll('[data-deact]').forEach(b=>b.addEventListener('click',async()=>{var why=prompt('Reason for deactivating this moderator (recorded):');if(!why)return;try{await pp.api('POST','/api/admin/moderators/'+b.dataset.deact+'/deactivate',{reason:why});location.reload()}catch(x){alert(x.message)}}))</script>` });
 });
-r.post('/api/admin/moderators/invite', A, (req, res) => {
+r.post('/api/admin/moderators/invite', A, async (req, res) => {
   auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600);
-  const out = M.invite(req.user, { email: req.body.email, note: req.body.note });
+  const out = await M.invite(req.user, { email: req.body.email, note: req.body.note });
   res.set('Cache-Control', 'no-store').json({ ok: true, id: out.id, link: out.link, expiresAt: out.expiresAt });
 });
-r.post('/api/admin/moderators/invites/:id(\\d+)/revoke', A, (req, res) => { M.revokeInvite(req.user, req.params.id); res.json({ ok: true }); });
-r.post('/api/admin/moderators/:id(\\d+)/deactivate', A, (req, res) => { auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600); M.deactivate(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
+r.post('/api/admin/moderators/invites/:id(\\d+)/revoke', A, async (req, res) => { await M.revokeInvite(req.user, req.params.id); res.json({ ok: true }); });
+r.post('/api/admin/moderators/:id(\\d+)/deactivate', A, async (req, res) => { auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600); await M.deactivate(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
 
 // ------------------------------------------------------------------ administrator-only: Account Management (one place for seller / moderator / buyer invitations)
 const inviteStatus = (i) => (i.used_at ? 'used' : i.revoked_at ? 'revoked' : i.expires_at <= now() ? 'expired' : 'pending');
-r.get('/admin/accounts', A, (req, res) => {
-  const inv = require('../invitations'), sl = inv.slots(), ms = M.slots();
+r.get('/admin/accounts', A, async (req, res) => {
+  const inv = require('../invitations'), sl = await inv.slots(), ms = await M.slots();
   const rows = [
-    ...q.all('SELECT i.id, i.kind role, i.email, i.created_at, i.expires_at, i.used_at, i.revoked_at, i.suggested_name, c.display_name creator FROM invitations i LEFT JOIN users c ON c.id = i.created_by ORDER BY i.id DESC LIMIT 100'),
-    ...q.all("SELECT m.id, 'moderator' role, m.email, m.created_at, m.expires_at, m.used_at, m.revoked_at, m.suggested_name, COALESCE(c.display_name, m.created_via) creator FROM moderator_invites m LEFT JOIN users c ON c.id = m.created_by ORDER BY m.id DESC LIMIT 100"),
+    ...await q.all('SELECT i.id, i.kind role, i.email, i.created_at, i.expires_at, i.used_at, i.revoked_at, i.suggested_name, c.display_name creator FROM invitations i LEFT JOIN users c ON c.id = i.created_by ORDER BY i.id DESC LIMIT 100'),
+    ...await q.all("SELECT m.id, 'moderator' role, m.email, m.created_at, m.expires_at, m.used_at, m.revoked_at, m.suggested_name, COALESCE(c.display_name, m.created_via) creator FROM moderator_invites m LEFT JOIN users c ON c.id = m.created_by ORDER BY m.id DESC LIMIT 100"),
   ].sort((a, b) => b.created_at - a.created_at).slice(0, 100);
-  const accounts = q.all('SELECT id, email, display_name, is_admin, is_moderator, is_seller, banned, created_at FROM users WHERE is_admin = 1 OR is_moderator = 1 OR is_seller = 1 ORDER BY id');
+  const accounts = await q.all('SELECT id, email, display_name, is_admin, is_moderator, is_seller, banned, created_at FROM users WHERE is_admin = 1 OR is_moderator = 1 OR is_seller = 1 ORDER BY id');
   const roleOf = (u) => [u.is_admin && 'owner/admin', u.is_moderator && 'moderator', u.is_seller && 'seller'].filter(Boolean).join(' + ');
-  adminPage(req, res, { title: 'Account management', body: `<h1>Account management</h1>
+  await adminPage(req, res, { title: 'Account management', body: `<h1>Account management</h1>
     <p class="small muted">Create real seller and moderator accounts on purpose, one at a time. Nothing is generated or seeded. Each person gets an individual, single-use, expiring setup link and chooses their <strong>own</strong> password; PairPlug stores only a hash of the link and never a password you typed for someone else. Links are <strong>not emailed</strong> (${require('../email').isConfigured() ? 'an email provider is configured, but invitations are still not sent automatically' : 'no email provider is configured'}): you copy the link and send it yourself.</p>
     <div class="stats">${stat('Seller slots used', `${sl.used + sl.liveInvites} / ${sl.cap}`, 'accounts + unused seller links')}${stat('Moderator slots used', `${ms.active + ms.pending} / ${ms.cap}`, 'accounts + unused links')}</div>
     <div class="panel form-wide" style="margin-top:16px"><h3>Create a setup link</h3>
@@ -176,15 +176,15 @@ r.get('/admin/accounts', A, (req, res) => {
       if(!confirm('Create a single-use '+d.role+' setup link for '+d.email+'?\\n\\nIt expires in '+(d.role==='moderator'?'72 hours':'${config.inviteTtlHours / 24} days')+' and is bound to that email. You will send it yourself.'))return;
       d.confirm=true;try{var r=await pp.api('POST','/api/admin/accounts/invite',d);o.innerHTML='<div class="panel notice strong" style="margin-top:12px"><strong>Copy this link now — it will not be shown again, and it is not emailed:</strong><p style="word-break:break-all;user-select:all"></p></div>';o.querySelector('p').textContent=r.link;f.reset()}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>` });
 });
-r.post('/api/admin/accounts/invite', A, (req, res) => {
+r.post('/api/admin/accounts/invite', A, async (req, res) => {
   auth.rateLimit(`acctinvite:${req.user.id}`, 30, 3600);
   const b = req.body || {};
   if (b.confirm !== true) throw new HttpError(422, 'Please confirm before creating a setup link.');
   let out;
-  if (b.role === 'moderator') out = M.invite(req.user, { email: b.email, note: b.note, suggestedName: b.name });
-  else if (b.role === 'seller' || b.role === 'buyer') out = require('../invitations').create(req.user, { kind: b.role, email: b.email, note: b.note, suggestedName: b.name });
+  if (b.role === 'moderator') out = await M.invite(req.user, { email: b.email, note: b.note, suggestedName: b.name });
+  else if (b.role === 'seller' || b.role === 'buyer') out = await require('../invitations').create(req.user, { kind: b.role, email: b.email, note: b.note, suggestedName: b.name });
   else throw new HttpError(422, 'Choose seller, moderator or buyer.');
-  require('../audit').audit(req.user, 'admin_account_invite', { type: 'account', detail: { role: b.role, email: String(b.email).toLowerCase().slice(0, 200) } });      // never the link
+  await require('../audit').audit(req.user, 'admin_account_invite', { type: 'account', detail: { role: b.role, email: String(b.email).toLowerCase().slice(0, 200) } });      // never the link
   res.set('Cache-Control', 'no-store').json({ ok: true, link: out.link, expiresAt: out.expiresAt });
 });
 

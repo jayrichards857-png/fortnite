@@ -20,7 +20,7 @@ const cfgIn = (env) => JSON.parse(execFileSync(process.execPath, ['-e', `
   console.log(JSON.stringify({onb:c.sellerOnboarding,signups:c.signups,mode:c.checkoutMode,host:c.host,prod:c.isProd,problems:assertProductionConfig(),release:c.releaseDate}))`],
   { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_DB: ':memory:', PAIRPLUG_UPLOADS: path.join(os.tmpdir(), 'pp-cfg-up'), ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
 
-test.before(() => H.start());
+test.before(async () => await H.start());
 test.after(() => H.stop());
 
 // ------------------------------------------------------------------ configuration fails closed
@@ -199,7 +199,7 @@ test('the payment destination is frozen at order time (editing the listing\'s li
   const l = await seller.post('/api/seller/listings', mk({ payment_url: 'https://buy.stripe.com/test_ORIGINAL_one', payment_amount_ack: true, quantity: 2 }));
   assert.equal(l.status, 200);
   const o = (await buy(buyer, l.json.id)).json.orderId;
-  assert.equal(JSON.parse(q.get('SELECT snapshot_json s FROM orders WHERE id = ?', o).s).paymentLink.url, 'https://buy.stripe.com/test_ORIGINAL_one');
+  assert.equal(JSON.parse((await q.get('SELECT snapshot_json s FROM orders WHERE id = ?', o)).s).paymentLink.url, 'https://buy.stripe.com/test_ORIGINAL_one');
   const edit = await seller.put(`/api/seller/listings/${l.json.id}`, mk({ payment_url: 'https://buy.stripe.com/test_DIFFERENT_prod', payment_amount_ack: true, payment_ack_total_cents: 2400, payment_ack_url: 'https://buy.stripe.com/test_DIFFERENT_prod', quantity: 2 })); assert.equal(edit.status, 200, edit.text);
   const r = await buyer.get(`/orders/${o}/pay`);
   assert.equal(r.status, 302); assert.equal(new URL(r.headers.get('location')).pathname, '/test_ORIGINAL_one');
@@ -213,12 +213,12 @@ test('invariants: nothing becomes paid/sold without the seller; no PairPlug mone
   await buyer.get(`/orders/${o}/pay`); await buyer.post(`/api/orders/${o}/claim-paid`); await new H.Client().get(`/orders/${o}/pay`);
   await buyer.post(`/api/orders/${o}/confirm`); await buyer.post(`/api/orders/${o}/received`);
   for (const c of [stranger, other]) { for (const u of [`/api/seller/orders/${o}/confirm-payment`, `/api/orders/${o}/claim-paid`, `/api/orders/${o}/cancel-purchase`, `/api/seller/orders/${o}/ship`]) assert.ok([401, 403, 404, 409, 422].includes((await c.post(u, { carrier: 'USPS', tracking: '9400111899223344' })).status), u); }
-  assert.equal(q.get('SELECT status FROM orders WHERE id = ?', o).status, 'pending_payment');
-  assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'reserved');
+  assert.equal((await q.get('SELECT status FROM orders WHERE id = ?', o)).status, 'pending_payment');
+  assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'reserved');
   await seller.post(`/api/seller/orders/${o}/confirm-payment`);
   for (const c of [stranger, other]) for (const u of [`/orders/${o}`, `/dashboard/orders/${o}`]) { const r = await c.get(u); assert.ok(r.status === 404 || r.status === 302 || r.status === 403, u); assert.doesNotMatch(r.text, /1 Main St|Austin/); }
-  assert.equal(q.get('SELECT COUNT(*) n FROM ledger').n, 0); assert.equal(q.get('SELECT COUNT(*) n FROM payments').n, 0); assert.equal(q.get('SELECT COUNT(*) n FROM refunds').n, 0);
-  assert.equal(q.get("SELECT COUNT(*) n FROM orders WHERE payment_mode = 'external' AND status NOT IN ('pending_payment','cancelled') AND payment_confirmed_at IS NULL").n, 0, 'no direct order past pending without a seller confirmation');
+  assert.equal((await q.get('SELECT COUNT(*) n FROM ledger')).n, 0); assert.equal((await q.get('SELECT COUNT(*) n FROM payments')).n, 0); assert.equal((await q.get('SELECT COUNT(*) n FROM refunds')).n, 0);
+  assert.equal((await q.get("SELECT COUNT(*) n FROM orders WHERE payment_mode = 'external' AND status NOT IN ('pending_payment','cancelled') AND payment_confirmed_at IS NULL")).n, 0, 'no direct order past pending without a seller confirmation');
 });
 
 // ------------------------------------------------------------------ concurrency on a single order
@@ -228,21 +228,21 @@ test('race: confirm / reject / buyer-cancel / expiry-sweep fired together leave 
   for (let round = 0; round < 8; round++) {
     const seller = await H.newSeller('Race'), buyer = await H.newUser('RB');
     const id = await H.makeListing(seller, { payment_url: LINK, price: '30.00', shipping: '5.00', shipping_payer: 'buyer' });
-    const o = (await buy(buyer, id)).json.orderId, ck = q.get('SELECT checkout_id c FROM orders WHERE id = ?', o).c;
-    if (round % 2) q.run('UPDATE checkouts SET expires_at = 1 WHERE id = ?', ck);          // half the rounds are already past their hold
+    const o = (await buy(buyer, id)).json.orderId, ck = (await q.get('SELECT checkout_id c FROM orders WHERE id = ?', o)).c;
+    if (round % 2) await q.run('UPDATE checkouts SET expires_at = 1 WHERE id = ?', ck);          // half the rounds are already past their hold
     const results = await Promise.all([
       seller.post(`/api/seller/orders/${o}/confirm-payment`), seller.post(`/api/seller/orders/${o}/confirm-payment`),
       seller.post(`/api/seller/orders/${o}/reject-payment`), buyer.post(`/api/orders/${o}/cancel-purchase`), buyer.post(`/api/orders/${o}/claim-paid`),
-      Promise.resolve().then(() => payments.expireStaleCheckouts()),
+      Promise.resolve().then(async () => await payments.expireStaleCheckouts()),
     ]);
-    const order = q.get('SELECT status, payment_confirmed_at FROM orders WHERE id = ?', o), l = q.get('SELECT status, reserved_checkout_id r FROM listings WHERE id = ?', id), c = q.get('SELECT status FROM checkouts WHERE id = ?', ck);
+    const order = await q.get('SELECT status, payment_confirmed_at FROM orders WHERE id = ?', o), l = await q.get('SELECT status, reserved_checkout_id r FROM listings WHERE id = ?', id), c = await q.get('SELECT status FROM checkouts WHERE id = ?', ck);
     outcomes[order.status] = (outcomes[order.status] || 0) + 1;
     assert.ok(['paid', 'cancelled', 'pending_payment'].includes(order.status), order.status);
     if (order.status === 'paid') { assert.equal(l.status, 'sold'); assert.equal(c.status, 'paid'); assert.ok(order.payment_confirmed_at); assert.equal(results.slice(0, 2).filter((r) => r.status === 200 && !r.json.alreadyConfirmed).length, 1, 'exactly one confirm does the work (the repeat is reported as already confirmed)'); }
     else if (order.status === 'cancelled') { assert.equal(l.status, 'active'); assert.equal(l.r, null); assert.notEqual(c.status, 'paid'); assert.equal(order.payment_confirmed_at, null); }
     else { assert.equal(l.status, 'reserved'); assert.equal(c.status, 'pending'); }
-    assert.equal(q.get('SELECT COUNT(*) n FROM order_events WHERE order_id = ? AND to_status IN (\'paid\',\'cancelled\')', o).n, order.status === 'pending_payment' ? 0 : 1, 'exactly one terminal transition recorded');
-    assert.equal(q.get('SELECT COUNT(*) n FROM order_items WHERE listing_id = ?', id).n, 1);
+    assert.equal((await q.get('SELECT COUNT(*) n FROM order_events WHERE order_id = ? AND to_status IN (\'paid\',\'cancelled\')', o)).n, order.status === 'pending_payment' ? 0 : 1, 'exactly one terminal transition recorded');
+    assert.equal((await q.get('SELECT COUNT(*) n FROM order_items WHERE listing_id = ?', id)).n, 1);
   }
   assert.ok(Object.keys(outcomes).length >= 1);
 });

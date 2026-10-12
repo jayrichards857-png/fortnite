@@ -42,7 +42,7 @@ function dimensions(buf, ext = sniff(buf)) {
   return null;
 }
 
-function saveUpload(userId, buf) {
+async function saveUpload(userId, buf) {
   if (!buf || !buf.length) throw new HttpError(400, 'Empty upload');
   if (buf.length > config.limits.imageBytes) throw new HttpError(413, 'Image is larger than 5 MB');
   const ext = sniff(buf);
@@ -52,16 +52,16 @@ function saveUpload(userId, buf) {
   if (d.w > MAX_SIDE || d.h > MAX_SIDE || d.w * d.h > MAX_PIXELS) throw new HttpError(413, `Image dimensions are too large (max ${MAX_SIDE}px per side).`);
   const file = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
   fs.writeFileSync(path.join(config.uploadDir, file), buf);
-  q.run('INSERT INTO uploads(file, user_id, created_at) VALUES(?,?,?)', file, userId, now());
+  await q.run('INSERT INTO uploads(file, user_id, created_at) VALUES(?,?,?)', file, userId, now());
   return file;
 }
 
 /** Only filenames this user actually uploaded may be attached to a listing/dispute/storefront. */
-function ownedUploads(userId, files) {
+async function ownedUploads(userId, files) {
   const out = [];
   for (const f of files) {
     if (typeof f !== 'string' || !/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(f)) throw new HttpError(400, 'Invalid image reference');
-    if (!q.get('SELECT 1 x FROM uploads WHERE file = ? AND user_id = ?', f, userId)) throw new HttpError(403, 'Image not found in your uploads');
+    if (!await q.get('SELECT 1 x FROM uploads WHERE file = ? AND user_id = ?', f, userId)) throw new HttpError(403, 'Image not found in your uploads');
     out.push(f);
   }
   return out;
@@ -73,27 +73,27 @@ function storedDimensions(file) {
 }
 
 /** Is any record still pointing at this file? Order snapshots, evidence, listings and storefronts all count. */
-function isReferenced(file) {
+async function isReferenced(file) {
   const like = `%${file}%`;
   return Boolean(
-    q.get('SELECT 1 x FROM listing_images WHERE file = ?', file) || q.get('SELECT 1 x FROM order_items WHERE image = ?', file) ||
-    q.get('SELECT 1 x FROM dispute_evidence WHERE image = ?', file) || q.get('SELECT 1 x FROM case_events WHERE image = ?', file) ||
-    q.get('SELECT 1 x FROM storefronts WHERE draft_json LIKE ? OR published_json LIKE ?', like, like) ||
-    q.get('SELECT 1 x FROM orders WHERE snapshot_json LIKE ?', like));
+    await q.get('SELECT 1 x FROM listing_images WHERE file = ?', file) || await q.get('SELECT 1 x FROM order_items WHERE image = ?', file) ||
+    await q.get('SELECT 1 x FROM dispute_evidence WHERE image = ?', file) || await q.get('SELECT 1 x FROM case_events WHERE image = ?', file) ||
+    await q.get('SELECT 1 x FROM storefronts WHERE draft_json LIKE ? OR published_json LIKE ?', like, like) ||
+    await q.get('SELECT 1 x FROM orders WHERE snapshot_json LIKE ?', like));
 }
 /** Delete an uploaded file ONLY if nothing references it any more. Never throws. */
-function removeIfUnreferenced(file) {
+async function removeIfUnreferenced(file) {
   try {
-    if (!/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(file) || isReferenced(file)) return false;
+    if (!/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(file) || await isReferenced(file)) return false;
     fs.rmSync(path.join(config.uploadDir, file), { force: true });
-    q.run('DELETE FROM uploads WHERE file = ?', file);
+    await q.run('DELETE FROM uploads WHERE file = ?', file);
     return true;
   } catch { return false; }
 }
 /** Housekeeping: uploads that were never attached to anything and are older than the grace period. */
-function cleanupOrphanUploads(graceSeconds = 24 * 3600) {
+async function cleanupOrphanUploads(graceSeconds = 24 * 3600) {
   let n = 0;
-  for (const u of q.all('SELECT file FROM uploads WHERE created_at < ?', now() - graceSeconds)) if (removeIfUnreferenced(u.file)) n++;
+  for (const u of await q.all('SELECT file FROM uploads WHERE created_at < ?', now() - graceSeconds)) if (await removeIfUnreferenced(u.file)) n++;
   return n;
 }
 module.exports = { saveUpload, ownedUploads, sniff, dimensions, storedDimensions, isReferenced, removeIfUnreferenced, cleanupOrphanUploads };

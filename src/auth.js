@@ -23,21 +23,21 @@ function verifyPassword(pw, stored) {
 // Compared against when the email is unknown so response time doesn't reveal which emails exist.
 const DUMMY_HASH = hashPassword(crypto.randomBytes(8).toString('hex'));
 
-function createSession(res, userId) {
+async function createSession(res, userId) {
   const token = crypto.randomBytes(32).toString('base64url');
-  q.run('INSERT INTO sessions(token_hash, user_id, expires_at) VALUES(?,?,?)', sha(token), userId, now() + SESSION_TTL);
+  await q.run('INSERT INTO sessions(token_hash, user_id, expires_at) VALUES(?,?,?)', sha(token), userId, now() + SESSION_TTL);
   // Only a hash is stored server-side, so a DB leak doesn't leak live sessions.
   res.cookie('pp_session', token, { httpOnly: true, sameSite: 'lax', secure: config.isProd, maxAge: SESSION_TTL * 1000, path: '/' });
 }
-function destroySession(req, res) {
+async function destroySession(req, res) {
   const t = readCookie(req, 'pp_session');
-  if (t) q.run('DELETE FROM sessions WHERE token_hash = ?', sha(t));
+  if (t) await q.run('DELETE FROM sessions WHERE token_hash = ?', sha(t));
   res.clearCookie('pp_session', { path: '/' });
 }
 /** Sign out every session of a user except the one making this request (used after a password change). */
-function destroyOtherSessions(req, userId) {
+async function destroyOtherSessions(req, userId) {
   const t = readCookie(req, 'pp_session');
-  q.run('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', userId, t ? sha(t) : '');
+  await q.run('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', userId, t ? sha(t) : '');
 }
 function readCookie(req, name) {
   const m = String(req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(name + '='));
@@ -45,23 +45,23 @@ function readCookie(req, name) {
 }
 
 /** Resolve the logged-in user from the session cookie of any Node request (HTTP or WebSocket upgrade). Banned users resolve to null. */
-function userFromRequest(req) {
+async function userFromRequest(req) {
   const t = readCookie(req, 'pp_session');
   if (!t) return null;
-  return q.get(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+  return await q.get(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
                 WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned = 0`, sha(t), now()) || null;
 }
 /**
  * Attach req.user (or null) to every request. Sessions are sliding: when less than half of the lifetime remains, the session and
  * cookie are renewed, so active people stay signed in and idle sessions expire after SESSION_TTL.
  */
-function loadUser(req, res, next) {
-  req.user = userFromRequest(req);
+async function loadUser(req, res, next) {
+  req.user = await userFromRequest(req);
   if (req.user) {
     const t = readCookie(req, 'pp_session');
-    const s = q.get('SELECT expires_at FROM sessions WHERE token_hash = ?', sha(t));
+    const s = await q.get('SELECT expires_at FROM sessions WHERE token_hash = ?', sha(t));
     if (s && s.expires_at - now() < SESSION_TTL / 2) {
-      q.run('UPDATE sessions SET expires_at = ? WHERE token_hash = ?', now() + SESSION_TTL, sha(t));
+      await q.run('UPDATE sessions SET expires_at = ? WHERE token_hash = ?', now() + SESSION_TTL, sha(t));
       res.cookie('pp_session', t, { httpOnly: true, sameSite: 'lax', secure: config.isProd, maxAge: SESSION_TTL * 1000, path: '/' });
     }
   }

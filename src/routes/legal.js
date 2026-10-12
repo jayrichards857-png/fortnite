@@ -7,10 +7,10 @@ const config = require('../config');
 const { esc } = require('../util');
 
 const r = express.Router();
-const show = (req, res, o) => res.set('Cache-Control', 'public, max-age=300').send(V.layout({ user: req.user, path: '/legal', title: o.title, description: o.description, body: o.body }));
-r.get('/legal', (req, res) => show(req, res, LEGAL.index()));
-for (const p of LEGAL.PAGES) r.get(p.path, (req, res) => show(req, res, LEGAL.render(p.key)));
-r.get('/contact', (req, res) => {
+const show = async (req, res, o) => res.set('Cache-Control', 'public, max-age=300').send(await V.layout({ user: req.user, path: '/legal', title: o.title, description: o.description, body: o.body }));
+r.get('/legal', async (req, res) => await show(req, res, LEGAL.index()));
+for (const p of LEGAL.PAGES) r.get(p.path, async (req, res) => await show(req, res, LEGAL.render(p.key)));
+r.get('/contact', async (req, res) => {
   const email = config.supportEmail;
   const body = `<article class="legal contact"><h1>Contact PairPlug</h1>
 <p class="lead">Email us about account access, orders, seller issues, scam and safety reports, appeals, privacy requests, or any general question.</p>
@@ -26,7 +26,7 @@ r.get('/contact', (req, res) => {
 </div>
 <p class="small muted">These buttons only open an email draft. Nothing is sent until you send it from your email app, and an email does not create a case or ticket automatically; there is no guaranteed response time. To report a scam with photos or an order attached, use the <a href="/support">Help &amp; reporting page</a> while logged in. Never email passwords or payment card numbers.</p>
 <p><a class="btn ghost" href="/shop">← Back to shopping</a> <a class="btn ghost" href="/support">Help &amp; reporting</a></p></article>`;
-  res.set('Cache-Control', 'public, max-age=300').send(V.layout({ user: req.user, path: '/contact', title: 'Contact', description: 'Contact PairPlug support by email.', body }));
+  res.set('Cache-Control', 'public, max-age=300').send(await V.layout({ user: req.user, path: '/contact', title: 'Contact', description: 'Contact PairPlug support by email.', body }));
 });
 r.get('/refunds', (req, res) => res.redirect(301, '/payments'));
 r.get('/prohibited', (req, res) => res.redirect(301, '/rules'));

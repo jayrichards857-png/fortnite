@@ -23,20 +23,20 @@ const providers = {
  * Record, then (if a provider is configured) attempt delivery. Returns a promise of the final status; callers may ignore it.
  * `dedupeKey` makes retries/double-submits record at most one message.
  */
-function send({ to, subject, text, kind, dedupeKey = null }) {
+async function send({ to, subject, text, kind, dedupeKey = null }) {
   const t = now();
-  const r = q.run("INSERT OR IGNORE INTO email_outbox(to_email, subject, body, kind, dedupe_key, status, created_at) VALUES(?,?,?,?,?, 'not_configured', ?)", to, subject, text, kind, dedupeKey, t);
+  const r = await q.run("INSERT OR IGNORE INTO email_outbox(to_email, subject, body, kind, dedupe_key, status, created_at) VALUES(?,?,?,?,?, 'not_configured', ?)", to, subject, text, kind, dedupeKey, t);
   if (r.changes === 0) return Promise.resolve({ status: 'duplicate' });
   const id = Number(r.lastInsertRowid);
   if (!isConfigured()) return Promise.resolve({ status: 'not_configured', id });
   const deliver = mock ? async (m) => ({ ref: await mock(m) || 'mock' }) : providers[config.email.provider];
   const provider = mock ? 'mock-test' : config.email.provider;
-  return Promise.resolve().then(() => deliver({ to, subject, text })).then((out) => {
+  return Promise.resolve().then(() => deliver({ to, subject, text })).then(async (out) => {
     // delivered: drop the body (it may contain a one-time link) and keep only the fact of delivery
-    q.run("UPDATE email_outbox SET status='sent', provider=?, provider_ref=?, sent_at=?, body='(sent; body not retained)' WHERE id=?", provider, out.ref, now(), id);
+    await q.run("UPDATE email_outbox SET status='sent', provider=?, provider_ref=?, sent_at=?, body='(sent; body not retained)' WHERE id=?", provider, out.ref, now(), id);
     return { status: 'sent', id };
-  }).catch((e) => {
-    q.run("UPDATE email_outbox SET status='failed', provider=?, error=? WHERE id=?", provider, String(e.message).slice(0, 200), id);
+  }).catch(async (e) => {
+    await q.run("UPDATE email_outbox SET status='failed', provider=?, error=? WHERE id=?", provider, String(e.message).slice(0, 200), id);
     return { status: 'failed', id };
   });
 }

@@ -37,7 +37,7 @@ function reset() {
   });
 }
 const txCalls = () => calls.filter((c) => c.path === '/transactions/' && c.method === 'POST').length;
-const row = (id) => q.get('SELECT * FROM shipments WHERE order_id = ? ORDER BY id DESC LIMIT 1', id);
+const row = async (id) => await q.get('SELECT * FROM shipments WHERE order_id = ? ORDER BY id DESC LIMIT 1', id);
 
 test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 'test' }; config.sandbox = true; reset(); });
 test.beforeEach(() => reset());
@@ -92,10 +92,10 @@ test('missing or invalid shipment data is requested, never invented', async () =
   const bad = await seller.put('/api/seller/ship-from', { ...FROM, postal: 'ABCDE', line1: '' }); assert.ok(bad.json.fields.postal && bad.json.fields.line1);
   assert.equal((await seller.put('/api/seller/ship-from', { ...FROM, country: 'FR' })).status, 422);
   await seller.put('/api/seller/ship-from', FROM);
-  assert.equal(q.get('SELECT region FROM seller_ship_from').region, 'NY', 'state code normalised');
+  assert.equal((await q.get('SELECT region FROM seller_ship_from')).region, 'NY', 'state code normalised');
   r = await rates_(seller, o, {}); assert.equal(r.status, 422, 'dimensions are required (the listing has none)'); assert.ok(r.json.fields.length_in);
   assert.equal((await rates_(seller, o, { ...PARCEL, weight_oz: 0 })).status, 422); assert.equal((await rates_(seller, o, { ...PARCEL, height_in: 999 })).status, 422);
-  q.run('UPDATE checkouts SET ship_postal = ? WHERE id = (SELECT checkout_id FROM orders WHERE id = ?)', 'XX', o);
+  await q.run('UPDATE checkouts SET ship_postal = ? WHERE id = (SELECT checkout_id FROM orders WHERE id = ?)', 'XX', o);
   r = await rates_(seller, o); assert.equal(r.status, 409); assert.match(r.json.error, /delivery address/);
   assert.equal(calls.length, 0, 'nothing was sent to the provider with incomplete data');
   const pending = await paidOrderPending(); assert.equal((await rates_(pending.seller, pending.o)).status, 409);
@@ -126,13 +126,13 @@ test('purchase requires explicit confirmation and an exact price; success stores
   assert.equal((await buy(seller, o, { rateId: 'rate_forged', expectedAmountCents: 758, confirm: true })).status, 422); assert.equal(txCalls(), 0);
   const r = await buy(seller, o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true });
   assert.equal(r.status, 200, r.text); assert.equal(txCalls(), 1); assert.equal(r.json.shipment.status, 'success'); assert.equal(r.json.shipment.test, true); assert.equal(r.json.shipment.hasLabel, true);
-  const s = row(o); assert.equal(s.test, 1); assert.equal(s.price_cents, 758); assert.equal(s.currency, 'USD'); assert.equal(s.carrier, 'USPS'); assert.equal(s.service, 'Priority Mail'); assert.equal(s.tracking_number, 'SHIPPO_TRANSIT'); assert.equal(s.provider_transaction_id, 'txn_0123456789'); assert.equal(s.label_url, LABEL);
+  const s = await row(o); assert.equal(s.test, 1); assert.equal(s.price_cents, 758); assert.equal(s.currency, 'USD'); assert.equal(s.carrier, 'USPS'); assert.equal(s.service, 'Priority Mail'); assert.equal(s.tracking_number, 'SHIPPO_TRANSIT'); assert.equal(s.provider_transaction_id, 'txn_0123456789'); assert.equal(s.label_url, LABEL);
   assert.equal(calls.at(-1).body.rate, 'rate_usps'); assert.equal(calls.at(-1).body.metadata, `PP-${o}-S${s.id}`);
-  const ord = q.get('SELECT carrier, tracking_number, status FROM orders WHERE id = ?', o); assert.equal(ord.tracking_number, null, 'a test label is never copied to the order'); assert.equal(ord.status, 'paid');
+  const ord = await q.get('SELECT carrier, tracking_number, status FROM orders WHERE id = ?', o); assert.equal(ord.tracking_number, null, 'a test label is never copied to the order'); assert.equal(ord.status, 'paid');
   const bp = (await buyer.get(`/orders/${o}`)).text; assert.ok(!bp.includes('SHIPPO_TRANSIT'), 'buyers never see test tracking');
   const l = await seller.get(`/dashboard/orders/${o}/label`); assert.equal(l.status, 302); assert.equal(l.headers.get('location'), LABEL);
-  assert.ok(q.all("SELECT 1 FROM audit_log WHERE action IN ('label_purchase_started','label_purchased')").length >= 2);
-  assert.throws(() => q.run('UPDATE shipments SET price_cents = 1 WHERE id = ?', s.id), /cannot be changed/); assert.throws(() => q.run('DELETE FROM shipments WHERE id = ?', s.id), /cannot be deleted/);
+  assert.ok((await q.all("SELECT 1 FROM audit_log WHERE action IN ('label_purchase_started','label_purchased')")).length >= 2);
+  await assert.rejects(async () => await q.run('UPDATE shipments SET price_cents = 1 WHERE id = ?', s.id), /cannot be changed/); await assert.rejects(async () => await q.run('DELETE FROM shipments WHERE id = ?', s.id), /cannot be deleted/);
   assert.equal((await rates_(seller, o)).status, 409, 'no second quote once a label exists');
 });
 
@@ -145,8 +145,8 @@ test('duplicates: double-click, concurrent requests and retries buy exactly one 
   const rs = await Promise.all([first, second, third]);
   assert.equal(rs.filter((r) => r.status === 200).length, 1); assert.equal(rs.filter((r) => r.status === 409).length, 2); assert.equal(txCalls(), 1, 'one provider purchase');
   const again = await buy(seller, o, body); assert.equal(again.status, 200); assert.equal(again.json.duplicate, true); assert.equal(txCalls(), 1);
-  assert.equal(q.get("SELECT COUNT(*) n FROM shipments WHERE order_id = ? AND status = 'success'", o).n, 1);
-  assert.throws(() => q.run("INSERT INTO shipments(order_id, seller_id, test, status, weight_oz, length_in, width_in, height_in, address_hash, created_at, updated_at) VALUES(?,?,1,'purchasing',1,1,1,1,'x',1,1)", o, q.get('SELECT seller_id s FROM orders WHERE id = ?', o).s), /UNIQUE/, 'the database itself forbids a second purchase');
+  assert.equal((await q.get("SELECT COUNT(*) n FROM shipments WHERE order_id = ? AND status = 'success'", o)).n, 1);
+  await assert.rejects(async () => await q.run("INSERT INTO shipments(order_id, seller_id, test, status, weight_oz, length_in, width_in, height_in, address_hash, created_at, updated_at) VALUES(?,?,1,'purchasing',1,1,1,1,'x',1,1)", o, (await q.get('SELECT seller_id s FROM orders WHERE id = ?', o)).s), /UNIQUE/, 'the database itself forbids a second purchase');
 });
 
 test('failures: provider error, rejection, unknown outcome (timeout/5xx), queued transactions, stuck purchases', async () => {
@@ -158,36 +158,36 @@ test('failures: provider error, rejection, unknown outcome (timeout/5xx), queued
   assert.equal((await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true })).json.shipment.status, 'success');
   // HTTP rejection
   x = await quoted(); behave.transaction = () => ({ status: 422, json: { detail: 'Rate expired' } });
-  r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.equal(r.status, 422); assert.equal(row(x.o).status, 'failed');
+  r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.equal(r.status, 422); assert.equal((await row(x.o)).status, 'failed');
   // unknown outcome: stays purchasing, cannot be bought again, cannot be released immediately, never leaks internals
   x = await quoted(); behave.transaction = () => { throw new Error('socket hang up: secret-internal-detail'); };
   r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.equal(r.status, 502); assert.ok(!r.text.includes('secret-internal-detail') && !r.text.includes(KEY));
-  assert.equal(row(x.o).status, 'purchasing');
+  assert.equal((await row(x.o)).status, 'purchasing');
   assert.equal((await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true })).status, 409);
   assert.equal((await rates_(x.seller, x.o)).status, 409);
   assert.equal((await x.seller.post(`/api/seller/orders/${x.o}/shipping/refresh`)).status, 409, 'no transaction id to check');
   assert.equal((await x.seller.post(`/api/seller/orders/${x.o}/shipping/release`, {})).status, 422, 'needs confirmation');
   assert.equal((await x.seller.post(`/api/seller/orders/${x.o}/shipping/release`, { confirm: true })).status, 409, 'too soon');
-  q.run('UPDATE shipments SET updated_at = updated_at - 600 WHERE order_id = ?', x.o);
-  assert.equal((await x.seller.post(`/api/seller/orders/${x.o}/shipping/release`, { confirm: true })).status, 200); assert.equal(row(x.o).status, 'failed');
+  await q.run('UPDATE shipments SET updated_at = updated_at - 600 WHERE order_id = ?', x.o);
+  assert.equal((await x.seller.post(`/api/seller/orders/${x.o}/shipping/release`, { confirm: true })).status, 200); assert.equal((await row(x.o)).status, 'failed');
   behave.transaction = () => ({ status: 200, json: ok() }); assert.equal((await rates_(x.seller, x.o)).status, 200);
   // 5xx is also "unknown"
   x = await quoted(); behave.transaction = () => ({ status: 503, json: {} });
-  assert.equal((await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true })).status, 502); assert.equal(row(x.o).status, 'purchasing');
+  assert.equal((await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true })).status, 502); assert.equal((await row(x.o)).status, 'purchasing');
   // queued, then completed via "Check status"
   x = await quoted(); behave.transaction = () => ({ status: 200, json: ok({ status: 'QUEUED', label_url: null, tracking_number: null }) });
-  r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.equal(r.status, 200); assert.equal(r.json.pending, true); assert.equal(row(x.o).status, 'purchasing'); assert.equal(row(x.o).provider_transaction_id, 'txn_0123456789');
+  r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.equal(r.status, 200); assert.equal(r.json.pending, true); assert.equal((await row(x.o)).status, 'purchasing'); assert.equal((await row(x.o)).provider_transaction_id, 'txn_0123456789');
   assert.equal((await x.seller.post(`/api/seller/orders/${x.o}/shipping/release`, { confirm: true })).status, 409, 'cannot release while the provider has a transaction');
   const before = txCalls(); behave.get = () => ({ status: 200, json: ok() }); r = await x.seller.post(`/api/seller/orders/${x.o}/shipping/refresh`); assert.equal(r.status, 200); assert.equal(r.json.shipment.status, 'success'); assert.equal(txCalls(), before, 'checking status never buys again');
   // a non-test response is refused outright
   x = await quoted(); behave.transaction = () => ({ status: 200, json: ok({ test: false }) });
-  r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.notEqual(r.status, 200); assert.notEqual(row(x.o).status, 'success');
+  r = await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true }); assert.notEqual(r.status, 200); assert.notEqual((await row(x.o)).status, 'success');
 });
 
 test('quotes go stale: changed address or expired rates must be re-quoted; order must be paid and unshipped; rate limits apply', async () => {
-  let x = await quoted(); q.run('UPDATE checkouts SET ship_line1 = ? WHERE id = (SELECT checkout_id FROM orders WHERE id = ?)', '99 Other St', x.o);
+  let x = await quoted(); await q.run('UPDATE checkouts SET ship_line1 = ? WHERE id = (SELECT checkout_id FROM orders WHERE id = ?)', '99 Other St', x.o);
   assert.equal((await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true })).status, 409); assert.equal(txCalls(), 0);
-  x = await quoted(); q.run('UPDATE shipments SET rates_fetched_at = rates_fetched_at - 90000 WHERE order_id = ?', x.o);
+  x = await quoted(); await q.run('UPDATE shipments SET rates_fetched_at = rates_fetched_at - 90000 WHERE order_id = ?', x.o);
   assert.equal((await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true })).status, 409);
   x = await quoted(); await buy(x.seller, x.o, { rateId: 'rate_usps', expectedAmountCents: 758, confirm: true });
   await x.seller.post(`/api/seller/orders/${x.o}/ship`, { carrier: 'USPS', tracking: 'T' + Date.now() });
@@ -198,10 +198,10 @@ test('quotes go stale: changed address or expired rates must be re-quoted; order
 });
 
 test('only REAL labels ever reach buyers or prefill the ship form; webhook updates their carrier status', async () => {
-  const x = await paidOrder(); const sid = q.get('SELECT id FROM users WHERE handle = ?', x.seller.handle).id;
-  q.run("INSERT INTO shipments(order_id, seller_id, test, status, weight_oz, length_in, width_in, height_in, address_hash, carrier, service, price_cents, currency, provider_transaction_id, label_url, tracking_number, created_at, updated_at, purchased_at) VALUES(?,?,0,'success',20,12,9,4,'h','USPS','Priority',758,'USD','txn_real_000001',?,?,1,1,1)", x.o, sid, LABEL, TRK);
+  const x = await paidOrder(); const sid = (await q.get('SELECT id FROM users WHERE handle = ?', x.seller.handle)).id;
+  await q.run("INSERT INTO shipments(order_id, seller_id, test, status, weight_oz, length_in, width_in, height_in, address_hash, carrier, service, price_cents, currency, provider_transaction_id, label_url, tracking_number, created_at, updated_at, purchased_at) VALUES(?,?,0,'success',20,12,9,4,'h','USPS','Priority',758,'USD','txn_real_000001',?,?,1,1,1)", x.o, sid, LABEL, TRK);
   assert.ok((await x.seller.get(`/dashboard/orders/${x.o}`)).text.includes(`value="${TRK}"`), 'ship form prefilled from a real label');
-  q.run("UPDATE orders SET status = 'shipped', carrier = 'USPS', tracking_number = ?, shipped_at = 1 WHERE id = ?", TRK, x.o);
+  await q.run("UPDATE orders SET status = 'shipped', carrier = 'USPS', tracking_number = ?, shipped_at = 1 WHERE id = ?", TRK, x.o);
   process.env.CARRIER_WEBHOOK_SECRET = 'carrier-secret'; config.carrierWebhookSecret = 'carrier-secret';
   const hook = await fetch(H.base + '/webhooks/tracking', { method: 'POST', headers: { 'content-type': 'application/json', 'x-webhook-secret': 'carrier-secret' }, body: JSON.stringify({ carrier: 'USPS', trackingNumber: TRK, status: 'TRANSIT' }) });
   assert.equal(hook.status, 200); assert.match((await x.buyer.get(`/orders/${x.o}`)).text, /Carrier status: <strong>TRANSIT<\/strong>/);
