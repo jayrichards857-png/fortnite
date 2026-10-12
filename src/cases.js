@@ -33,19 +33,19 @@ const addEvent = (caseId, actor, actorRole, kind, body, { image = null, internal
 const touch = (id, status) => q.run('UPDATE cases SET updated_at = ?, status = COALESCE(?, status) WHERE id = ?', now(), status || null, id);
 
 // ------------------------------------------------------------------ opening cases
-function reportOrder(user, orderId, { reason, evidence = [], category }) {
+function reportOrder(user, orderId, { reason, evidence = [], category, paymentMismatch = false }) {
   rateLimit(`case:${user.id}`, 10, 3600);
   const why = text(reason), cat = F.category(category); const imgs = ownedUploads(user.id, evidence.slice(0, 4));
   return tx(() => {
     const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(orderId), user.id);
     if (!o) throw new HttpError(404, 'Order not found');
-    if (!engaged(o)) throw new HttpError(409, 'There is nothing to report yet: you have not opened the seller\'s payment link or said you paid. Cancel the order if you changed your mind.');
+    if (!engaged(o) && !(paymentMismatch && o.status === 'pending_payment')) throw new HttpError(409, 'There is nothing to report yet: you have not opened the seller\'s payment link or said you paid. Cancel the order if you changed your mind.');
     if (q.get("SELECT 1 x FROM cases WHERE order_id = ? AND reporter_id = ? AND kind = 'order_issue' AND status IN ('open','awaiting_seller','under_review')", o.id, user.id)) throw new HttpError(409, 'You already have an open report for this order.');
-    const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?, ?)", o.id, user.id, o.seller_id, why, cat, now(), now());
+    const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, payment_mismatch, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?, ?, ?)", o.id, user.id, o.seller_id, why, cat, paymentMismatch ? 1 : 0, now(), now());
     const id = Number(c.lastInsertRowid);
     addEvent(id, user, 'buyer', 'report', why); imgs.forEach((f) => addEvent(id, user, 'buyer', 'evidence', null, { image: f }));
     F.preserveOrderRecord(id, o.id);
-    notify(o.seller_id, `case:${id}:opened`, 'A buyer reported a problem with an order', `Order #${o.id}: please respond so it can be resolved.`, `/cases/${id}`);
+    notify(o.seller_id, `case:${id}:opened`, paymentMismatch ? 'A buyer says your checkout amount did not match' : 'A buyer reported a problem with an order', `Order #${o.id}: please respond so it can be resolved.`, `/cases/${id}`);
     audit(user, 'case_opened', { type: 'case', id, detail: { kind: 'order_issue', order: o.id } });
     return id;
   });
@@ -70,6 +70,20 @@ function reportSeller(user, handle, { reason, evidence = [], orderId, category }
     if (oid) F.preserveOrderRecord(id, oid);
     audit(user, 'case_opened', { type: 'case', id, detail: { kind: 'seller_issue', order: oid } });
     return id;                                                                            // the reported seller is deliberately NOT notified of a seller report
+  });
+}
+/** A seller asks staff to review a listing removal, restriction or suspension they think was a mistake. Opens a normal case (reporter = the seller) so the same evidence, reply and decision tools apply. */
+function appeal(user, { reason, evidence = [] }) {
+  if (!user.is_seller) throw new HttpError(403, 'Only sellers can appeal a seller action.');
+  rateLimit(`appeal:${user.id}`, 5, 3600);
+  const why = text(reason, 10, 2000, 'reason'), imgs = ownedUploads(user.id, evidence.slice(0, 4));
+  return tx(() => {
+    if (q.get("SELECT 1 x FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? AND status IN ('open','awaiting_seller','under_review')", user.id, user.id)) throw new HttpError(409, 'You already have an open appeal. Add to it from your cases.');
+    const c = q.run("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?, 'open', 'other', ?, ?)", user.id, user.id, `Appeal: ${why}`, now(), now());
+    const id = Number(c.lastInsertRowid);
+    addEvent(id, user, 'seller', 'report', `Appeal: ${why}`); imgs.forEach((f) => addEvent(id, user, 'seller', 'evidence', null, { image: f }));
+    audit(user, 'appeal_opened', { type: 'case', id });
+    return id;
   });
 }
 function reportMessage(user, { conversationId, messageId, reason }) {
@@ -270,4 +284,4 @@ function adminResolveRefund(admin, requestId, { outcome, note }) {
   });
 }
 
-module.exports = { OPEN, reportOrder, reportSeller, reportMessage, view, mine, respond, adminNote, adminMessage, adminSetStatus, adminDecide, adminAction, adminConversation, requestRefund, sellerRespond, buyerConfirm, adminResolveRefund, openRequest, latestRequest, REFUNDABLE };
+module.exports = { OPEN, appeal, reportOrder, reportSeller, reportMessage, view, mine, respond, adminNote, adminMessage, adminSetStatus, adminDecide, adminAction, adminConversation, requestRefund, sellerRespond, buyerConfirm, adminResolveRefund, openRequest, latestRequest, REFUNDABLE };

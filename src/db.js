@@ -740,6 +740,21 @@ CREATE INDEX idx_case_records ON case_records(case_id, id);
 CREATE TRIGGER case_records_no_update BEFORE UPDATE ON case_records BEGIN SELECT RAISE(ABORT, 'case records are append-only'); END;
 CREATE TRIGGER case_records_no_delete BEFORE DELETE ON case_records BEGIN SELECT RAISE(ABORT, 'case records are append-only'); END;
 `,
+// 16: Stripe-link policy. Additive.
+//   listings.payment_ack_at / payment_ack_policy  when the seller confirmed the link charges item + shipping, and which policy text version they saw (NULL = not confirmed)
+//   users.selling_restricted_until                optional end of a TEMPORARY selling suspension (NULL = until a staff member lifts the restriction)
+//   cases.payment_mismatch                        1 when the reporter says the amount at the seller's checkout did not match PairPlug's expected total
+`
+ALTER TABLE listings ADD COLUMN payment_ack_at INTEGER;
+ALTER TABLE listings ADD COLUMN payment_ack_policy TEXT;
+ALTER TABLE users ADD COLUMN selling_restricted_until INTEGER;
+ALTER TABLE cases ADD COLUMN payment_mismatch INTEGER NOT NULL DEFAULT 0 CHECK (payment_mismatch IN (0,1));
+CREATE INDEX idx_cases_mismatch ON cases(payment_mismatch, subject_user_id) WHERE payment_mismatch = 1;
+-- Backstop: whatever code path changes the price or shipping, a seller confirmation that no longer equals item + buyer-paid shipping is cleared in the same statement.
+CREATE TRIGGER listings_ack_follows_total AFTER UPDATE OF price_cents, shipping_cents, shipping_payer ON listings
+  WHEN NEW.payment_total_ack_cents IS NOT NULL AND NEW.payment_total_ack_cents <> NEW.price_cents + CASE WHEN NEW.shipping_payer = 'buyer' THEN NEW.shipping_cents ELSE 0 END
+  BEGIN UPDATE listings SET payment_total_ack_cents = NULL, payment_ack_at = NULL, payment_ack_policy = NULL WHERE id = NEW.id; END;
+`,
 ];
 
 function migrate() {

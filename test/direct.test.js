@@ -48,9 +48,8 @@ test('payment links: the buyer URL carries our reference and is re-validated at 
   const u = new URL(buyerUrl('https://buy.stripe.com/abc123?client_reference_id=spoofed', 77));
   assert.equal(u.hostname, 'buy.stripe.com'); assert.equal(u.searchParams.get('client_reference_id'), 'PP-77');
   assert.throws(() => buyerUrl('https://evil.example/abc123', 1), /./, 'a stored link that is no longer allowlisted is refused');
-  assert.deepEqual(resolveLink({ payment_url: 'https://buy.stripe.com/a1' }, {}), { url: 'https://buy.stripe.com/a1', source: 'listing' });
-  assert.equal(resolveLink({}, { checkout_url: 'https://buy.stripe.com/b1', checkout_url_any_amount: 0 }), null, 'fixed-price default link is never used implicitly');
-  assert.equal(resolveLink({}, { checkout_url: 'https://buy.stripe.com/b1', checkout_url_any_amount: 1 }).source, 'seller_default');
+  assert.deepEqual(resolveLink({ payment_url: 'https://buy.stripe.com/a1' }), { url: 'https://buy.stripe.com/a1', source: 'listing' });
+  assert.equal(resolveLink({}), null, 'only a listing\'s own link can start a checkout; the old seller-wide default link no longer can');
 });
 test('tracking links: known carriers only, numbers are encoded', () => {
   assert.match(trackingUrl('USPS', '9400111899223344'), /^https:\/\/tools\.usps\.com\//);
@@ -82,14 +81,11 @@ test('payment links are validated when supplied; link-less listings publish as c
   assert.match((await new H.Client().get(`/listing/${noLink.json.id}`)).text, /Contact seller/); assert.doesNotMatch((await new H.Client().get(`/listing/${noLink.json.id}`)).text, />Buy now</);
   const badLink = await s.post('/api/seller/listings', { ...body, shipping: '5.00', payment_url: 'http://buy.stripe.com/abc123' });
   assert.equal(badLink.status, 422); assert.ok(badLink.json.fields.payment_url);
-  // a fixed-price default link is not used implicitly; an any-amount default is
+  // a seller-wide default link (fixed-price or "any amount") can no longer start a checkout: each listing needs its own confirmed Stripe link
   const settings = { store_name: 'S', country: 'US', region: 'NY', city: 'B' };
-  await s.put('/api/seller/settings', { ...settings, checkout_url: LINK });
-  const fixed = await s.post('/api/seller/listings', { ...body, shipping: '5.00' });
-  assert.doesNotMatch((await new H.Client().get(`/listing/${fixed.json.id}`)).text, />Buy now</);
   await s.put('/api/seller/settings', { ...settings, checkout_url: LINK, checkout_url_any_amount: true });
   const anyAmt = await s.post('/api/seller/listings', { ...body, shipping: '5.00' }); assert.equal(anyAmt.status, 200);
-  assert.match((await new H.Client().get(`/listing/${anyAmt.json.id}`)).text, />Buy now</);
+  assert.doesNotMatch((await new H.Client().get(`/listing/${anyAmt.json.id}`)).text, />Buy now</);
   // shipping terms
   const withLink = { ...body, payment_url: LINK };
   const buyerZero = await s.post('/api/seller/listings', { ...withLink, shipping_payer: 'buyer', shipping: '0' });

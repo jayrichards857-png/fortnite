@@ -12,6 +12,7 @@ test.after(() => H.stop());
 
 const LINK = 'https://buy.stripe.com/test_life1';
 const get = async (c, u) => (await c.get(u)).text;
+const text0 = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
 const oid = (r) => Number(String(r.json.redirect).match(/(\d+)/)[1]);
 const uid = (email) => q.get('SELECT id FROM users WHERE email = ?', email).id;
 const mkAdmin = async () => { const a = await H.newUser('Owner'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
@@ -27,20 +28,20 @@ test('checkout amounts: the listing, buy page, order and snapshot agree on item 
   const made = await seller.post('/api/seller/listings', await body(seller, { payment_amount_ack: true, quantity: 3 })); assert.equal(made.status, 200); const id = made.json.id;
   assert.equal(q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id).a, 10785);
   const listing = await get(buyer, `/listing/${id}`); assert.match(listing, /\$100\.00/); assert.match(listing, /\$7\.85 flat/); assert.match(listing, /\$107\.85/);
-  const buyPage = await get(buyer, `/buy/${id}`); assert.match(buyPage, /\$107\.85/); assert.match(buyPage, /must charge exactly this amount/);
+  const buyPage = await get(buyer, `/buy/${id}`); assert.match(buyPage, /\$107\.85/); assert.match(text0(buyPage), /The total shown on PairPlug should match the amount shown at Stripe checkout before you pay/);
   const r = await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(r.status, 200); const o = oid(r);
   const row = q.get('SELECT * FROM orders WHERE id = ?', o); assert.deepEqual([row.subtotal_cents, row.shipping_cents, row.total_cents], [10000, 785, 10785]);
   const snap = JSON.parse(row.snapshot_json); assert.equal(snap.terms.totalCents, 10785); assert.equal(snap.terms.currency, 'USD');
-  const page = await get(buyer, `/orders/${o}`); assert.match(page, /\$107\.85/); assert.match(page, /Check before you pay/); assert.match(page, /do not pay/i); assert.match(page, /test mode|sandbox/i);
+  const page = await get(buyer, `/orders/${o}`); assert.match(page, /\$107\.85/); assert.match(page, /Before you pay/); assert.match(text0(page), /If the amounts differ, do not complete the payment\. Return to PairPlug and contact support/);
   const pay = await buyer.get(`/orders/${o}/pay`); assert.equal(pay.status, 302); const u = new URL(pay.headers.get('location')); assert.equal(u.hostname, 'buy.stripe.com'); assert.equal(u.searchParams.get('client_reference_id'), `PP-${o}`);
   assert.doesNotMatch(u.search, /amount|price|prefilled/i, 'PairPlug cannot set the amount on the provider page, and does not pretend to');
   // changing the price (the link now charges the OLD total) un-confirms it: checkout is paused until the seller confirms again
   const cheaper = await seller.put(`/api/seller/listings/${id}`, await body(seller, { price: '14.15', payment_amount_ack: false, quantity: 3 })); assert.equal(cheaper.status, 200);
   assert.equal(q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id).a, null);
   assert.doesNotMatch(await get(new H.Client(), `/listing/${id}`), />Buy now</); const other = await H.newUser('Late');
-  const blocked = await other.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(blocked.status, 409); assert.match(blocked.text, /confirm that their payment link charges/);
+  const blocked = await other.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(blocked.status, 409); assert.match(blocked.text, /confirm that their Stripe link charges/);
   assert.match(await get(other, `/listing/${id}`), /still needs to confirm/);
-  const again = await seller.put(`/api/seller/listings/${id}`, await body(seller, { price: '14.15', payment_amount_ack: true, quantity: 3 })); assert.equal(again.status, 200); assert.equal(q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id).a, 2200);
+  const again = await seller.put(`/api/seller/listings/${id}`, await body(seller, { price: '14.15', payment_amount_ack: true, payment_ack_total_cents: 2200, payment_ack_url: LINK, quantity: 3 })); assert.equal(again.status, 200); assert.equal(q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id).a, 2200);
   assert.equal((await other.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 200);
   // editing other fields without touching price/shipping/link keeps the confirmation; ticking it off clears it
   const keep0 = await seller.put(`/api/seller/listings/${id}`, { ...(await body(seller, { price: '14.15', title: 'Renamed', quantity: 3 })) }); assert.equal(keep0.status, 200); assert.equal(q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id).a, 2200, 'silence keeps an unchanged confirmation');
@@ -65,10 +66,6 @@ test('a payment link that cannot be a live one is refused in production, and a b
   const id = await H.makeListing(seller, { payment_url: LINK }); const r = await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); const o = oid(r);
   assert.equal((await buyer.post(`/api/orders/${o}/claim-paid`, {})).status, 200); const row = q.get('SELECT status, payment_confirmed_at c, payment_confirmed_by b, buyer_claimed_paid_at k FROM orders WHERE id = ?', o);
   assert.deepEqual({ ...row, k: Boolean(row.k) }, { status: 'pending_payment', c: null, b: null, k: true }); assert.match(await get(buyer, `/orders/${o}`), /unverified|only the seller can confirm|Awaiting payment confirmation/i);
-  // an any-amount default link still works, and the expected total is still stated
-  const def = await H.newSeller('Default'); q.run("UPDATE users SET checkout_url = 'https://buy.stripe.com/default_any', checkout_url_any_amount = 1 WHERE handle = ?", def.handle);
-  const d = await def.post('/api/seller/listings', await body(def, { payment_url: '' })); assert.equal(d.status, 200); const dr = await buyer.post('/api/purchases', { listingId: d.json.id, acknowledged: true, address: H.address }); assert.equal(dr.status, 200);
-  assert.match(await get(buyer, `/orders/${oid(dr)}`), /\$107\.85/);
 });
 
 test('the whole lifecycle: publish -> order -> pay -> confirm -> ship -> received -> review; fraud report -> moderator restricts, bans, unbans; history and audit intact', async () => {

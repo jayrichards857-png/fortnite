@@ -7,6 +7,7 @@ const { notify } = require('./notify');
 const { validatePaymentUrl, resolveLink } = require('./paymentLinks');
 const { audit } = require('./audit');
 const D = require('./discovery');
+const PP = require('./paymentPolicy');
 
 const CATS = new Set(config.categories.map((c) => c[0]));
 const SELLER_STATUSES = new Set(['draft', 'active', 'archived']); // 'sold'/'reserved' are owned by the order system
@@ -105,6 +106,7 @@ function saveListing(user, id, body) {
   if (publish && q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) throw new HttpError(403, 'Selling is paused on your account while PairPlug reviews a report. You can still reply to PairPlug and handle existing orders.');
   if (publish && !q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
   // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
+  let prev = null;
   const saved = tx(() => {
     const t = now();
     let cur = null;
@@ -120,9 +122,21 @@ function saveListing(user, id, body) {
     const status = body.status || (cur ? cur.status : 'draft');
     // The seller's confirmation that their fixed-price payment link charges exactly item + buyer-paid shipping. It is tied to that total, so any later price/shipping change un-confirms it.
     const total = v.price_cents + (v.shipping_payer === 'buyer' ? v.shipping_cents : 0);
-    const given = body.payment_amount_ack, unchanged = cur && cur.payment_url === v.payment_url && cur.payment_total_ack_cents === total;
-    v.payment_total_ack_cents = v.payment_url && (given === true || (given === undefined && unchanged)) ? total : null;       // an explicit false (box unticked) clears it; silence keeps it only if link and total are unchanged
-    const cols = ['quantity', 'payment_total_ack_cents', 'title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'shipping_payer', 'payment_url', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
+    // Fresh-confirmation rule: a confirmation made for an earlier link or total never carries over. When anything changed since the last confirmation, the request must also carry proof that the
+    // seller confirmed THIS total and THIS link (the editor sends them when the box is ticked); an explicit false clears it; silence keeps it only if link and total are unchanged.
+    const given = body.payment_amount_ack, linkSame = Boolean(cur) && cur.payment_url === v.payment_url, totalSame = Boolean(cur) && cur.payment_total_ack_cents === total;
+    let ack = false;
+    if (v.payment_url) {
+      if (given === true) {
+        if (cur && !(linkSame && totalSame) && !(Number(body.payment_ack_total_cents) === total && body.payment_ack_url === v.payment_url)) throw new HttpError(422, 'Please fix the highlighted fields.', { payment_amount_ack: `The price, shipping or link changed. Tick the box again to confirm the new total of $${(total / 100).toFixed(2)}.` });
+        ack = true;
+      } else if (given === undefined && linkSame && totalSame) ack = true;
+    }
+    v.payment_total_ack_cents = ack ? total : null;
+    v.payment_ack_at = ack ? (linkSame && totalSame ? cur.payment_ack_at : t) : null;
+    v.payment_ack_policy = ack ? (linkSame && totalSame ? cur.payment_ack_policy : PP.VERSION) : null;
+    prev = { cur, total, ack, linkSame, totalSame };
+    const cols = ['quantity', 'payment_total_ack_cents', 'payment_ack_at', 'payment_ack_policy', 'title', 'description', 'category', 'brand', 'size', 'condition', 'price_cents', 'cost_cents', 'shipping_cents', 'shipping_payer', 'payment_url', 'sku', 'weight_oz', 'length_in', 'width_in', 'height_in'];
     const vals = cols.map((c) => v[c]);
     let listingId = id;
     if (id) {
@@ -138,8 +152,18 @@ function saveListing(user, id, body) {
     files.forEach((f, i) => q.run('INSERT INTO listing_images(listing_id, file, position) VALUES(?,?,?)', listingId, f, i));
     return q.get('SELECT * FROM listings WHERE id = ?', listingId);
   });
+  auditPaymentLink(user, saved, prev);
   if (saved.status === 'active') D.announceDrop(saved.id);        // after commit; announces only a FIRST publication, once (see discovery.announceDrop)
   return saved;
+}
+
+/** Audit trail for the payment-link policy: link changes, confirmations (with the policy version the seller saw) and cleared confirmations. Never contains a secret: Payment Link addresses are public. */
+function auditPaymentLink(user, saved, prev) {
+  if (!prev) return;
+  const { cur, total, ack, linkSame, totalSame } = prev, was = cur ? cur.payment_url : null;
+  if ((saved.payment_url || null) !== (was || null)) audit(user, 'listing_payment_link_changed', { type: 'listing', id: saved.id, detail: { from: was, to: saved.payment_url || null } });
+  if (ack && !(linkSame && totalSame)) audit(user, 'listing_payment_total_acknowledged', { type: 'listing', id: saved.id, detail: { total_cents: total, link: saved.payment_url, policy: PP.VERSION, note: 'seller statement; not verified by PairPlug' } });
+  if (!ack && cur && cur.payment_total_ack_cents != null) audit(user, 'listing_payment_ack_cleared', { type: 'listing', id: saved.id, detail: { reason: !linkSame ? 'payment link changed' : total !== cur.payment_total_ack_cents ? 'price or shipping changed' : 'box unticked' } });
 }
 
 function notifyPriceDrop(listingId, title, oldC, newC) {
@@ -243,6 +267,7 @@ function importCsv(user, text) {
         if (cur) {
           q.run(`UPDATE listings SET title=?,description=?,category=?,brand=?,size=?,condition=?,price_cents=?,cost_cents=?,shipping_cents=?,shipping_payer=?,payment_url=?,weight_oz=?,length_in=?,width_in=?,height_in=?,updated_at=? WHERE id=?`,
             v.title, v.description, v.category, v.brand, v.size, v.condition, v.price_cents, v.cost_cents, v.shipping_cents, v.shipping_payer, v.payment_url, v.weight_oz, v.length_in, v.width_in, v.height_in, t, cur.id);
+          if (cur.payment_url !== v.payment_url) { q.run('UPDATE listings SET payment_total_ack_cents = NULL, payment_ack_at = NULL, payment_ack_policy = NULL WHERE id = ?', cur.id); audit(user, 'listing_payment_link_changed', { type: 'listing', id: cur.id, detail: { from: cur.payment_url, to: v.payment_url, via: 'csv' } }); }
           report.updated++;
         } else {
           q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,sku,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)

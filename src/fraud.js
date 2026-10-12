@@ -36,7 +36,8 @@ function warnPendingBuyers(sellerId, why) {
 /** Facts about reports against a seller. Counts only: how many different people reported, how many cases, order outcomes. Nothing is scored or auto-actioned. */
 function sellerRisk(sellerId) {
   const c = q.get(`SELECT COUNT(*) cases, COUNT(DISTINCT reporter_id) reporters, COUNT(*) FILTER (WHERE status IN ('open','awaiting_seller','under_review')) open,
-      COUNT(*) FILTER (WHERE status = 'resolved') resolved, COUNT(*) FILTER (WHERE status = 'dismissed') dismissed FROM cases WHERE subject_user_id = ? AND kind <> 'message_report'`, sellerId);
+      COUNT(*) FILTER (WHERE status = 'resolved') resolved, COUNT(*) FILTER (WHERE status = 'dismissed') dismissed, COUNT(*) FILTER (WHERE payment_mismatch = 1) mismatch FROM cases WHERE subject_user_id = ? AND kind <> 'message_report' AND reporter_id <> subject_user_id`, sellerId);
+  c.suspensions = q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'seller_suspended_temporarily' AND target_id = ?", String(sellerId)).n;
   const o = q.get(`SELECT COUNT(*) orders, COUNT(*) FILTER (WHERE status = 'pending_payment') pending, COUNT(*) FILTER (WHERE status IN ('paid','shipped','delivered')) seller_confirmed,
       COUNT(*) FILTER (WHERE status = 'refunded') refunded FROM orders WHERE seller_id = ? AND payment_mode = 'external'`, sellerId);
   const u = q.get('SELECT handle, store_name, banned, selling_restricted_at, selling_restricted_reason, created_at FROM users WHERE id = ?', sellerId);
@@ -46,7 +47,7 @@ function sellerRisk(sellerId) {
 /** Sellers reported by two or more different people (any status), for the operator's review queue. */
 const repeatReported = () => q.all(`SELECT u.id, u.handle, u.store_name, u.banned, u.selling_restricted_at, COUNT(DISTINCT c.reporter_id) reporters, COUNT(*) cases,
     COUNT(*) FILTER (WHERE c.status IN ('open','awaiting_seller','under_review')) open, MAX(c.created_at) latest
-  FROM cases c JOIN users u ON u.id = c.subject_user_id WHERE c.kind <> 'message_report' GROUP BY u.id HAVING reporters >= 2 ORDER BY open DESC, reporters DESC, latest DESC LIMIT 100`);
+  FROM cases c JOIN users u ON u.id = c.subject_user_id WHERE c.kind <> 'message_report' AND c.reporter_id <> c.subject_user_id GROUP BY u.id HAVING reporters >= 2 ORDER BY open DESC, reporters DESC, latest DESC LIMIT 100`);
 
 // ------------------------------------------------------------------ payment-provider packet
 const providerOf = (host) => (/(^|\.)stripe\.com$/i.test(host) ? 'stripe' : /(^|\.)paypal\.(com|me)$/i.test(host) ? 'paypal' : 'other');

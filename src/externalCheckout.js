@@ -18,7 +18,7 @@ const { rateLimit } = require('./auth');
 const { validateAddress } = require('./checkout');
 const { transition } = require('./orderMachine');
 const { notify } = require('./notify');
-const { resolveLink, buyerUrl } = require('./paymentLinks');
+const { resolveLink, buyerUrl, validatePaymentUrl } = require('./paymentLinks');
 const { randomUUID } = require('node:crypto');
 const { expireStaleCheckouts } = require('./payments');
 const INV = require('./inventory');
@@ -39,10 +39,12 @@ function purchasable(listing) {
   if (!seller || seller.banned || !seller.is_seller) return { ok: false, reason: 'This seller is unavailable.' };
   if (seller.selling_restricted_at) return { ok: false, reason: 'This seller is temporarily unavailable.' };
   if (!seller.email_verified_at) return { ok: false, reason: "This seller hasn't verified their email yet, so online checkout is paused. You can still message them." };
-  const link = resolveLink(listing, seller);
-  // A fixed-price payment link cannot be set by PairPlug per order. The seller must have confirmed that it charges exactly what this listing now costs; otherwise the buyer could be sent to a wrong amount.
-  if (link && link.source === 'listing' && listing.payment_total_ack_cents !== terms(listing).totalCents) return { ok: false, reason: "This seller still needs to confirm that their payment link charges the current total (item price plus shipping), so online checkout is paused. You can message them." };
-  if (!resolveLink(listing, seller)) return { ok: false, reason: "This seller hasn't finished setting up checkout for this item yet." };
+  const link = resolveLink(listing);
+  // Beta rule: only the listing's OWN Stripe link, and only after the seller confirmed it charges exactly the current item + shipping total. The confirmation is the seller's statement;
+  // PairPlug cannot read the amount at Stripe. Any change to price, shipping or link clears it (see saveListing and the listings_ack_follows_total trigger).
+  if (!link) return { ok: false, reason: "This seller hasn't added a Stripe checkout link to this listing yet." };
+  if (listing.payment_total_ack_cents !== terms(listing).totalCents) return { ok: false, reason: "This seller still needs to confirm that their Stripe link charges the current total (item price plus shipping), so online checkout is paused. You can message them." };
+  try { validatePaymentUrl(link.url); } catch { return { ok: false, reason: "This seller's checkout link is no longer accepted, so online checkout is paused. You can message them." }; }
   return { ok: true, seller };
 }
 
@@ -79,7 +81,7 @@ function startPurchase(user, { listingId, address, acknowledged }) {
     const pending = q.get(`SELECT COUNT(*) n FROM orders WHERE buyer_id = ? AND payment_mode = 'external' AND status = 'pending_payment'`, user.id).n;
     if (pending >= MAX_PENDING_PER_BUYER) throw new HttpError(429, `You already have ${MAX_PENDING_PER_BUYER} items waiting for payment. Finish or cancel one first.`);
 
-    const seller = p.seller, link = resolveLink(l, seller), t = terms(l), tNow = now();
+    const seller = p.seller, link = resolveLink(l), t = terms(l), tNow = now();
     const expires = tNow + getSettings().external_hold_minutes * 60;
     const ck = q.run(`INSERT INTO checkouts(buyer_id, idempotency_key, total_cents, mode, ship_name, ship_line1, ship_line2, ship_city, ship_region, ship_postal, ship_country, expires_at, created_at)
       VALUES(?,?,?, 'external', ?,?,?,?,?,?,?,?,?)`, user.id, `ext-${randomUUID()}`, t.totalCents, addr.ship_name, addr.ship_line1, addr.ship_line2, addr.ship_city, addr.ship_region, addr.ship_postal, addr.ship_country, expires, tNow);

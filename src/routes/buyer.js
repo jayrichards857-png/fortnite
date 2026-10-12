@@ -21,6 +21,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const D = require('../discovery');
 const RV = require('../reviews');
 const DISC = require('../disclosure');
+const PP = require('../paymentPolicy');
 const LEGAL = require('../legal');
 const favSet = (user) => new Set(user ? q.all('SELECT listing_id FROM favorites WHERE user_id = ?', user.id).map((f) => f.listing_id) : []);
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
@@ -106,7 +107,8 @@ function directBuyBox(l, user) {
   else if (l.status !== 'active') cta = '';
   else if (!X.purchasable(l).ok) cta = `<p class="small muted" style="margin:0">${esc(X.purchasable(l).reason)} Use <strong>Contact seller</strong> to arrange payment and shipping.</p>`;   // no fake checkout button
   else cta = `<a class="btn block" href="/buy/${l.id}">Buy now</a><p class="small muted" style="margin:6px 0 0">You'll pay <strong>${esc(l.seller_name || l.seller_handle)}</strong> through their external checkout. ${esc(DISC.SHORT)} <a href="/buy/${l.id}">How it works</a></p>`;
-  return `<div class="panel" style="margin:14px 0">${rows}${cta ? `<div style="margin-top:12px">${cta}</div>` : ''}</div>`;
+  const buyable = l.status === 'active' && X.purchasable(l).ok;      // the "Before you pay" warning (with the expected total) sits directly above the Buy now button
+  return `<div class="panel" style="margin:14px 0">${buyable ? PP.buyerWarning(t, { id: 'byp-listing', reportHref: '/support#payment-mismatch' }) : rows}${cta ? `<div style="margin-top:12px">${cta}</div>` : ''}</div>`;
 }
 
 // ---------- Listing detail ----------

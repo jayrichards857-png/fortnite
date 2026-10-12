@@ -11,6 +11,7 @@ const auth = require('../auth');
 const X = require('../externalCheckout');
 const RV = require('../reviews');
 const DISC = require('../disclosure');
+const PP = require('../paymentPolicy');
 const { validatePaymentUrl, trackingUrl, LABEL_PROVIDERS } = require('../paymentLinks');
 const L = require('../listings');
 const SP = require('./support');
@@ -58,7 +59,7 @@ r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {
       <div class="summary-row"><span>Item</span><span>${money(t.itemCents)}</span></div>
       <div class="summary-row"><span>Shipping${t.shippingPayer === 'seller' ? ' (seller pays)' : ' (flat fee)'}</span><span>${t.shippingCents ? money(t.shippingCents) : 'Free'}</span></div>
       <div class="summary-row total"><span>You pay the seller</span><span>${money(t.totalCents)}</span></div>
-      <p class="small muted">The seller's checkout must charge exactly this amount. If it doesn't, don't pay and message the seller.</p></aside></div>`;
+      ${PP.buyerWarning(t, { id: 'byp-buy', reportHref: '/support#payment-mismatch' })}</aside></div>`;
   const script = `<script>document.getElementById('buyform').addEventListener('submit',async e=>{e.preventDefault();const f=e.target,b=f.querySelector('button[type=submit]');b.disabled=true;f.querySelectorAll('.err,.form-err').forEach(x=>x.remove());
     const d=Object.fromEntries(new FormData(f));try{const r=await pp.api('POST','/api/purchases',{listingId:Number(f.dataset.listing),acknowledged:f.elements.acknowledged.checked,address:d});location.href=r.redirect}catch(x){const fl=x.fields||{};for(const[k,m]of Object.entries(fl)){const el=f.elements[k];if(el&&el.insertAdjacentHTML)el.insertAdjacentHTML('afterend','<div class="err">'+m+'</div>')}f.insertAdjacentHTML('afterbegin','<div class="form-err" role="alert"></div>');f.firstChild.textContent=x.message;b.disabled=false}})</script>`;
   res.send(V.layout({ user: req.user, path: '/buy', title: 'Continue to seller checkout', body, scripts: script }));
@@ -84,7 +85,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, (req, res, next) => {
   const pending = o.status === 'pending_payment', until = ck.expires_at;
   const action = pending ? `<div class="panel notice strong"><h3>Step 2: pay the seller</h3>
       <p>Your item is reserved until <strong>${new Date(until * 1000).toLocaleString()}</strong>. Pay <strong>${money(o.total_cents)}</strong> on the seller's own checkout page (opens in the seller's payment provider, not PairPlug).</p>
-      <p class="small" style="border-left:3px solid var(--warn,#c9822b);padding-left:10px"><strong>Check before you pay:</strong> the seller's page should show <strong>${money(o.total_cents)}</strong> in total (item ${money(o.subtotal_cents)} + shipping ${money(o.shipping_cents)}). PairPlug cannot set or read the amount on that page. If it shows a different amount, the wrong item, or a "test mode" / "sandbox" notice, <strong>do not pay</strong>: cancel this purchase and <a href="/support">report it</a>.</p>
+      ${PP.buyerWarning({ itemCents: o.subtotal_cents, shippingCents: o.shipping_cents, totalCents: o.total_cents }, { id: 'byp-order', reportHref: `/support?order=${o.id}#payment-mismatch` })}
       <p><a class="btn" href="/orders/${o.id}/pay" target="_blank" rel="noopener noreferrer">Go to seller checkout ↗</a></p>
       ${o.buyer_claimed_paid_at ? '<p class="small"><strong>You told us you paid.</strong> The seller has been notified and will confirm once they see the payment. Your reservation is extended while they check.</p>'
       : `<p class="small muted">Already paid? Tell the seller. This does <em>not</em> confirm the order — only the seller can do that.</p><p><button class="btn ghost" data-post="/api/orders/${o.id}/claim-paid">I've completed payment</button>
@@ -134,7 +135,7 @@ r.get('/dashboard/settings', S, (req, res) => {
     <div class="panel notice"><ul class="plain"><li>Buyers pay <strong>you</strong>, directly, through your own Stripe Payment Link. <strong>PairPlug never holds or touches the money</strong> and takes no fee in the beta.</li>
       <li>You are responsible for confirming payment, refunds, chargebacks and taxes.</li><li>A Payment Link has a <strong>fixed product and price</strong>. The safest setup is a link <em>per listing</em> (set it in the listing editor). Make sure it charges the item price plus the shipping fee you show on PairPlug.</li></ul></div>
     <label for="cu">Default payment link <span class="opt">(optional)</span></label><input id="cu" name="checkout_url" inputmode="url" placeholder="https://buy.stripe.com/…" value="${esc(u.checkout_url || '')}" autocomplete="off">
-    <div class="hint">Accepted: HTTPS links on ${esc(hosts)}.</div>
+    <div class="hint">Accepted: HTTPS Stripe Payment Links on ${esc(hosts)}. <strong>A default link can no longer start a checkout in the beta</strong>: add a Stripe link to each listing and confirm it charges that listing's item price plus shipping.</div>
     <label style="font-weight:400;display:flex;gap:8px;margin-top:10px"><input type="checkbox" name="checkout_url_any_amount"${u.checkout_url_any_amount ? ' checked' : ''}> This default link lets the buyer <strong>enter any amount</strong> (a “customer chooses price” link), so it can be used for any of my listings. Leave unticked if it is a fixed-price link — it will then <em>not</em> be used for listings without their own link.</label>
     <button class="btn" type="submit" style="margin-top:16px">Save settings</button></form>
     <p class="small muted">Testing tip: this link is untested with live Stripe in this beta build. Do a real test purchase of a cheap item with a friend before announcing the store.</p>`;

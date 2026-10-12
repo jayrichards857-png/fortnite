@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
 // values fall back to the *restrictive* setting, and every problem is reported (production refuses to start; see server.js).
 const envProblems = [];
 const val = (k) => String(env[k] ?? '').trim();
-for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'LEGAL_ENTITY', 'LEGAL_ADDRESS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'SHIPPO_API_KEY', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
+for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'LEGAL_ENTITY', 'LEGAL_ADDRESS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'MAX_SUSPENSION_DAYS', 'SHIPPO_API_KEY', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
   if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
 if (val('SHIPPO_API_KEY') && !/^shippo_(test|live)_\S+$/.test(val('SHIPPO_API_KEY'))) envProblems.push('SHIPPO_API_KEY must start with shippo_test_ (live keys are refused in this release)');
 const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
@@ -85,6 +85,9 @@ module.exports = {
   shippo: { apiKey: val('SHIPPO_API_KEY'), mode: /^shippo_test_\S+$/.test(val('SHIPPO_API_KEY')) ? 'test' : /^shippo_live_\S+$/.test(val('SHIPPO_API_KEY')) ? 'live-blocked' : val('SHIPPO_API_KEY') ? 'invalid' : 'off' },
   // Set ONLY by scripts/shipping-sandbox.js (isolated throwaway database full of clearly-marked test data). Ignored in production.
   sandbox: env.PAIRPLUG_SANDBOX === '1' && !isProd,
+  // Enforcement for payment-link violations. Documented in docs/PAYMENT_LINK_POLICY.md. A temporary selling suspension can never exceed this many days (default 5, hard ceiling 30);
+  // longer measures are the existing restrict/ban actions. Nothing is ever applied automatically.
+  enforcement: { maxSuspensionDays: /^\d+$/.test(val('MAX_SUSPENSION_DAYS')) ? Math.min(30, Math.max(1, Number(val('MAX_SUSPENSION_DAYS')))) : 5 },
   carrierWebhookSecret: env.CARRIER_WEBHOOK_SECRET || '',
   rateLimitScale: Number(env.RATE_LIMIT_SCALE || 1), // tests raise this; production keeps 1
   naCountries: ['US', 'CA', 'MX'], // North America

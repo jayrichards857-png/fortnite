@@ -149,7 +149,7 @@ function restrictSelling(actor, targetId, reason, caseId) {
   return tx(() => {
     const t = target(actor, targetId);
     if (t.selling_restricted_at) throw new HttpError(409, 'Selling is already restricted for this seller.');
-    q.run('UPDATE users SET selling_restricted_at = ?, selling_restricted_reason = ?, selling_restricted_case = ? WHERE id = ?', now(), why, caseId ? Number(caseId) : null, t.id);
+    q.run('UPDATE users SET selling_restricted_at = ?, selling_restricted_until = NULL, selling_restricted_reason = ?, selling_restricted_case = ? WHERE id = ?', now(), why, caseId ? Number(caseId) : null, t.id);
     const paused = q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE seller_id = ? AND status IN ('active','draft')", now(), t.id).changes;
     const warned = F.warnPendingBuyers(t.id, 'selling is paused');
     notify(t.id, `restrict:${t.id}:${now()}`, 'Selling is paused on your account', `PairPlug is reviewing a report. Your listings are paused and you cannot publish or take new orders for now. You can still log in, handle existing orders and reply to PairPlug. Email ${config.supportEmail} if you have questions.`, '/support');
@@ -157,12 +157,50 @@ function restrictSelling(actor, targetId, reason, caseId) {
     return { paused, warned };
   });
 }
+/**
+ * TEMPORARY selling suspension for a payment-link / checkout-accuracy violation (docs/PAYMENT_LINK_POLICY.md). It is never automatic: a staff member must
+ *   * name an existing case about THIS seller (a documented review, not just a URL pattern or one click),
+ *   * give a reason of at least 20 characters and explicitly confirm,
+ *   * choose 1..MAX_SUSPENSION_DAYS (default 5) days.
+ * Effects are the same as "restrict selling" (listings paused, no new orders, store hidden, unpaid buyers warned) plus an end date after which it lifts itself. It does not touch any
+ * order's payment state and does not affect money in the seller's Stripe account. The seller can appeal at /dashboard/appeal.
+ */
+function suspendSelling(actor, targetId, { days, reason, caseId, confirm } = {}) {
+  const max = config.enforcement.maxSuspensionDays, n = /^\d+$/.test(String(days)) ? Number(days) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > max) throw new HttpError(422, 'Please fix the highlighted fields.', { days: `Choose a whole number of days from 1 to ${max}. Longer measures are the restrict and ban actions.` });
+  const why = clean(reason, 1001); if (why.length < 20) throw new HttpError(422, 'Please fix the highlighted fields.', { reason: 'A suspension needs a documented reason of at least 20 characters.' });
+  if (confirm !== true) throw new HttpError(422, 'Please confirm the suspension.', { confirm: 'Required' });
+  return tx(() => {
+    const t = target(actor, targetId);
+    const c = caseId ? q.get('SELECT id, subject_user_id FROM cases WHERE id = ?', Number(caseId)) : null;
+    if (!c || c.subject_user_id !== t.id) throw new HttpError(422, 'Please fix the highlighted fields.', { caseId: 'Link the case that documents this review (it must be a case about this seller).' });
+    if (t.selling_restricted_at) throw new HttpError(409, 'Selling is already restricted for this seller. Lift that first if you want to replace it with a timed suspension.');
+    const until = now() + n * 86400;
+    q.run('UPDATE users SET selling_restricted_at = ?, selling_restricted_until = ?, selling_restricted_reason = ?, selling_restricted_case = ? WHERE id = ?', now(), until, why, c.id, t.id);
+    const paused = q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE seller_id = ? AND status IN ('active','draft')", now(), t.id).changes;
+    const warned = F.warnPendingBuyers(t.id, 'selling is paused');
+    notify(t.id, `suspend:${c.id}:${now()}`, `Selling is suspended for ${n} day${n === 1 ? '' : 's'}`, `After a review, your listings are paused and you cannot publish or take new orders until ${new Date(until * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC. You can still log in and handle existing orders. If you think this is a mistake, appeal from your dashboard or email ${config.supportEmail}.`, '/dashboard/appeal');
+    record(actor, t, 'restrict_selling', `Temporary suspension (${n} day${n === 1 ? '' : 's'}, until ${new Date(until * 1000).toISOString().slice(0, 10)}): ${why}`, c.id);
+    audit(actor, 'seller_suspended_temporarily', { type: 'user', id: t.id, detail: { days: n, until, case: c.id } });
+    return { paused, warned, until };
+  });
+}
+/** Lift every timed suspension whose end has passed. Cheap and idempotent: called by the background tick and (throttled) on requests. */
+function liftExpired() {
+  const due = q.all('SELECT id FROM users WHERE selling_restricted_until IS NOT NULL AND selling_restricted_until <= ?', now());
+  for (const u of due) tx(() => {
+    if (q.run('UPDATE users SET selling_restricted_at = NULL, selling_restricted_until = NULL, selling_restricted_reason = NULL, selling_restricted_case = NULL WHERE id = ? AND selling_restricted_until IS NOT NULL AND selling_restricted_until <= ?', u.id, now()).changes !== 1) return;
+    notify(u.id, `suspension-ended:${u.id}:${now()}`, 'Your selling suspension has ended', 'Selling is available again. Your paused listings stay paused until you publish them again.', '/dashboard/inventory');
+    audit('system', 'seller_suspension_expired', { type: 'user', id: u.id });
+  });
+  return due.length;
+}
 function liftRestriction(actor, targetId, reason, caseId) {
   const why = reasonOf(reason);
   return tx(() => {
     const t = target(actor, targetId);
     if (!t.selling_restricted_at) throw new HttpError(409, 'Selling is not restricted for this seller.');
-    q.run('UPDATE users SET selling_restricted_at = NULL, selling_restricted_reason = NULL, selling_restricted_case = NULL WHERE id = ?', t.id);
+    q.run('UPDATE users SET selling_restricted_at = NULL, selling_restricted_until = NULL, selling_restricted_reason = NULL, selling_restricted_case = NULL WHERE id = ?', t.id);
     notify(t.id, `unrestrict:${t.id}:${now()}`, 'Selling is available again', 'PairPlug lifted the restriction. Your paused listings stay paused until you publish them again.', '/dashboard/inventory');
     record(actor, t, 'lift_restriction', why, caseId);
   });
@@ -190,4 +228,4 @@ function userView(id) {
 }
 const recentActions = (n = 50) => q.all('SELECT a.*, x.display_name actor, t.display_name targetName, t.handle FROM moderation_actions a JOIN users x ON x.id = a.actor_id JOIN users t ON t.id = a.target_id ORDER BY a.id DESC LIMIT ?', n);
 
-module.exports = { isStaff, slots, invite, revokeInvite, lookup, accept, deactivate, roster, ban, unban, restrictSelling, liftRestriction, searchUsers, userView, recentActions, maskEmail, MIN_PASSWORD, TTL_HOURS };
+module.exports = { suspendSelling, liftExpired, isStaff, slots, invite, revokeInvite, lookup, accept, deactivate, roster, ban, unban, restrictSelling, liftRestriction, searchUsers, userView, recentActions, maskEmail, MIN_PASSWORD, TTL_HOURS };

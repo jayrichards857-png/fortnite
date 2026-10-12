@@ -8,6 +8,8 @@ const { esc, date, HttpError, money } = require('../util');
 const V = require('../views');
 const auth = require('../auth');
 const M = require('../moderation');
+const F = require('../fraud');
+const PP = require('../paymentPolicy');
 const { page: adminPage, stat } = require('./admin');
 
 const r = express.Router();
@@ -77,13 +79,23 @@ r.get('/moderation/users/:id(\\d+)', S, (req, res) => {
       if(reason.length<5){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent='Write a reason of at least 5 characters first.';return}
       if(!confirm('Really '+T[b.dataset.mod]+' this account?\\n\\nReason: '+reason))return;
       try{await pp.api('POST','/api/moderation/users/${u.id}/'+b.dataset.mod,{reason:reason,caseId:f.caseId.value||null});location.href='/moderation/users/${u.id}?done='+b.dataset.mod}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})})()</script>`;
-  const done = { ban: 'Account banned. Sessions ended and listings paused.', unban: 'Account unbanned.', restrict: 'Selling restricted.', lift: 'Selling restriction lifted.' }[req.query.done];
+  const risk = u.is_seller ? F.sellerRisk(u.id) : null, maxDays = PP.maxSuspensionDays();
+  const suspendForm = blocked || u.banned || u.selling_restricted_at || !u.is_seller ? '' : `<form id="suspform" class="panel" aria-labelledby="susp-h"><h3 id="susp-h">Temporary selling suspension (up to ${maxDays} day${maxDays === 1 ? '' : 's'})</h3>
+    <p class="small muted" style="margin-top:0">For payment-link or checkout-accuracy violations after a documented review. Never automatic. ${risk ? `This seller has <strong>${risk.reporters}</strong> different reporter(s), ${risk.mismatch} payment-mismatch report(s) and ${risk.suspensions} earlier timed suspension(s) on record.${risk.reporters <= 1 ? ' <strong>Only one reporter so far: check the order and the seller\'s side before suspending.</strong>' : ''}` : ''} The seller keeps their login, can handle existing orders, and can appeal.</p>
+    <div class="row"><div><label for="sd">Days</label><select id="sd" name="days">${Array.from({ length: maxDays }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select></div><div><label for="sc2">Case number <span class="opt">(required)</span></label><input id="sc2" name="caseId" inputmode="numeric" pattern="[0-9]+" required></div></div>
+    <label for="sr2">Documented reason <span class="opt">(20+ characters, recorded)</span></label><textarea id="sr2" name="reason" maxlength="1000" minlength="20" required></textarea>
+    <label style="font-weight:400;display:flex;gap:8px;margin-top:8px"><input type="checkbox" name="confirm" required> I reviewed the case and confirm this suspension. It does not freeze, hold or refund anything in the seller's Stripe account.</label>
+    <button class="btn danger small" type="submit" style="margin-top:10px">Suspend selling</button><div id="suspout" aria-live="polite"></div></form>
+    <script>document.getElementById('suspform').addEventListener('submit',async function(e){e.preventDefault();var f=e.target,o=document.getElementById('suspout');o.textContent='';var d=Object.fromEntries(new FormData(f));
+      if(!confirm('Suspend selling for '+d.days+' day(s)?\\n\\nCase #'+d.caseId+'\\nReason: '+d.reason))return;d.confirm=true;
+      try{await pp.api('POST','/api/moderation/users/${u.id}/suspend',d);location.href='/moderation/users/${u.id}?done=suspend'}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>`;
+  const done = { suspend: 'Selling suspended for the chosen number of days.', ban: 'Account banned. Sessions ended and listings paused.', unban: 'Account unbanned.', restrict: 'Selling restricted.', lift: 'Selling restriction lifted.' }[req.query.done];
   adminPage(req, res, { title: u.display_name, body: `<p><a href="/moderation/users">← Find users</a></p><h1>${esc(u.display_name)} ${stateBadges(u)}</h1>
     ${done ? `<div class="panel notice strong" role="status">${esc(done)}</div>` : ''}
     <p class="muted small">${roleLabel(u)}${u.handle ? ` · @${esc(u.handle)}` : ''}${u.store_name ? ` · store “${esc(u.store_name)}”` : ''} · joined ${date(u.created_at)} · ${esc(u.emailMasked)} · ${v.orders.asBuyer} order(s) as buyer, ${v.orders.asSeller} as seller${u.handle && !u.banned && !u.selling_restricted_at ? ` · <a href="/s/${esc(u.handle)}" target="_blank" rel="noopener">public profile ↗</a>` : ''}</p>
     ${u.banned ? `<div class="panel notice"><strong>Banned</strong> ${when(u.banned_at)} UTC${u.bannedBy ? ` by ${esc(u.bannedBy.name)} (${u.bannedBy.admin ? 'administrator' : 'moderator'})` : ' (before the moderation log existed)'}.<br>Reason: ${esc(u.banned_reason || 'not recorded')}</div>` : ''}
     ${u.selling_restricted_at ? `<div class="panel notice"><strong>Selling restricted</strong> since ${when(u.selling_restricted_at)} UTC. Reason: ${esc(u.selling_restricted_reason || 'not recorded')}</div>` : ''}
-    <div class="two"><section>${controls}
+    <div class="two"><section>${controls}${suspendForm}
       <div class="panel"><h3>Public bio</h3><p style="margin:0">${u.bio ? esc(u.bio) : '<span class="muted">None</span>'}</p></div>
       <div class="panel"><h3>Listings (${v.listings.length})</h3>${v.listings.length ? `<ul class="plain">${v.listings.map((l) => `<li>#${l.id} ${esc(l.title)} · ${money(l.price_cents)} · ${label(l.status)}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}</div></section>
     <aside><div class="panel"><h3>Reports &amp; cases</h3>${v.cases.length ? `<ul class="plain">${v.cases.map((c) => `<li><a href="/admin/cases/${c.id}">Case #${c.id}</a> · ${label(c.kind)} · ${label(c.status)} · they are the ${c.role}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}</div>
@@ -94,6 +106,29 @@ r.post('/api/moderation/users/:id(\\d+)/ban', S, act(M.ban));
 r.post('/api/moderation/users/:id(\\d+)/unban', S, act(M.unban));
 r.post('/api/moderation/users/:id(\\d+)/restrict', S, act(M.restrictSelling));
 r.post('/api/moderation/users/:id(\\d+)/lift', S, act(M.liftRestriction));
+r.post('/api/moderation/users/:id(\\d+)/suspend', S, (req, res) => { limit(req); const o = M.suspendSelling(req.user, req.params.id, { days: req.body.days, reason: req.body.reason, caseId: req.body.caseId, confirm: req.body.confirm }); res.set('Cache-Control', 'no-store').json({ ok: true, ...o }); });
+
+// ------------------------------------------------------------------ payment-link review (staff): mistakes, suspicious links, repeated violations, appeals
+r.get('/moderation/payment-links', S, (req, res) => {
+  const changes = q.all(`SELECT a.id, a.action, a.detail, a.created_at, a.target_id, l.title, u.handle FROM audit_log a LEFT JOIN listings l ON l.id = CAST(a.target_id AS INTEGER) LEFT JOIN users u ON u.id = l.seller_id
+    WHERE a.action IN ('listing_payment_link_changed','listing_payment_total_acknowledged','listing_payment_ack_cleared') ORDER BY a.id DESC LIMIT 100`);
+  const mism = q.all("SELECT c.id, c.status, c.created_at, c.order_id, s.handle, s.id sid FROM cases c JOIN users s ON s.id = c.subject_user_id WHERE c.payment_mismatch = 1 ORDER BY c.id DESC LIMIT 50");
+  const repeat = q.all(`SELECT u.id, u.handle, u.selling_restricted_at, u.selling_restricted_until,
+      (SELECT COUNT(DISTINCT reporter_id) FROM cases c WHERE c.subject_user_id = u.id AND c.payment_mismatch = 1) mismatch_reporters,
+      (SELECT COUNT(*) FROM audit_log a WHERE a.action = 'seller_suspended_temporarily' AND a.target_id = CAST(u.id AS TEXT)) suspensions
+    FROM users u WHERE u.is_seller = 1 AND ((SELECT COUNT(DISTINCT reporter_id) FROM cases c WHERE c.subject_user_id = u.id AND c.payment_mismatch = 1) >= 2 OR (SELECT COUNT(*) FROM audit_log a WHERE a.action = 'seller_suspended_temporarily' AND a.target_id = CAST(u.id AS TEXT)) >= 1) ORDER BY mismatch_reporters DESC, suspensions DESC LIMIT 50`);
+  const appeals = q.all("SELECT c.id, c.status, c.created_at, s.handle FROM cases c JOIN users s ON s.id = c.subject_user_id WHERE c.kind = 'seller_issue' AND c.reporter_id = c.subject_user_id ORDER BY (c.status IN ('open','awaiting_seller','under_review')) DESC, c.id DESC LIMIT 50");
+  const unconfirmed = q.all("SELECT l.id, l.title, s.handle FROM listings l JOIN users s ON s.id = l.seller_id WHERE l.status = 'active' AND l.payment_url IS NOT NULL AND l.payment_total_ack_cents IS NULL ORDER BY l.id DESC LIMIT 100");
+  const det = (d) => { try { const o = JSON.parse(d || '{}'); return Object.entries(o).map(([k, v]) => `${k}: ${v === null ? '—' : v}`).join(' · '); } catch { return d || ''; } };
+  const tbl = (head, rows) => (rows.length ? `<div class="tablewrap"><table><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '<p class="muted small">Nothing to show.</p>');
+  adminPage(req, res, { title: 'Payment-link review', body: `<h1>Payment-link review</h1>
+    <p class="small muted">Beta rule: Stripe-hosted links only, charging the listing price plus disclosed shipping (<code>docs/PAYMENT_LINK_POLICY.md</code>). PairPlug checks the link's address but <strong>cannot see the amount Stripe charges</strong>; nothing here is automatic. Suspensions last at most ${PP.maxSuspensionDays()} day(s), need a linked case and a documented reason, and can be appealed.</p>
+    <h2>Payment-mismatch reports (${mism.length})</h2>${tbl(['Case', 'Seller', 'Order', 'Status', 'Reported (UTC)'], mism.map((c) => `<tr><td><a href="/admin/cases/${c.id}">#${c.id}</a></td><td><a href="/moderation/users/${c.sid}">@${esc(c.handle)}</a></td><td>#${c.order_id || '—'}</td><td>${label(c.status)}</td><td>${when(c.created_at)}</td></tr>`))}
+    <h2>Possible repeat violations</h2>${tbl(['Seller', 'Different buyers reporting a mismatch', 'Earlier timed suspensions', 'Now'], repeat.map((s) => `<tr><td><a href="/moderation/users/${s.id}">@${esc(s.handle)}</a></td><td class="num">${s.mismatch_reporters}</td><td class="num">${s.suspensions}</td><td>${s.selling_restricted_at ? `restricted${s.selling_restricted_until ? ` until ${when(s.selling_restricted_until)}` : ''}` : '—'}</td></tr>`))}
+    <h2>Appeals (${appeals.filter((a) => ['open', 'awaiting_seller', 'under_review'].includes(a.status)).length} open)</h2>${tbl(['Appeal', 'Seller', 'Status', 'Opened (UTC)'], appeals.map((c) => `<tr><td><a href="/admin/cases/${c.id}">#${c.id}</a></td><td><a href="/s/${esc(c.handle)}">@${esc(c.handle)}</a></td><td>${label(c.status)}</td><td>${when(c.created_at)}</td></tr>`))}
+    <h2>Active listings with an unconfirmed link (${unconfirmed.length})</h2><p class="small muted">Buyers cannot check out on these until the seller confirms the total.</p>${tbl(['Listing', 'Seller'], unconfirmed.map((l) => `<tr><td>#${l.id} ${esc(l.title)}</td><td>@${esc(l.handle)}</td></tr>`))}
+    <h2>Recent link changes and confirmations</h2>${tbl(['When (UTC)', 'Event', 'Listing', 'Seller', 'Detail'], changes.map((a) => `<tr><td>${when(a.created_at)}</td><td>${label(a.action.replace('listing_payment_', ''))}</td><td>#${esc(a.target_id)} ${esc(a.title || '')}</td><td>${a.handle ? '@' + esc(a.handle) : ''}</td><td class="small">${esc(det(a.detail))}</td></tr>`))}` });
+});
 
 // ------------------------------------------------------------------ administrator-only: moderator slots
 r.get('/admin/moderators', A, (req, res) => {

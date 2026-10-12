@@ -193,18 +193,16 @@ test('seller order list: no buyer location and no fake "payout" before payment i
   assert.match((await seller.get('/dashboard/orders')).text, /Zzyzxville/, 'location shown only after the seller confirms payment');
 });
 
-test('the payment destination is frozen at order time (seller default-link edits cannot redirect an open order)', async () => {
-  const seller = await H.newSeller('Frz'), buyer = await H.newUser('Buyer'), id0 = null; void id0;
-  const settings = { store_name: 'Frz', country: 'US', region: 'NY', city: 'B' };
-  await seller.put('/api/seller/settings', { ...settings, checkout_url: 'https://buy.stripe.com/test_ORIGINAL_any', checkout_url_any_amount: true });
-  const file = await H.upload(seller);
-  const l = await seller.post('/api/seller/listings', { title: 'Default-link item', category: 'clothing', condition: 'good', price: '20.00', shipping: '4.00', weight_oz: '8', images: [file], status: 'active' });
+test('the payment destination is frozen at order time (editing the listing\'s link cannot redirect an open order)', async () => {
+  const seller = await H.newSeller('Frz'), buyer = await H.newUser('Buyer');
+  const file = await H.upload(seller), mk = (extra) => ({ title: 'Link item', category: 'clothing', condition: 'good', price: '20.00', shipping: '4.00', weight_oz: '8', images: [file], status: 'active', ...extra });
+  const l = await seller.post('/api/seller/listings', mk({ payment_url: 'https://buy.stripe.com/test_ORIGINAL_one', payment_amount_ack: true, quantity: 2 }));
   assert.equal(l.status, 200);
   const o = (await buy(buyer, l.json.id)).json.orderId;
-  assert.equal(JSON.parse(q.get('SELECT snapshot_json s FROM orders WHERE id = ?', o).s).paymentLink.url, 'https://buy.stripe.com/test_ORIGINAL_any');
-  await seller.put('/api/seller/settings', { ...settings, checkout_url: 'https://buy.stripe.com/test_DIFFERENT_product', checkout_url_any_amount: true });
+  assert.equal(JSON.parse(q.get('SELECT snapshot_json s FROM orders WHERE id = ?', o).s).paymentLink.url, 'https://buy.stripe.com/test_ORIGINAL_one');
+  const edit = await seller.put(`/api/seller/listings/${l.json.id}`, mk({ payment_url: 'https://buy.stripe.com/test_DIFFERENT_prod', payment_amount_ack: true, payment_ack_total_cents: 2400, payment_ack_url: 'https://buy.stripe.com/test_DIFFERENT_prod', quantity: 2 })); assert.equal(edit.status, 200, edit.text);
   const r = await buyer.get(`/orders/${o}/pay`);
-  assert.equal(r.status, 302); assert.equal(new URL(r.headers.get('location')).pathname, '/test_ORIGINAL_any');
+  assert.equal(r.status, 302); assert.equal(new URL(r.headers.get('location')).pathname, '/test_ORIGINAL_one');
 });
 
 // ------------------------------------------------------------------ re-assert the launch-critical money invariants end to end

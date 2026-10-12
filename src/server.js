@@ -32,6 +32,8 @@ app.use('/uploads', express.static(config.uploadDir, { maxAge: '7d', index: fals
 app.use(express.static(path.join(config.root, 'public'), { maxAge: config.isProd ? '1h' : 0 }));
 
 // Webhook routes need the raw body, so they are mounted before the JSON parser (they apply their own parsers).
+let lastSweep = 0;
+app.use((req, res, next) => { if (Date.now() - lastSweep > 5000) { lastSweep = Date.now(); try { require('./moderation').liftExpired(); } catch (e) { console.error('suspension sweep failed', e.message); } } next(); });   // timed suspensions end on time even between background ticks
 app.use(auth.loadUser);
 app.use((req, res, next) => (req.path.startsWith('/webhooks/') || req.path === '/api/uploads' ? next() : express.json({ limit: '2mb' })(req, res, next)));
 app.use(auth.csrfGuard);
@@ -80,7 +82,7 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 function startJobs() {
   // Background sweeps. Both are idempotent and also safe if several app instances run them.
   let last = 0;
-  const tick = () => { try { payments.expireStaleCheckouts(); escrow.autoReleaseDue();
+  const tick = () => { try { payments.expireStaleCheckouts(); escrow.autoReleaseDue(); require('./moderation').liftExpired();
     if (Date.now() - last > 3600e3) { last = Date.now(); require('./images').cleanupOrphanUploads(); require('./discovery').purgeSearchLog(); require('./db').q.run('DELETE FROM sessions WHERE expires_at < ?', Math.floor(Date.now() / 1000)); } } catch (e) { console.error('job error', e); } };
   tick(); return setInterval(tick, 60 * 1000).unref();
 }

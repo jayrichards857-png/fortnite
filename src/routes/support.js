@@ -4,7 +4,7 @@
 const express = require('express');
 const config = require('../config');
 const { q, now } = require('../db');
-const { esc, money, date, HttpError } = require('../util');
+const { esc, money, date, HttpError, dollarsToCents } = require('../util');
 const V = require('../views');
 const auth = require('../auth');
 const cases = require('../cases');
@@ -18,6 +18,7 @@ const A = [auth.requireAdmin];
 const S = [auth.requireStaff];
 const M = require('../moderation');
 const DISC = require('../disclosure');
+const PP = require('../paymentPolicy');
 const U = [auth.requireUser];
 const when = (t) => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') : '—');
 const label = (s) => esc(String(s).replace(/_/g, ' '));
@@ -89,7 +90,13 @@ r.get('/support', (req, res) => {
     <div class="panel"><h3>How problems are handled</h3><ul class="plain"><li><strong>Message the seller first.</strong> Most problems are solved in a conversation. Sellers are expected to reply within <strong>48 hours</strong>. That is an expectation, not a guarantee.</li>
       <li>Buyers pay sellers through the seller's external payment link. <strong>PairPlug does not currently hold or directly control those funds</strong>, and cannot freeze, reverse or refund them. Refunds are issued by the seller in their own payment provider; <strong>your payment provider or card issuer handles chargebacks and payment disputes</strong>, so contact them as well if you were charged and did not get what you paid for.</li>
       <li><strong>Suspect a scam? Report it.</strong> PairPlug reviews reports and evidence, may contact both sides, and can pause listings, restrict selling, suspend accounts and report suspected fraud to the payment provider. These steps affect the seller's PairPlug account, not their payment account, and no outcome (such as a refund) is promised.</li>
+      <li><strong>Sellers:</strong> if a listing was removed or your selling was restricted by mistake, <a href="/dashboard/appeal">appeal from your dashboard</a>.</li>
       <li>Tracking shows where a carrier says a package is. It is not proof of delivery or of what was inside.</li></ul>${DISC.canCannot({ compact: true })}${contact}</div>
+    <div class="panel" id="payment-mismatch"><h3>Report a payment mismatch</h3><p class="small muted" style="margin-top:0">Use this if the amount at the seller's Stripe checkout is different from the total PairPlug showed you. <strong>Do not complete that payment.</strong> You can cancel the purchase on the order page. PairPlug has not verified the amount at Stripe and cannot see it, so your report is how we find out.</p>
+      ${req.user ? `<form data-api="/api/cases/payment-mismatch" data-redirect="/cases/{id}"><label for="pmo">Which order?</label><select id="pmo" name="orderId" required>${q.all("SELECT o.id, o.total_cents, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id).map((o) => `<option value="${o.id}"${String(req.query.order) === String(o.id) ? ' selected' : ''}>Order #${o.id} · @${esc(o.handle)} · PairPlug total ${money(o.total_cents)}</option>`).join('')}</select>
+        <label for="pma">Amount shown at checkout <span class="opt">(optional, e.g. 21.00)</span></label><input id="pma" name="seenAmount" inputmode="decimal" maxlength="12">
+        <label for="pmr">What did you see? <span class="opt">(optional)</span></label><textarea id="pmr" name="reason" maxlength="1500"></textarea>
+        <label>Screenshot <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}<button class="btn danger" type="submit" style="margin-top:10px">Report payment mismatch</button></form>` : `<p><a href="/login?next=${encodeURIComponent('/support#payment-mismatch')}">Log in</a> to send a report. You need an order with the seller to report one.</p>`}</div>
     <div class="panel" id="report-seller"><h3>Report a seller</h3>${req.user ? `<form data-api="/api/cases/seller" data-redirect="/cases/{id}"><label for="sh">Seller handle</label><input id="sh" name="handle" maxlength="40" value="${esc(req.query.seller || '')}" required>
       ${catSelect('sc')}<label for="so">Related order <span class="opt">(optional)</span></label><select id="so" name="orderId"><option value="">None / not sure</option>${q.all("SELECT o.id, s.handle FROM orders o JOIN users s ON s.id = o.seller_id WHERE o.buyer_id = ? AND o.payment_mode = 'external' ORDER BY o.id DESC LIMIT 30", req.user.id).map((o) => `<option value="${o.id}">Order #${o.id} · @${esc(o.handle)}</option>`).join('')}</select>
       <label for="sr">What happened?</label><textarea id="sr" name="reason" maxlength="2000" required></textarea>
@@ -113,6 +120,15 @@ r.get('/cases/:id(\\d+)', U, (req, res) => {
 });
 
 r.post('/api/cases/order', U, (req, res) => res.json({ ok: true, id: cases.reportOrder(req.user, req.body.orderId, { reason: req.body.reason, evidence: evidence(req.body), category: req.body.category }) }));
+// "Report a payment mismatch": the amount at the seller's Stripe checkout did not match the total PairPlug showed. It opens the normal order case (flagged) so staff can review it; it never changes the order's payment state.
+r.post('/api/cases/payment-mismatch', U, (req, res) => {
+  const seen = req.body.seenAmount ? dollarsToCents(req.body.seenAmount) : null;
+  if (req.body.seenAmount && (seen == null || Number.isNaN(seen) || seen < 0 || seen > 100000000)) throw new HttpError(422, 'Please fix the highlighted fields.', { seenAmount: 'Enter the amount as shown at checkout, e.g. 21.00, or leave it blank.' });
+  const o = q.get('SELECT id, total_cents FROM orders WHERE id = ? AND buyer_id = ?', Number(req.body.orderId), req.user.id); if (!o) throw new HttpError(404, 'Order not found');
+  const note = String(req.body.reason || '').trim();
+  const reason = `Payment mismatch. PairPlug expected ${money(o.total_cents)}${seen != null ? `; the buyer says the checkout page showed ${money(seen)}` : ''}.${note ? ` ${note}` : ''}`;
+  res.json({ ok: true, id: cases.reportOrder(req.user, o.id, { reason, evidence: evidence(req.body), category: 'suspected_scam', paymentMismatch: true }) });
+});
 r.post('/api/cases/seller', U, (req, res) => res.json({ ok: true, id: cases.reportSeller(req.user, req.body.handle, { reason: req.body.reason, evidence: evidence(req.body), orderId: req.body.orderId, category: req.body.category }) }));
 r.post('/api/chat/report', U, (req, res) => res.json({ ok: true, id: cases.reportMessage(req.user, { conversationId: req.body.conversationId, messageId: req.body.messageId, reason: req.body.reason }) }));
 r.post('/api/cases/:id(\\d+)/respond', U, (req, res) => { cases.respond(req.user, req.params.id, { body: req.body.body, evidence: evidence(req.body) }); res.json({ ok: true }); });
@@ -130,6 +146,18 @@ r.post('/api/seller/orders/:id(\\d+)/refunded', auth.requireSeller, (req, res) =
   res.json({ ok: true, status: 'seller_reported_refunded' });
 });
 
+// ------------------------------------------------------------------ seller appeals
+r.get('/dashboard/appeal', auth.requireSeller, (req, res) => {
+  const u = req.user, mine = q.all("SELECT id, status, created_at FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? ORDER BY id DESC LIMIT 10", u.id, u.id);
+  const state = u.selling_restricted_at ? `<div class="panel notice"><strong>Selling is ${u.selling_restricted_until ? 'suspended' : 'restricted'}</strong> since ${when(u.selling_restricted_at)} UTC${u.selling_restricted_until ? ` until ${when(u.selling_restricted_until)} UTC` : ' until a staff member lifts it'}. Your listings are paused; you can still handle existing orders.</div>` : '<p class="muted">Your selling is not currently restricted. You can still ask staff to review a removed listing or another decision you think was a mistake.</p>';
+  const body = `<h1>Appeal a decision</h1>${state}
+    <div class="panel"><form data-api="/api/seller/appeal" data-redirect="/cases/{id}"><label for="ar">What should we look at?</label><textarea id="ar" name="reason" maxlength="2000" minlength="10" required placeholder="For example: the payment link does charge item price plus shipping; here is a screenshot."></textarea>
+      <label>Screenshots <span class="opt">(optional, up to 4)</span></label>${uploader('evidence', 4)}<p class="small muted">Staff review appeals by hand, as time allows; there is no guaranteed response time. Email is not an appeal: use this form so the evidence stays with the case, or write to ${V.contactLink()}.</p><button class="btn" type="submit">Send appeal</button></form></div>
+    <h2>Your appeals</h2>${mine.length ? `<ul class="plain">${mine.map((c) => `<li><a href="/cases/${c.id}">Appeal #${c.id}</a> · ${label(c.status)} · ${when(c.created_at)}</li>`).join('')}</ul>` : '<p class="muted small">None yet.</p>'}`;
+  userPage(req, res, { title: 'Appeal', path: '/dashboard/appeal', body, scripts: UP });
+});
+r.post('/api/seller/appeal', auth.requireSeller, (req, res) => res.json({ ok: true, id: cases.appeal(req.user, { reason: req.body.reason, evidence: evidence(req.body) }) }));
+
 // ------------------------------------------------------------------ admin
 r.get('/admin/cases', S, (req, res) => {
   const st = req.query.status === 'closed' ? 'closed' : 'open';
@@ -144,17 +172,22 @@ r.get('/admin/cases/:id(\\d+)', S, (req, res) => {
   const rr = c.order_id && q.get('SELECT * FROM refund_requests WHERE order_id = ? ORDER BY id DESC LIMIT 1', c.order_id);
   const risk = c.subject_user_id && c.kind !== 'message_report' ? F.sellerRisk(c.subject_user_id) : null, provs = risk ? F.providersFor(c) : [], packets = risk ? F.packetsFor(c.id) : [];
   const riskPanel = risk ? `<div class="panel"><h3>Seller: ${esc(risk.user.store_name || risk.user.handle)} <span class="muted small">@${esc(risk.user.handle)}</span></h3>
-      <p class="small" style="margin:0 0 6px"><strong>${risk.reporters}</strong> different buyer(s) have reported this seller (${risk.cases} case(s): ${risk.open} open, ${risk.resolved} resolved, ${risk.dismissed} dismissed). Counts of reports, not findings.</p>
+      <p class="small" style="margin:0 0 6px"><strong>${risk.reporters}</strong> different buyer(s) have reported this seller (${risk.cases} case(s): ${risk.open} open, ${risk.resolved} resolved, ${risk.dismissed} dismissed; ${risk.mismatch} payment-mismatch report(s); ${risk.suspensions} earlier timed suspension(s)). Counts of reports, not findings.</p>
       <p class="small" style="margin:0 0 6px">Orders: ${risk.orders} (${risk.pending} awaiting payment confirmation, ${risk.seller_confirmed} the seller says were paid, ${risk.refunded} refunded). <em>PairPlug has not verified any of these payments.</em></p>
       <p class="small" style="margin:0 0 8px">${risk.user.banned ? '<span class="pill s-disputed">suspended</span> ' : ''}${risk.user.selling_restricted_at ? `<span class="pill s-pending_payment">selling restricted since ${when(risk.user.selling_restricted_at)}</span> <span class="muted">${esc(risk.user.selling_restricted_reason || '')}</span>` : 'No PairPlug restriction.'}</p>
       <p class="small muted" style="margin:0 0 8px">Restricting or suspending affects the seller's PairPlug account only. It does not freeze, hold or reverse anything in their Stripe/PayPal account.</p>
       ${risk.user.selling_restricted_at ? `<form data-api="/api/admin/cases/${c.id}/action" data-reload><input type="hidden" name="action" value="lift_restriction"><input name="reason" maxlength="300" placeholder="Why (optional)" aria-label="Reason to lift"><button class="btn ghost small" type="submit">Lift restriction</button></form>`
         : `<form data-api="/api/admin/cases/${c.id}/action" data-reload><input type="hidden" name="action" value="restrict_selling"><label for="rs">Restrict selling while this is investigated</label><input id="rs" name="reason" maxlength="500" required placeholder="Reason (kept internal)"><p class="small muted">Pauses their listings, blocks publishing and new orders, hides the store, warns buyers with unpaid orders, and stops sending buyers to their payment link.</p><button class="btn danger small" type="submit">Restrict selling</button></form>`}</div>
+    ${!risk.user.banned && !risk.user.selling_restricted_at && c.subject_user_id !== c.reporter_id ? `<form class="panel" data-api="/api/moderation/users/${c.subject_user_id}/suspend" data-reload aria-labelledby="cs-h"><h3 id="cs-h">Temporary selling suspension (up to ${PP.maxSuspensionDays()} days)</h3>
+      <p class="small muted" style="margin:0 0 6px">For payment-link or checkout-accuracy violations after review. ${risk.reporters <= 1 ? '<strong>Only one reporter so far: verify before suspending.</strong> ' : ''}Never automatic; does not touch the seller's Stripe funds.</p>
+      <input type="hidden" name="caseId" value="${c.id}"><label for="csd">Days</label><select id="csd" name="days">${Array.from({ length: PP.maxSuspensionDays() }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select>
+      <label for="csr">Documented reason <span class="opt">(20+ characters)</span></label><textarea id="csr" name="reason" minlength="20" maxlength="1000" required></textarea>
+      <label style="font-weight:400;display:flex;gap:8px;margin-top:6px"><input type="checkbox" name="confirm" required> I reviewed this case and confirm.</label><button class="btn danger small" type="submit" style="margin-top:8px">Suspend selling</button></form>` : ''}
     ${req.user.is_admin ? `<div class="panel"><h3>Payment-provider report</h3><p class="small muted">PairPlug has no integration with Stripe or PayPal: this prepares a factual packet for <strong>you</strong> to send through the provider's own fraud/abuse channel, and records that you did. PairPlug cannot see the provider's response or make it act.</p>
       ${packets.length ? `<ul class="plain">${packets.map((p) => `<li>#${p.id} · ${esc(F.PROVIDER_NAME[p.provider])} · ${p.status === 'submitted' ? `submitted ${when(p.submitted_at)} via ${esc(p.channel)}${p.reference ? ` (ref ${esc(p.reference)})` : ''}` : `prepared ${when(p.prepared_at)}, not yet submitted`} · <a href="/admin/processor-packets/${p.id}">Download packet</a>
         ${p.status === 'prepared' ? `<form data-api="/api/admin/processor-packets/${p.id}/submitted" data-reload style="margin-top:6px"><input name="channel" maxlength="120" placeholder="How you submitted it (e.g. provider's fraud report form)" required aria-label="Channel"><input name="reference" maxlength="120" placeholder="Provider's reference (optional)" aria-label="Reference"><button class="btn small" type="submit">I submitted this</button></form>` : ''}</li>`).join('')}</ul>` : '<p class="small">No packets yet.</p>'}
       ${(provs.length ? provs : [{ provider: 'other', host: '' }]).map((p) => `<button class="btn ghost small" data-post="/api/admin/cases/${c.id}/processor-packet" data-body='${JSON.stringify({ provider: p.provider, host: p.host })}'>Prepare ${esc(F.PROVIDER_NAME[p.provider])} packet${p.host ? ` (${esc(p.host)})` : ''}</button>`).join(' ')}</div>` : ''}` : '';
-  adminPage(req, res, { title: `Case #${c.id}`, body: `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)}${c.category ? ` · reporter says: ${esc(F.CATEGORIES[c.category])}` : ''} · opened ${when(c.created_at)}${o ? ` · order #${o.id} (${label(o.status)}, ${money(o.total_cents)})` : ''}</p>
+  adminPage(req, res, { title: `Case #${c.id}`, body: `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)}${c.category ? ` · reporter says: ${esc(F.CATEGORIES[c.category])}` : ''} ${c.payment_mismatch ? ' · <strong>PAYMENT MISMATCH report</strong>' : ''} · opened ${when(c.created_at)}${o ? ` · order #${o.id} (${label(o.status)}, ${money(o.total_cents)})` : ''}</p>
     <div class="two"><section><div class="panel"><h3>Timeline</h3><ul class="timeline">${v.events.map((e) => eventLine(e, true)).join('')}</ul></div>
       ${F.caseRecords(c.id).map((rc) => `<div class="panel"><h3>Preserved record <span class="muted small">(${when(rc.created_at)} UTC · sha256 ${esc(rc.sha256.slice(0, 12))}…)</span></h3><pre class="small" style="white-space:pre-wrap;margin:0">${esc(rc.content)}</pre><p class="small muted" style="margin:6px 0 0">Frozen when the report was filed. Staff-only; not shown to the buyer or seller.</p></div>`).join('')}
       ${c.conversation_id ? `<div class="panel"><h3>Reported conversation</h3><p class="small muted">Opening it is recorded in the audit log.</p><button class="btn ghost" id="vc">View reported conversation</button><div id="conv"></div></div>` : ''}

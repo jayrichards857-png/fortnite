@@ -64,3 +64,8 @@ Moderators can ban/unban/restrict with a reason, and work cases; only administra
 * **Quantity:** sellers set "Quantity" in the listing editor. Each order takes one unit; unpaid reservations give it back after the hold time.
 * **Payment links:** every listing with its own link needs the seller to tick *"I confirm this link charges exactly item price + shipping"* when saving. Listings created before this release must be re-saved once, or online checkout stays paused for them. Test-mode Stripe links are refused in production.
 * **Reviews:** buyers can review after marking an order received; moderators handle reports at **Moderation → Reviews**.
+
+## Payment-link policy (Stripe-only)
+* Sellers must put a Stripe Payment Link (`buy.stripe.com`) on each listing and tick the confirmation. Changing the price, shipping or link clears it; buyers cannot check out until it is confirmed again. Test-mode links are refused in production.
+* Buyers see a "Before you pay" warning with the expected total and a *Report a payment mismatch* link (opens a flagged case; look at **Moderation → Payment links**).
+* Timed suspensions (1 to `MAX_SUSPENSION_DAYS`, default 5): open the seller from **Moderation → Find users** (or the case page), link the case, write a reason (20+ characters), confirm. Never automatic. Sellers can appeal at `/dashboard/appeal`.

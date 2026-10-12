@@ -58,6 +58,14 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     const lp = await b.pg.textContent('main');
     assert.match(lp, /\$55\.00/); assert.match(lp, /\$7\.00 flat fee, paid by the buyer/); assert.match(lp, /Buy now/); assert.doesNotMatch(lp, /escrow|Add to cart/i);
     step('listing shows item $48 + shipping $7 = total $55 and "Buy now"'); await shot(b.pg, 'beta-02-listing.png');
+    // ---- Stripe-only policy UI: the "Before you pay" warning sits above Buy now with the expected total; the seller form un-ticks its confirmation when the price changes
+    { const warn = await b.pg.locator('.byp').first().innerText(); assert.match(warn, /Before you pay/); assert.match(warn, /Please check that the seller is charging the correct amount for this item, including shipping\./); assert.match(warn, /Expected total\s*\$55\.00/); assert.match(warn, /Report a payment mismatch/);
+      assert.ok((await b.pg.locator('.byp').first().boundingBox()).y < (await b.pg.locator('a.btn:has-text("Buy now")').first().boundingBox()).y, 'warning is above Buy now');
+      await s.pg.goto(B + '/dashboard/listings/' + listingId + '/edit'); assert.ok(await s.pg.isChecked('#pack'), 'confirmation is ticked for the unchanged total'); assert.match(await s.pg.innerText('.payment-policy'), /Stripe checkout links only/); assert.match(await s.pg.innerText('.payment-policy'), /suspension for up to 5 days/);
+      await s.pg.fill('#price', '49'); assert.equal(await s.pg.isChecked('#pack'), false, 'changing the price un-ticks the confirmation'); await s.pg.check('#pack'); assert.equal(await s.pg.inputValue('#pack-cents'), '5600'); await s.pg.fill('#price', '48'); await s.pg.check('#pack');
+      await Promise.all([s.pg.waitForURL(/\/listing\/\d+$/), s.pg.click('[data-save=active]')]);
+      const m = await mk({ width: 375, height: 700 }); await m.pg.goto(B + '/listing/' + listingId); assert.ok(await m.pg.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'warning fits a phone screen'); await m.ctx.close();
+      step('"Before you pay" warning with the expected total above Buy now (also on a phone); seller confirmation un-ticks when the price changes'); }
     await b.pg.click('a:has-text("Buy now")'); await b.pg.waitForURL(/\/login/);
     await b.pg.goto(B + '/register?next=/buy/' + listingId); await b.pg.fill('#n', 'Jordan Buyer'); await b.pg.fill('#e', 'jordan@example.test'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]');
     await b.pg.click('button[type=submit]'); await b.pg.waitForURL((u) => u.pathname.startsWith('/buy/')); step('anonymous buyer is sent to sign up, then back to the purchase page');

@@ -5,6 +5,16 @@
   const cents = (c) => '$' + (c / 100).toFixed(2);
   const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
+  // Payment-link confirmation: the box is only valid for the exact total and link on screen. Changing the price, shipping or link un-ticks it, and ticking it records what was confirmed.
+  const pack = form.elements.payment_amount_ack;
+  if (pack) {
+    const toCents = (s) => { const n = Math.round(parseFloat(String(s || '').replace(/[^0-9.]/g, '')) * 100); return Number.isFinite(n) ? n : 0; };
+    const total = () => toCents(form.elements.price.value) + ((form.querySelector('[name=shipping_payer]:checked') || {}).value === 'seller' ? 0 : toCents(form.elements.shipping.value));
+    const stamp = () => { $('#pack-total').textContent = pack.checked ? '(' + cents(total()) + ')' : ''; $('#pack-cents').value = pack.checked ? String(total()) : ''; $('#pack-url').value = pack.checked ? form.elements.payment_url.value.trim() : ''; };
+    ['price', 'shipping', 'payment_url'].forEach((n) => form.elements[n].addEventListener('input', () => { if (pack.checked) { pack.checked = false; $('#pack-total').textContent = '— changed: tick again to confirm the new total'; } }));
+    form.querySelectorAll('[name=shipping_payer]').forEach((r) => r.addEventListener('change', () => { if (pack.checked) { pack.checked = false; $('#pack-total').textContent = '— changed: tick again to confirm the new total'; } }));
+    pack.addEventListener('change', stamp); stamp();
+  }
   async function save(status) {
     form.querySelectorAll('.err,.form-err').forEach((e) => e.remove());
     const body = Object.fromEntries(new FormData(form)); body.status = status; if (form.elements.payment_amount_ack) body.payment_amount_ack = form.elements.payment_amount_ack.checked;
