@@ -13,7 +13,7 @@ const invitations = require('../invitations');
 
 const r = express.Router();
 const A = [auth.requireAdmin];
-const nav = (p) => `<nav class="subnav">${[['/admin', 'Overview'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/responses', 'Response times'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']].map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+const nav = (p) => `<nav class="subnav">${[['/admin', 'Overview'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/responses', 'Response times'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']].map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, path: '/admin', ...opts, body: nav(req.path) + opts.body }));
 const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ''}</div>`;
 
@@ -123,6 +123,7 @@ r.post('/api/admin/users/:id(\\d+)/ban', A, (req, res) => {
       q.run('DELETE FROM sessions WHERE user_id = ?', id);
       // Take the user's unsold listings off the marketplace; items in a live checkout stay reserved so orders can complete.
       q.run("UPDATE listings SET status = 'archived' WHERE seller_id = ? AND status = 'active'", id);
+      require('../fraud').warnPendingBuyers(id, 'the account was suspended');
     }
   });
   res.json({ ok: true });

@@ -115,6 +115,6 @@ test('admin actions: pause listing / suspend seller are audited and scoped to th
 
 test('support page is public, honest about limits and mentions the 48-hour expectation', async () => {
   const anon = new H.Client(); const t = (await anon.get('/support')).text;
-  assert.ok(/48 hours/.test(t) && /does not hold, move or refund money/.test(t));
+  assert.ok(/48 hours/.test(t) && /does not hold, move, freeze or refund money/.test(t));
   assert.equal((await anon.get('/cases/1')).status, 302);
 });

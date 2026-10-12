@@ -6,7 +6,7 @@ const { q, tx, now } = require('./db');
 const { HttpError, clean, esc, money } = require('./util');
 const V = require('./views');
 
-const PUBLIC = 'u.is_seller = 1 AND u.banned = 0';
+const PUBLIC = 'u.is_seller = 1 AND u.banned = 0 AND u.selling_restricted_at IS NULL';
 const SF = "LEFT JOIN (SELECT seller_id, json_extract(published_json,'$.headline') headline, json_extract(published_json,'$.about') about, json_extract(published_json,'$.avatar') avatar FROM storefronts) sf ON sf.seller_id = u.id";
 const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 const termsOf = (s) => clean(s || '', 100).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);

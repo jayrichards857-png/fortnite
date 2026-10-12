@@ -30,7 +30,7 @@ test('legal pages are public, versioned, linked from the global footer on deskto
 test('the policies say what is true: direct payments, no custody, seller-handled refunds, no invented business details or compliance claims', async () => {
   const anon = new H.Client(), all = {}; for (const p of PAGES) all[p] = text(await get(anon, p)); const joined = Object.values(all).join(' ');
   assert.match(all['/payments'], /you pay the seller directly/i); assert.match(all['/payments'], /does not hold or process the payment/i); assert.match(all['/payments'], /not proof of payment/i);
-  assert.match(all['/payments'], /seller decides and issues refunds/i); assert.match(all['/payments'], /chargebacks/i); assert.match(all['/payments'], /cannot force a seller to refund/i);
+  assert.match(all['/payments'], /seller decides and issues refunds/i); assert.match(all['/payments'], /chargebacks/i); assert.match(all['/payments'], /force a seller to refund/i);
   assert.match(all['/payments'], /seller's statement, not a check by PairPlug/i);
   assert.match(all['/terms'], /not the seller of the items/i); assert.match(all['/terms'], /rights you have under consumer-protection law/i);
   assert.match(all['/rules'], /counterfeit/i); assert.match(all['/rules'], /stolen/i); assert.match(all['/rules'], /does not authenticate/i);

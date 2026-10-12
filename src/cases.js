@@ -14,6 +14,10 @@ const { transition } = require('./orderMachine');
 const { notify } = require('./notify');
 const { audit } = require('./audit');
 const { memberConversation } = require('./chat/service');
+const F = require('./fraud');
+
+/** An order a buyer has actually engaged with (opened the seller's payment link, said they paid, or the seller confirmed). Reports are allowed on these even before the seller confirms payment. */
+const engaged = (o) => Boolean(o.payment_confirmed_at || o.buyer_claimed_paid_at || o.pay_clicked_at);
 
 const OPEN = ['open', 'awaiting_seller', 'under_review'];
 const role = (c, userId) => (c.reporter_id === userId ? 'reporter' : c.subject_user_id === userId ? 'subject' : null);
@@ -28,15 +32,15 @@ const addEvent = (caseId, actor, actorRole, kind, body, { image = null, internal
 const touch = (id, status) => q.run('UPDATE cases SET updated_at = ?, status = COALESCE(?, status) WHERE id = ?', now(), status || null, id);
 
 // ------------------------------------------------------------------ opening cases
-function reportOrder(user, orderId, { reason, evidence = [] }) {
+function reportOrder(user, orderId, { reason, evidence = [], category }) {
   rateLimit(`case:${user.id}`, 10, 3600);
-  const why = text(reason); const imgs = ownedUploads(user.id, evidence.slice(0, 4));
+  const why = text(reason), cat = F.category(category); const imgs = ownedUploads(user.id, evidence.slice(0, 4));
   return tx(() => {
     const o = q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(orderId), user.id);
     if (!o) throw new HttpError(404, 'Order not found');
-    if (o.status === 'cancelled' && !o.payment_confirmed_at) throw new HttpError(409, 'There is nothing to report on an order that was never paid.');
+    if (!engaged(o)) throw new HttpError(409, 'There is nothing to report yet: you have not opened the seller\'s payment link or said you paid. Cancel the order if you changed your mind.');
     if (q.get("SELECT 1 x FROM cases WHERE order_id = ? AND reporter_id = ? AND kind = 'order_issue' AND status IN ('open','awaiting_seller','under_review')", o.id, user.id)) throw new HttpError(409, 'You already have an open report for this order.');
-    const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?)", o.id, user.id, o.seller_id, why, now(), now());
+    const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?, ?)", o.id, user.id, o.seller_id, why, cat, now(), now());
     const id = Number(c.lastInsertRowid);
     addEvent(id, user, 'buyer', 'report', why); imgs.forEach((f) => addEvent(id, user, 'buyer', 'evidence', null, { image: f }));
     notify(o.seller_id, `case:${id}:opened`, 'A buyer reported a problem with an order', `Order #${o.id}: please respond so it can be resolved.`, `/cases/${id}`);
@@ -44,16 +48,25 @@ function reportOrder(user, orderId, { reason, evidence = [] }) {
     return id;
   });
 }
-function reportSeller(user, handle, { reason }) {
+function reportSeller(user, handle, { reason, evidence = [], orderId, category }) {
   rateLimit(`case:${user.id}`, 10, 3600);
-  const why = text(reason);
+  const why = text(reason), cat = F.category(category), imgs = ownedUploads(user.id, evidence.slice(0, 4));
   const s = q.get('SELECT id FROM users WHERE handle = ? COLLATE NOCASE AND is_seller = 1', String(handle || '').slice(0, 40));
   if (!s) throw new HttpError(404, 'Seller not found');
   if (s.id === user.id) throw new HttpError(403, "You can't report yourself.");
   return tx(() => {
-    const c = q.run("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('seller_issue',?,?,?, 'open', ?, ?)", user.id, s.id, why, now(), now());
-    addEvent(Number(c.lastInsertRowid), user, 'buyer', 'report', why); audit(user, 'case_opened', { type: 'case', id: c.lastInsertRowid, detail: { kind: 'seller_issue' } });
-    return Number(c.lastInsertRowid);
+    let oid = null;
+    if (orderId !== undefined && orderId !== null && orderId !== '') {                       // optional: tie the report to one of the reporter's own orders with this seller
+      const o = q.get('SELECT id FROM orders WHERE id = ? AND buyer_id = ? AND seller_id = ?', Number(orderId), user.id, s.id);
+      if (!o) throw new HttpError(404, 'Order not found with this seller');
+      oid = o.id;
+    }
+    if (q.get("SELECT 1 x FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? AND status IN ('open','awaiting_seller','under_review')", user.id, s.id)) throw new HttpError(409, 'You already have an open report about this seller. Add to it from your cases instead.');
+    const c = q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?,?, 'open', ?, ?, ?)", oid, user.id, s.id, why, cat, now(), now());
+    const id = Number(c.lastInsertRowid);
+    addEvent(id, user, 'buyer', 'report', why); imgs.forEach((f) => addEvent(id, user, 'buyer', 'evidence', null, { image: f }));
+    audit(user, 'case_opened', { type: 'case', id, detail: { kind: 'seller_issue', order: oid } });
+    return id;                                                                            // the reported seller is deliberately NOT notified of a seller report
   });
 }
 function reportMessage(user, { conversationId, messageId, reason }) {
@@ -136,10 +149,15 @@ function adminDecide(admin, id, { outcome, resolution }) {
   });
 }
 /** Consequential admin actions, recorded on the case (internal) and in the audit log. */
-function adminAction(admin, id, { action, listingId }) {
+function adminAction(admin, id, { action, listingId, reason }) {
   return tx(() => {
     const c = q.get('SELECT * FROM cases WHERE id = ?', Number(id)); if (!c) throw new HttpError(404, 'Case not found');
-    if (action === 'pause_listing') {
+    if (action === 'restrict_selling') {
+      const r = F.restrictSelling(admin, c, reason);
+      addEvent(c.id, admin, 'admin', 'action', `Selling restricted (${r.paused} listing(s) paused, ${r.warned} buyer(s) with unpaid orders warned). Reason: ${clean(reason, 500)}`, { internal: 1 });
+    } else if (action === 'lift_restriction') {
+      F.liftRestriction(admin, c, reason); addEvent(c.id, admin, 'admin', 'action', 'Selling restriction lifted', { internal: 1 });
+    } else if (action === 'pause_listing') {
       const l = q.get('SELECT id, seller_id FROM listings WHERE id = ?', Number(listingId));
       if (!l || (c.subject_user_id && l.seller_id !== c.subject_user_id)) throw new HttpError(404, 'Listing not found for this case');
       q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE id = ? AND status IN ('active','draft')", now(), l.id);
@@ -148,7 +166,8 @@ function adminAction(admin, id, { action, listingId }) {
       if (!c.subject_user_id) throw new HttpError(409, 'This case has no seller to suspend.');
       q.run('UPDATE users SET banned = 1 WHERE id = ? AND is_admin = 0', c.subject_user_id); q.run('DELETE FROM sessions WHERE user_id = ?', c.subject_user_id);
       q.run("UPDATE listings SET status = 'archived' WHERE seller_id = ? AND status = 'active'", c.subject_user_id);
-      addEvent(c.id, admin, 'admin', 'action', 'Seller suspended', { internal: 1 }); audit(admin, 'user_suspended', { type: 'user', id: c.subject_user_id, detail: { case: c.id } });
+      const warned = F.warnPendingBuyers(c.subject_user_id, 'the account was suspended');
+      addEvent(c.id, admin, 'admin', 'action', `Seller suspended (${warned} buyer(s) with unpaid orders warned)`, { internal: 1 }); audit(admin, 'user_suspended', { type: 'user', id: c.subject_user_id, detail: { case: c.id } });
     } else throw new HttpError(422, 'Unknown action');
   });
 }

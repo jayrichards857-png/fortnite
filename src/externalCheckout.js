@@ -36,6 +36,7 @@ function purchasable(listing) {
   if (!listing || listing.status !== 'active') return { ok: false, reason: 'This item is no longer available.' };
   const seller = q.get('SELECT * FROM users WHERE id = ?', listing.seller_id);
   if (!seller || seller.banned || !seller.is_seller) return { ok: false, reason: 'This seller is unavailable.' };
+  if (seller.selling_restricted_at) return { ok: false, reason: 'This seller is temporarily unavailable.' };
   if (!seller.email_verified_at) return { ok: false, reason: "This seller hasn't verified their email yet, so online checkout is paused. You can still message them." };
   if (!resolveLink(listing, seller)) return { ok: false, reason: "This seller hasn't finished setting up checkout for this item yet." };
   return { ok: true, seller };
@@ -118,6 +119,7 @@ const releaseListing = (checkoutId) => q.run("UPDATE listings SET status='active
 function payRedirect(user, orderId) {
   const o = buyerOrder(user, orderId);
   if (o.status !== 'pending_payment') throw new HttpError(409, 'This order is no longer waiting for payment.');
+  if (require('./fraud').sellerHeld(o.seller_id)) throw new HttpError(409, 'PairPlug is reviewing a report about this seller, so we are not sending buyers to their payment link right now. Please do not pay yet; message support if you have questions.');
   const snap = JSON.parse(o.snapshot_json);
   let url;
   try { url = buyerUrl(snap.paymentLink.url, o.id); }

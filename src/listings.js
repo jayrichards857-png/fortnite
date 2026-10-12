@@ -94,6 +94,7 @@ function saveListing(user, id, body) {
   const v = validateListing(body, { publish });
   const files = ownedUploads(user.id, v.images);
   // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
+  if (publish && q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) throw new HttpError(403, 'Selling is paused on your account while PairPlug reviews a report. You can still reply to PairPlug and handle existing orders.');
   if (publish && !q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
   // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
   const saved = tx(() => {
@@ -164,6 +165,7 @@ function bulkAction(user, { ids, action, status, price, percent }) {
       if (action === 'status') {
         if (!SELLER_STATUSES.has(status)) throw new HttpError(422, 'Invalid status');
         if (status === 'active') {
+          if (q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) { result.skipped.push({ id, reason: 'selling is paused on your account' }); continue; }
           if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) { result.skipped.push({ id, reason: 'verify your email first' }); continue; }
           const hasImg = q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
@@ -243,6 +245,7 @@ function importCsv(user, text) {
 
 /** Can this listing go live right now? Returns a human-readable reason it can't, or null. One rule set for publish, resume and bulk. */
 function publishBlocker(user, l) {
+  if (q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id).r) return 'Selling is paused on your account while PairPlug reviews a report.';
   if (!q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id).v) return 'Verify your email address first.';
   if (!q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', l.id)) return 'Add at least one photo.';
   if (!l.condition) return 'Choose a condition.';

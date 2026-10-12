@@ -590,6 +590,36 @@ CREATE INDEX idx_listings_seller_active ON listings(seller_id, status, published
 ALTER TABLE users ADD COLUMN terms_version TEXT;
 ALTER TABLE users ADD COLUMN terms_accepted_at INTEGER;
 `,
+// 12: scam-report workflow. Additive. PairPlug moves no money; nothing here touches orders or payment state.
+//   users.selling_restricted_*   a reversible PairPlug-side restriction on selling (set/lifted only by an admin from a case; reason is internal)
+//   cases.category               what kind of problem the reporter says it is (a claim, not a finding)
+//   processor_reports            the operator's packet for a payment provider + a record of WHEN/HOW the operator submitted it by hand. No provider API is called.
+`
+ALTER TABLE users ADD COLUMN selling_restricted_at INTEGER;
+ALTER TABLE users ADD COLUMN selling_restricted_reason TEXT;
+ALTER TABLE users ADD COLUMN selling_restricted_case INTEGER;
+ALTER TABLE cases ADD COLUMN category TEXT CHECK (category IS NULL OR category IN ('non_delivery','payment_not_confirmed','not_as_described','counterfeit','fake_payment_or_tracking','suspected_scam','other'));
+CREATE INDEX idx_cases_subject ON cases(subject_user_id, status);
+CREATE TABLE processor_reports (
+  id INTEGER PRIMARY KEY,
+  case_id INTEGER NOT NULL REFERENCES cases(id),
+  seller_id INTEGER NOT NULL REFERENCES users(id),
+  provider TEXT NOT NULL CHECK (provider IN ('stripe','paypal','other')),
+  provider_host TEXT,
+  status TEXT NOT NULL DEFAULT 'prepared' CHECK (status IN ('prepared','submitted')),
+  packet TEXT NOT NULL,
+  events_through INTEGER NOT NULL,
+  prepared_by INTEGER NOT NULL REFERENCES users(id),
+  prepared_at INTEGER NOT NULL,
+  submitted_by INTEGER REFERENCES users(id),
+  submitted_at INTEGER,
+  channel TEXT, reference TEXT, note TEXT
+);
+CREATE UNIQUE INDEX idx_processor_reports_pending ON processor_reports(case_id, provider) WHERE status = 'prepared';
+CREATE TRIGGER processor_reports_no_delete BEFORE DELETE ON processor_reports BEGIN SELECT RAISE(ABORT, 'processor reports are append-only'); END;
+CREATE TRIGGER processor_reports_frozen BEFORE UPDATE ON processor_reports WHEN OLD.status = 'submitted' OR NEW.case_id <> OLD.case_id OR NEW.packet <> OLD.packet OR NEW.provider <> OLD.provider OR NEW.prepared_at <> OLD.prepared_at
+  BEGIN SELECT RAISE(ABORT, 'a submitted processor report cannot be changed'); END;
+`,
 ];
 
 function migrate() {

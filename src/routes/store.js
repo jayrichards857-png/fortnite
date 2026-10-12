@@ -25,6 +25,7 @@ r.get('/s/:handle', (req, res) => {
   const s = q.get('SELECT * FROM users WHERE handle = ? AND is_seller = 1 AND banned = 0', req.params.handle);
   const missing = () => res.status(404).send(V.layout({ user: req.user, title: 'Not found', body: V.empty('Seller not found', 'This storefront does not exist or is not available.', ['/shop', 'Browse the shop']) }));
   if (!s) return missing();
+  if (s.selling_restricted_at && !(req.user && req.user.id === s.id)) return res.status(200).send(V.layout({ user: req.user, title: 'Store unavailable', body: V.empty('This store is temporarily unavailable', 'PairPlug is reviewing this store. Please check back later, or browse other sellers.', ['/sellers', 'Discover sellers']) }));
   const owner = req.user && req.user.id === s.id, wantPreview = req.query.preview === '1' && owner;   // previews are visible to the owner only
   const { settings: st, isDraft } = SF.effective(s.id, { preview: wantPreview });
   const featuredIds = st.featured || [];
