@@ -47,7 +47,7 @@ async function sellerRisk(sellerId) {
 /** Sellers reported by two or more different people (any status), for the operator's review queue. */
 const repeatReported = async () => await q.all(`SELECT u.id, u.handle, u.store_name, u.banned, u.selling_restricted_at, COUNT(DISTINCT c.reporter_id) reporters, COUNT(*) cases,
     COUNT(*) FILTER (WHERE c.status IN ('open','awaiting_seller','under_review')) open, MAX(c.created_at) latest
-  FROM cases c JOIN users u ON u.id = c.subject_user_id WHERE c.kind <> 'message_report' AND c.reporter_id <> c.subject_user_id GROUP BY u.id HAVING reporters >= 2 ORDER BY open DESC, reporters DESC, latest DESC LIMIT 100`);
+  FROM cases c JOIN users u ON u.id = c.subject_user_id WHERE c.kind <> 'message_report' AND c.reporter_id <> c.subject_user_id GROUP BY u.id HAVING COUNT(DISTINCT c.reporter_id) >= 2 ORDER BY open DESC, reporters DESC, latest DESC LIMIT 100`);
 
 // ------------------------------------------------------------------ payment-provider packet
 const providerOf = (host) => (/(^|\.)stripe\.com$/i.test(host) ? 'stripe' : /(^|\.)paypal\.(com|me)$/i.test(host) ? 'paypal' : 'other');
@@ -102,8 +102,8 @@ async function preparePacket(admin, caseRow, provider, host) {
     const maxEv = (await q.get('SELECT COALESCE(MAX(id), 0) m FROM case_events WHERE case_id = ? AND internal = 0', caseRow.id)).m;
     const last = await q.get("SELECT events_through FROM processor_reports WHERE case_id = ? AND provider = ? ORDER BY id DESC LIMIT 1", caseRow.id, provider);
     if (last && maxEv <= last.events_through) throw new HttpError(409, 'This case was already reported to that provider and has no new evidence since.');
-    const id = (await q.run('INSERT INTO processor_reports(case_id, seller_id, provider, provider_host, packet, events_through, prepared_by, prepared_at) VALUES(?,?,?,?,?,?,?,?)',
-      caseRow.id, caseRow.subject_user_id, provider, host || null, await buildPacket(caseRow, provider, host), maxEv, admin.id, now())).lastInsertRowid;
+    const id = (await q.insert('INSERT INTO processor_reports(case_id, seller_id, provider, provider_host, packet, events_through, prepared_by, prepared_at) VALUES(?,?,?,?,?,?,?,?)',
+      caseRow.id, caseRow.subject_user_id, provider, host || null, await buildPacket(caseRow, provider, host), maxEv, admin.id, now()));
     await q.run("INSERT INTO case_events(case_id, actor_id, actor_role, kind, body, internal, created_at) VALUES(?,?,?,?,?,1,?)", caseRow.id, admin.id, 'admin', 'action', `Prepared a ${PROVIDER_NAME[provider]} report packet (#${id}). Not yet submitted.`, now());
     await audit(admin, 'processor_packet_prepared', { type: 'case', id: caseRow.id, detail: { provider, packet: Number(id) } });
     return Number(id);

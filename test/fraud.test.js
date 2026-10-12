@@ -173,12 +173,13 @@ test('legal and help pages describe the real scam-reporting role and its limits,
   assert.doesNotMatch(all, /PairPlug (does not|doesn't) (investigate|review) (reports|scams)|no role in (resolving )?(disputes|scams)/i);
 });
 
-test('migration 12 is additive: older cases and users survive with NULL restriction/category', () => {
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); assert.ok(MIGRATIONS.length >= 12);
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 11; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)').run('a@x.test', 'x', 'A', 1); d.prepare('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)').run('b@x.test', 'x', 'B', 1);
-  d.prepare("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('seller_issue',1,2,'old report text','open',1,1)").run();
-  d.exec(MIGRATIONS[11]);
-  const c = d.prepare('SELECT * FROM cases').get(); assert.equal(c.category, null); assert.equal(c.reason, 'old report text'); assert.equal(d.prepare('SELECT selling_restricted_at r FROM users WHERE id = 2').get().r, null);
-  assert.equal(d.prepare('SELECT COUNT(*) n FROM processor_reports').get().n, 0); d.close();
+test('migration 12 is additive: older cases and users survive with NULL restriction/category', async () => {
+  const { dbAt } = require('./pgmig'); const d = await dbAt(11);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', 'a@x.test', 'x', 'A', 1); await d.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', 'b@x.test', 'x', 'B', 1);
+    await d.run("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('seller_issue',1,2,'old report text','open',1,1)");
+    await d.applyNext();
+    const c = await d.one('SELECT * FROM cases'); assert.equal(c.category, null); assert.equal(c.reason, 'old report text'); assert.equal((await d.one('SELECT selling_restricted_at r FROM users WHERE id = 2')).r, null);
+    assert.equal(Number((await d.one('SELECT COUNT(*) n FROM processor_reports')).n), 0);
+  } finally { await d.close(); }
 });

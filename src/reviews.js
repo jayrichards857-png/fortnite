@@ -5,7 +5,7 @@
 //   * "Order-linked review" is deliberately not "verified purchase": external payments are seller-confirmed and PairPlug does not independently verify them.
 //   * Moderators can only HIDE or RESTORE (with a recorded reason). They cannot edit text or the thumbs-up, and every change is in the append-only review_events log + audit_log.
 //   * Counts are shown as raw counts (thumbs-up, written reviews, reviews); there is no average or score that could imply more certainty than a handful of votes carries.
-const { q, tx, now } = require('./db');
+const { q, tx, now, isUnique } = require('./db');
 const { HttpError, clean, esc, date } = require('./util');
 const { rateLimit } = require('./auth');
 const { audit } = require('./audit');
@@ -27,7 +27,7 @@ const staffRole = (u) => (u.is_admin ? 'admin' : 'moderator');
 
 /** The order must be the caller's own purchase. Anything else is a 404, so order numbers of others are never confirmed. */
 async function ownOrder(user, orderId) {
-  const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(orderId), user.id);
+  const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ? FOR UPDATE', Number(orderId), user.id);       // lock: one review action per order at a time
   if (!o) throw new HttpError(404, 'Order not found');
   if (o.seller_id === user.id) throw new HttpError(403, "You can't review your own store.");
   return o;
@@ -47,8 +47,8 @@ async function submit(user, orderId, data) {
       return cur.id;
     }
     let id;
-    try { id = Number((await q.run('INSERT INTO seller_reviews(order_id, buyer_id, seller_id, thumbs_up, body, created_at) VALUES(?,?,?,?,?,?)', o.id, user.id, o.seller_id, t, text, now())).lastInsertRowid); }
-    catch (e) { if (/UNIQUE/.test(String(e.message))) throw new HttpError(409, 'You have already reviewed this order.'); throw e; }
+    try { id = Number((await q.insert('INSERT INTO seller_reviews(order_id, buyer_id, seller_id, thumbs_up, body, created_at) VALUES(?,?,?,?,?,?)', o.id, user.id, o.seller_id, t, text, now()))); }
+    catch (e) { if (isUnique(e)) throw new HttpError(409, 'You have already reviewed this order.'); throw e; }
     await event(id, user, 'buyer', 'created', { thumbs_up: t, hasText: Boolean(text) });
     return id;
   });
@@ -86,7 +86,7 @@ async function report(user, reviewId, reason) {
     if (!r) throw new HttpError(404, 'Review not found');
     if (r.buyer_id === user.id) throw new HttpError(403, "You can't report your own review; edit or remove it instead.");
     try { await q.run('INSERT INTO review_reports(review_id, reporter_id, reason, created_at) VALUES(?,?,?,?)', r.id, user.id, why, now()); }
-    catch (e) { if (/UNIQUE/.test(String(e.message))) throw new HttpError(409, 'You already reported this review.'); throw e; }
+    catch (e) { if (isUnique(e)) throw new HttpError(409, 'You already reported this review.'); throw e; }
     await event(r.id, user, user.id === r.seller_id ? 'seller' : 'user', 'reported', { reason: why });
     return r.id;
   });
@@ -126,7 +126,7 @@ async function dismiss(actor, reviewId, reason) {
 }
 const moderationQueue = async () => ({
   reported: await q.all(`SELECT r.*, b.display_name buyer, s.store_name, s.handle, (SELECT COUNT(*) FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') open_reports,
-      (SELECT group_concat(p.reason, ' ¦ ') FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') reasons FROM seller_reviews r JOIN users b ON b.id = r.buyer_id JOIN users s ON s.id = r.seller_id
+      (SELECT string_agg(p.reason, ' ¦ ') FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') reasons FROM seller_reviews r JOIN users b ON b.id = r.buyer_id JOIN users s ON s.id = r.seller_id
       WHERE EXISTS (SELECT 1 FROM review_reports p WHERE p.review_id = r.id AND p.status = 'open') ORDER BY r.id DESC LIMIT 100`),
   hidden: await q.all(`SELECT r.*, b.display_name buyer, s.store_name, s.handle FROM seller_reviews r JOIN users b ON b.id = r.buyer_id JOIN users s ON s.id = r.seller_id WHERE r.status = 'hidden' ORDER BY r.id DESC LIMIT 100`),
 });

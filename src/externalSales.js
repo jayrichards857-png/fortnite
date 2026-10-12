@@ -8,7 +8,7 @@
 //   * Corrections and voids are logged in sale_events (append-only); a void never reopens the listing by itself (it is paused for the seller to resume).
 //   * Rows written before migration 9 keep origin = NULL ("earlier record") and are never relabelled.
 const config = require('./config');
-const { q, tx, now } = require('./db');
+const { q, tx, now, isUnique } = require('./db');
 const { HttpError, clean, cleanLine, dollarsToCents } = require('./util');
 const { rateLimit } = require('./auth');
 const { audit } = require('./audit');
@@ -70,18 +70,18 @@ async function record(user, listingId, body = {}) {
   if (Object.keys(f).length) throw new HttpError(422, 'Please fix the highlighted fields.', f);
   const d = details(body), rec = fulfillment === 'ship' ? recipientFrom(body, { required: false }) : null;
   return await tx(async () => {
-    const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', Number(listingId), user.id);
+    const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ? FOR UPDATE', Number(listingId), user.id);      // lock: one sale record per item even if the button is hit twice
     if (!l) throw new HttpError(404, 'Listing not found');
     if (await active(l.id)) throw new HttpError(409, 'A sale is already recorded for this item. If you sold more units elsewhere, lower the quantity in the listing editor.');
     if (l.quantity === 0 && await hasOrder(l.id)) throw new HttpError(409, 'This item already has a PairPlug order, which is its sale record. Confirm payment and ship from that order; recording it here would duplicate it.');
     if (l.status === 'reserved') throw new HttpError(409, 'A buyer is checking out this item right now. Try again after their reservation ends.');
     if (!['active', 'sold'].includes(l.status)) throw new HttpError(409, 'Only items for sale (or already marked sold) can be recorded as sold.');
     const t = now();
-    const r = await q.run(`INSERT INTO external_sales(listing_id, seller_id, sold_on, price_cents, channel, reference, note, recorded_at, updated_at, origin, payment_status, payment_confirmed_at, fulfillment, shipment_status,
+    const r = await q.insert(`INSERT INTO external_sales(listing_id, seller_id, sold_on, price_cents, channel, reference, note, recorded_at, updated_at, origin, payment_status, payment_confirmed_at, fulfillment, shipment_status,
       recipient_name, recipient_line1, recipient_line2, recipient_city, recipient_region, recipient_postal, recipient_country, buyer_email) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?)`,
     l.id, user.id, d.sold_on, d.price, d.channel, d.reference, d.note, t, t, origin, payment, payment === 'confirmed_by_seller' ? t : null, fulfillment, fulfillment === 'ship' ? 'not_shipped' : 'not_applicable', ...recipientCols(rec), d.email);
-    const id = Number(r.lastInsertRowid);
-    if (l.status === 'active') { await q.run('UPDATE listings SET quantity = MAX(0, quantity - 1) WHERE id = ?', l.id); await require('./inventory').sync(l.id); }       // one unit sold outside PairPlug; 'sold' only when none is left
+    const id = r;
+    if (l.status === 'active') { await q.run('UPDATE listings SET quantity = GREATEST(0, quantity - 1) WHERE id = ?', l.id); await require('./inventory').sync(l.id); }       // one unit sold outside PairPlug; 'sold' only when none is left
     await log(id, user.id, 'recorded', { origin, fulfillment, payment, was: l.status });
     await audit(user, 'sale_recorded', { type: 'listing', id: l.id, detail: { sale: id, origin, price_cents: d.price, was: l.status } });
     return { id, status: 'sold' };
@@ -89,7 +89,7 @@ async function record(user, listingId, body = {}) {
 }
 
 // ------------------------------------------------------------------ reading
-const mine = async (user, id) => { const s = await q.get('SELECT s.*, l.title FROM external_sales s JOIN listings l ON l.id = s.listing_id WHERE s.id = ? AND s.seller_id = ?', Number(id), user.id); if (!s) throw new HttpError(404, 'Sale not found'); return s; };
+const mine = async (user, id) => { const s = await q.get('SELECT s.*, l.title FROM external_sales s JOIN listings l ON l.id = s.listing_id WHERE s.id = ? AND s.seller_id = ? FOR UPDATE OF s', Number(id), user.id); if (!s) throw new HttpError(404, 'Sale not found'); return s; };
 const listFor = async (user) => await q.all('SELECT s.*, l.title FROM external_sales s JOIN listings l ON l.id = s.listing_id WHERE s.seller_id = ? ORDER BY s.sold_on DESC, s.id DESC LIMIT 200', user.id);
 const eventsFor = async (user, id) => { await mine(user, id); return await q.all('SELECT e.*, u.display_name FROM sale_events e JOIN users u ON u.id = e.actor_id WHERE e.sale_id = ? ORDER BY e.id', Number(id)); };
 /** Sold listings with neither a PairPlug order nor an active sale record (e.g. marked Sold by hand earlier, or after a void). Never converted automatically. */
@@ -145,7 +145,7 @@ async function ship(user, id, body = {}) {
     if (s.shipment_status === 'shipped') { if (s.carrier === carrier && s.tracking_number === tracking) return { ok: true, alreadyShipped: true }; throw new HttpError(409, 'Already shipped. Use “Correct tracking” to change the carrier or tracking number.'); }
     if (!hasAddress(s)) throw new HttpError(409, 'Add the recipient\'s complete delivery address before marking this shipped.', { address: 'missing' });
     try { await q.run("UPDATE external_sales SET carrier = ?, tracking_number = ?, ship_note = ?, shipment_status = 'shipped', shipped_at = ?, updated_at = ? WHERE id = ?", carrier, tracking, note, now(), now(), s.id); }
-    catch (e) { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another sale.'); throw e; }
+    catch (e) { if (isUnique(e)) throw new HttpError(409, 'That tracking number is already used on another sale.'); throw e; }
     await log(s.id, user.id, 'shipped', { carrier, tracking }); await audit(user, 'sale_shipped', { type: 'sale', id: s.id });
     return { ok: true, buyerNotified: false };            // recorded sales have no PairPlug buyer account: nobody is notified
   });
@@ -157,7 +157,7 @@ async function correctTracking(user, id, body = {}) {
     if (s.shipment_status !== 'shipped') throw new HttpError(409, 'Tracking can only be corrected after the sale is marked shipped.');
     if (s.carrier === carrier && s.tracking_number === tracking && (s.ship_note || null) === note) return { ok: true, unchanged: true };
     try { await q.run('UPDATE external_sales SET carrier = ?, tracking_number = ?, ship_note = ?, updated_at = ? WHERE id = ?', carrier, tracking, note, now(), s.id); }
-    catch (e) { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another sale.'); throw e; }
+    catch (e) { if (isUnique(e)) throw new HttpError(409, 'That tracking number is already used on another sale.'); throw e; }
     await log(s.id, user.id, 'tracking_corrected', { from: `${s.carrier} ${s.tracking_number}`, to: `${carrier} ${tracking}` }); await audit(user, 'sale_tracking_corrected', { type: 'sale', id: s.id });
     return { ok: true };
   });
@@ -169,7 +169,7 @@ async function voidSale(user, id, body = {}) {
     const s = await mine(user, id); if (s.voided_at) return { ok: true, alreadyVoided: true };
     if (s.shipment_status === 'shipped') throw new HttpError(409, 'A shipped sale can\'t be voided. Correct the details instead.');
     const t = now();
-    await q.run('UPDATE listings SET quantity = MIN(999, quantity + 1) WHERE id = ?', s.listing_id);
+    await q.run('UPDATE listings SET quantity = LEAST(999, quantity + 1) WHERE id = ?', s.listing_id);
     await q.run('UPDATE external_sales SET voided_at = ?, void_reason = ?, voided_by = ?, updated_at = ? WHERE id = ?', t, reason, user.id, t, s.id);
     const l = await q.get('SELECT status FROM listings WHERE id = ?', s.listing_id);
     let listing = l.status;

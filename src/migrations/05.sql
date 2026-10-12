@@ -1,0 +1,2 @@
+
+ALTER TABLE users ADD COLUMN must_change_password BIGINT NOT NULL DEFAULT 0;

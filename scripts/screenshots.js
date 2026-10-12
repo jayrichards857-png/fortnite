@@ -1,6 +1,6 @@
 'use strict';
 // Launches the real app against an ISOLATED database and captures screenshots with Playwright (Chromium).
-//   node scripts/screenshots.js            -> uses data/demo.db (run `npm run seed:demo` first) and an empty DB for the empty-state shot
+//   node scripts/screenshots.js            -> uses the pp_demo PostgreSQL database (run `npm run seed:demo` first) and an empty pp_sandbox_screens_empty DB for the empty-state shot
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -12,15 +12,18 @@ fs.mkdirSync(out, { recursive: true });
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 function startServer(port, db, uploads) {
-  const p = spawn(process.execPath, ['src/server.js'], { cwd: root, env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(port), PAIRPLUG_DB: db, PAIRPLUG_UPLOADS: uploads, PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', PUBLIC_URL: `http://localhost:${port}` }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const p = spawn(process.execPath, ['src/server.js'], { cwd: root, env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(port), DATABASE_URL: db, PAIRPLUG_UPLOADS: uploads, PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', PUBLIC_URL: `http://localhost:${port}` }, stdio: ['ignore', 'pipe', 'inherit'] });
   return new Promise((res, rej) => { p.stdout.on('data', (d) => { if (String(d).includes('listening')) res(p); }); p.on('exit', (c) => rej(new Error('server exited ' + c))); setTimeout(() => rej(new Error('server start timeout')), 15000); });
 }
 
 (async () => {
-  const demoDb = path.join(root, 'data', 'demo.db');
-  if (!fs.existsSync(demoDb)) throw new Error('Run `npm run seed:demo` first');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-empty-'));
-  const [demo, empty] = await Promise.all([startServer(3201, demoDb, path.join(root, 'data', 'demo-uploads')), startServer(3202, path.join(tmp, 'empty.db'), path.join(tmp, 'up'))]);
+  const testdb = require('../test/testdb');
+  const demoDb = testdb.ensureSync('pp_demo');                  // built by `npm run seed:demo`
+  const { Client } = require('pg'); const c = new Client({ connectionString: demoDb }); await c.connect();
+  const seeded = await c.query("SELECT to_regclass('public.users') t").then((r) => r.rows[0].t && c.query('SELECT COUNT(*) n FROM users').then((x) => Number(x.rows[0].n) > 0)).catch(() => false); await c.end();
+  if (!seeded) throw new Error('Run `npm run seed:demo` first');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-empty-')), emptyDb = testdb.ensureSync('pp_sandbox_screens_empty', true);
+  const [demo, empty] = await Promise.all([startServer(3201, demoDb, path.join(root, 'data', 'demo-uploads')), startServer(3202, emptyDb, path.join(tmp, 'up'))]);
   const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
   const B = 'http://localhost:3201';
   const login = async (ctx, email) => { const p = await ctx.newPage(); await p.goto(B + '/login'); await p.fill('#e', email); await p.fill('#p', 'demo-password-1'); await Promise.all([p.waitForURL(B + '/'), p.click('button[type=submit]')]); await p.close(); };

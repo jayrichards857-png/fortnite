@@ -146,7 +146,7 @@ test('duplicates: double-click, concurrent requests and retries buy exactly one 
   assert.equal(rs.filter((r) => r.status === 200).length, 1); assert.equal(rs.filter((r) => r.status === 409).length, 2); assert.equal(txCalls(), 1, 'one provider purchase');
   const again = await buy(seller, o, body); assert.equal(again.status, 200); assert.equal(again.json.duplicate, true); assert.equal(txCalls(), 1);
   assert.equal((await q.get("SELECT COUNT(*) n FROM shipments WHERE order_id = ? AND status = 'success'", o)).n, 1);
-  await assert.rejects(async () => await q.run("INSERT INTO shipments(order_id, seller_id, test, status, weight_oz, length_in, width_in, height_in, address_hash, created_at, updated_at) VALUES(?,?,1,'purchasing',1,1,1,1,'x',1,1)", o, (await q.get('SELECT seller_id s FROM orders WHERE id = ?', o)).s), /UNIQUE/, 'the database itself forbids a second purchase');
+  await assert.rejects(async () => await q.run("INSERT INTO shipments(order_id, seller_id, test, status, weight_oz, length_in, width_in, height_in, address_hash, created_at, updated_at) VALUES(?,?,1,'purchasing',1,1,1,1,'x',1,1)", o, (await q.get('SELECT seller_id s FROM orders WHERE id = ?', o)).s), /unique constraint/i, 'the database itself forbids a second purchase');
 });
 
 test('failures: provider error, rejection, unknown outcome (timeout/5xx), queued transactions, stuck purchases', async () => {

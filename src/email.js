@@ -25,9 +25,9 @@ const providers = {
  */
 async function send({ to, subject, text, kind, dedupeKey = null }) {
   const t = now();
-  const r = await q.run("INSERT OR IGNORE INTO email_outbox(to_email, subject, body, kind, dedupe_key, status, created_at) VALUES(?,?,?,?,?, 'not_configured', ?)", to, subject, text, kind, dedupeKey, t);
+  const r = await q.run("INSERT INTO email_outbox(to_email, subject, body, kind, dedupe_key, status, created_at) VALUES(?,?,?,?,?, 'not_configured', ?) ON CONFLICT DO NOTHING RETURNING id", to, subject, text, kind, dedupeKey, t);
   if (r.changes === 0) return Promise.resolve({ status: 'duplicate' });
-  const id = Number(r.lastInsertRowid);
+  const id = r.rows[0].id;
   if (!isConfigured()) return Promise.resolve({ status: 'not_configured', id });
   const deliver = mock ? async (m) => ({ ref: await mock(m) || 'mock' }) : providers[config.email.provider];
   const provider = mock ? 'mock-test' : config.email.provider;

@@ -39,9 +39,9 @@ async function create(admin, { kind, email, note, suggestedName }) {
     if (await q.get('SELECT 1 x FROM invitations WHERE email = ? AND kind = ? AND used_at IS NULL AND revoked_at IS NULL', addr, kind)) throw new HttpError(409, 'A live invitation for that email already exists. Revoke it first.');
     const raw = 'pp_inv_' + crypto.randomBytes(24).toString('base64url');
     const expires = now() + config.inviteTtlHours * 3600;
-    const r = await q.run('INSERT INTO invitations(token_hash, kind, email, note, suggested_name, created_by, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?)', sha(raw), kind, addr, clean(note, 200) || null, cleanLine(suggestedName, 80) || null, admin.id, now(), expires);
-    await audit(admin, 'invitation_created', { type: 'invitation', id: r.lastInsertRowid, detail: { kind, email: addr, expiresAt: expires } });
-    return { id: Number(r.lastInsertRowid), token: raw, expiresAt: expires, link: `${config.publicUrl.replace(/\/$/, '')}/invite/${raw}` };
+    const r = await q.insert('INSERT INTO invitations(token_hash, kind, email, note, suggested_name, created_by, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?)', sha(raw), kind, addr, clean(note, 200) || null, cleanLine(suggestedName, 80) || null, admin.id, now(), expires);
+    await audit(admin, 'invitation_created', { type: 'invitation', id: r, detail: { kind, email: addr, expiresAt: expires } });
+    return { id: r, token: raw, expiresAt: expires, link: `${config.publicUrl.replace(/\/$/, '')}/invite/${raw}` };
   });
 }
 
@@ -52,9 +52,10 @@ async function revoke(admin, id) {
 }
 
 /** Look an invitation up by raw token. Every failure returns null so callers can show one generic message. */
-async function lookup(raw) {
+async function lookup(raw, { lock = false } = {}) {
   if (typeof raw !== 'string' || !raw.startsWith('pp_inv_') || raw.length > 80) return null;
-  const inv = await q.get('SELECT * FROM invitations WHERE token_hash = ?', sha(raw));
+  // lock=true (inside the accepting transaction): a concurrent accept of the same link waits, then finds it already used
+  const inv = await q.get(`SELECT * FROM invitations WHERE token_hash = ?${lock ? ' FOR UPDATE' : ''}`, sha(raw));
   return inv && !inv.used_at && !inv.revoked_at && inv.expires_at > now() ? inv : null;
 }
 
@@ -79,7 +80,7 @@ async function accept(raw, body, currentUser) {
   const gone = () => new HttpError(400, 'This invitation is invalid, expired or already used.');
   const early = await lookup(raw); if (!early) throw gone();
   return await tx(async () => {
-    const inv = await lookup(raw); if (!inv) throw gone();
+    const inv = await lookup(raw, { lock: true }); if (!inv) throw gone();
     let user = await q.get('SELECT * FROM users WHERE email = ?', inv.email);
     const fields = {};
     if (inv.kind === 'buyer' && user) throw gone();
@@ -96,8 +97,8 @@ async function accept(raw, body, currentUser) {
     const store = inv.kind === 'seller' ? await validateStore(body) : null;
     try {
       if (!user) {
-        const r = await q.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', inv.email, hashPassword(String(body.password)), cleanLine(body.display_name, 80), now());
-        user = await q.get('SELECT * FROM users WHERE id = ?', r.lastInsertRowid);
+        const r = await q.insert('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', inv.email, hashPassword(String(body.password)), cleanLine(body.display_name, 80), now());
+        user = await q.get('SELECT * FROM users WHERE id = ?', r);
       }
       if (!LEGAL.accepted(user)) { await LEGAL.recordAcceptance(user.id); }       // explicit tick on this very form; never inferred
       if (store) await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', store.store, store.handle, store.country, store.region, store.city, store.bio, user.id);

@@ -1,2 +1,4 @@
-# /etc/cron.d/pairplug-backup — daily consistent DB snapshot (+ new photos), keeps the newest 14 snapshots.
-17 3 * * * pairplug cd /opt/pairplug && PAIRPLUG_DB=/var/lib/pairplug/pairplug.db PAIRPLUG_UPLOADS=/var/lib/pairplug/uploads BACKUP_DIR=/var/backups/pairplug /usr/bin/node scripts/backup.js >> /var/backups/pairplug/backup.log 2>&1
+# /etc/cron.d/pairplug-backup — daily consistent PostgreSQL dump (+ new photos), keeps the newest 14 dumps.
+# Reads DATABASE_URL and PAIRPLUG_UPLOADS from /etc/pairplug.env; needs the PostgreSQL client tools (pg_dump, pg_restore) on the PATH.
+# Backups on the same machine do not protect against losing the machine: copy /var/backups/pairplug off-site (docs/DEPLOYMENT.md).
+17 3 * * * pairplug bash -c 'set -a; . /etc/pairplug.env; set +a; cd /opt/pairplug && BACKUP_DIR=/var/backups/pairplug /usr/bin/node scripts/backup.js' >> /var/backups/pairplug/backup.log 2>&1

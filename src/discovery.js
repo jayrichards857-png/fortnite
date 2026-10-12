@@ -8,7 +8,7 @@ const V = require('./views');
 const RV = require('./reviews');
 
 const PUBLIC = 'u.is_seller = 1 AND u.banned = 0 AND u.selling_restricted_at IS NULL';
-const SF = "LEFT JOIN (SELECT seller_id, json_extract(published_json,'$.headline') headline, json_extract(published_json,'$.about') about, json_extract(published_json,'$.avatar') avatar FROM storefronts) sf ON sf.seller_id = u.id";
+const SF = "LEFT JOIN (SELECT seller_id, (published_json::jsonb)->>'headline' headline, (published_json::jsonb)->>'about' about, (published_json::jsonb)->>'avatar' avatar FROM storefronts) sf ON sf.seller_id = u.id";
 const likeEsc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 const termsOf = (s) => clean(s || '', 100).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
 const L = (t) => `%${likeEsc(t)}%`;
@@ -21,7 +21,7 @@ async function discoverSellers({ page = 1, per = 12 } = {}) {
   const total = (await q.get(`SELECT COUNT(*) c FROM users u WHERE ${PUBLIC}`)).c;
   const items = await q.all(`SELECT u.id, u.handle, u.store_name, u.bio, sf.headline, sf.about, sf.avatar, u.created_at,
     (SELECT MAX(published_at) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') latest,
-    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n FROM users u ${SF} WHERE ${PUBLIC} ORDER BY latest IS NULL, latest DESC, n DESC, u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`, per, (page - 1) * per);
+    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n FROM users u ${SF} WHERE ${PUBLIC} ORDER BY latest DESC NULLS LAST, n DESC, u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`, per, (page - 1) * per);
   return { items, total, page, per, pages: Math.max(1, Math.ceil(total / per)) };
 }
 /** Sellers relevant to a query. Every term must match the seller's name/handle/bio/published storefront text OR one of their available listings (title, brand, category, description). Sellers with no listings are found by profile text alone. */
@@ -29,18 +29,18 @@ async function searchSellers(qstr, { page = 1, per = 12 } = {}) {
   const terms = termsOf(qstr); if (!terms.length) return await discoverSellers({ page, per });
   page = Math.max(1, parseInt(page, 10) || 1);
   const whole = terms.join(' '), wp = [], sp = [], mp = [];
-  const where = terms.map((t) => { const v = L(t); wp.push(v, v, v, v, v, v, v, v, v); return `((u.handle LIKE ? ESCAPE '\\' OR u.store_name LIKE ? ESCAPE '\\' OR u.bio LIKE ? ESCAPE '\\' OR sf.headline LIKE ? ESCAPE '\\' OR sf.about LIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 FROM listings l WHERE l.seller_id = u.id AND l.status = 'active' AND (l.title LIKE ? ESCAPE '\\' OR l.brand LIKE ? ESCAPE '\\' OR l.category LIKE ? ESCAPE '\\' OR l.description LIKE ? ESCAPE '\\')))`; }).join(' AND ');
+  const where = terms.map((t) => { const v = L(t); wp.push(v, v, v, v, v, v, v, v, v); return `((u.handle ILIKE ? ESCAPE '\\' OR u.store_name ILIKE ? ESCAPE '\\' OR u.bio ILIKE ? ESCAPE '\\' OR sf.headline ILIKE ? ESCAPE '\\' OR sf.about ILIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 FROM listings l WHERE l.seller_id = u.id AND l.status = 'active' AND (l.title ILIKE ? ESCAPE '\\' OR l.brand ILIKE ? ESCAPE '\\' OR l.category ILIKE ? ESCAPE '\\' OR l.description ILIKE ? ESCAPE '\\')))`; }).join(' AND ');
   // transparent relevance: name match (exact > prefix > contains), then storefront text, then how many available listings match (capped), then recency
   const lw = L(whole), pre = `${likeEsc(whole)}%`;
   sp.push(whole, whole, pre, pre, lw, lw, lw, lw, lw);
-  const matchCnt = terms.map((t) => { const v = L(t); mp.push(v, v, v, v); return '(l.title LIKE ? ESCAPE \'\\\' OR l.brand LIKE ? ESCAPE \'\\\' OR l.category LIKE ? ESCAPE \'\\\' OR l.description LIKE ? ESCAPE \'\\\')'; }).join(' AND ');
-  const score = `(CASE WHEN lower(u.handle) = ? OR lower(u.store_name) = ? THEN 100 WHEN lower(u.handle) LIKE ? ESCAPE '\\' OR lower(u.store_name) LIKE ? ESCAPE '\\' THEN 60 WHEN u.handle LIKE ? ESCAPE '\\' OR u.store_name LIKE ? ESCAPE '\\' THEN 40 ELSE 0 END
-    + CASE WHEN u.bio LIKE ? ESCAPE '\\' OR sf.headline LIKE ? ESCAPE '\\' OR sf.about LIKE ? ESCAPE '\\' THEN 15 ELSE 0 END
-    + 5 * MIN(10, (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active' AND ${matchCnt})))`;
+  const matchCnt = terms.map((t) => { const v = L(t); mp.push(v, v, v, v); return '(l.title ILIKE ? ESCAPE \'\\\' OR l.brand ILIKE ? ESCAPE \'\\\' OR l.category ILIKE ? ESCAPE \'\\\' OR l.description ILIKE ? ESCAPE \'\\\')'; }).join(' AND ');
+  const score = `(CASE WHEN lower(u.handle) = ? OR lower(u.store_name) = ? THEN 100 WHEN lower(u.handle) ILIKE ? ESCAPE '\\' OR lower(u.store_name) ILIKE ? ESCAPE '\\' THEN 60 WHEN u.handle ILIKE ? ESCAPE '\\' OR u.store_name ILIKE ? ESCAPE '\\' THEN 40 ELSE 0 END
+    + CASE WHEN u.bio ILIKE ? ESCAPE '\\' OR sf.headline ILIKE ? ESCAPE '\\' OR sf.about ILIKE ? ESCAPE '\\' THEN 15 ELSE 0 END
+    + 5 * LEAST(10, (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active' AND ${matchCnt})))`;
   const from = `FROM users u ${SF} WHERE ${PUBLIC} AND ${where}`;
   const total = (await q.get(`SELECT COUNT(*) c ${from}`, ...wp)).c;
   const items = await q.all(`SELECT u.id, u.handle, u.store_name, u.bio, sf.headline, sf.about, sf.avatar, ${score} AS score, (SELECT MAX(published_at) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') latest,
-    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n ${from} ORDER BY score DESC, latest IS NULL, latest DESC, u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`, ...sp, ...mp, ...wp, per, (page - 1) * per);
+    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n ${from} ORDER BY score DESC, latest DESC NULLS LAST, u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`, ...sp, ...mp, ...wp, per, (page - 1) * per);
   return { items, total, page, per, pages: Math.max(1, Math.ceil(total / per)) };
 }
 /** Attach each seller's newest available listings (one query for the whole page). */
@@ -48,23 +48,23 @@ async function withPreviews(sellers, { perSeller = 3, term = '' } = {}) {
   if (!sellers.length) return sellers;
   const ids = sellers.map((s) => s.id), ts = termsOf(term);
   const rows = await q.all(`SELECT l.id, l.seller_id, l.title, l.price_cents, (SELECT file FROM listing_images WHERE listing_id = l.id ORDER BY position, id LIMIT 1) image,
-    ${ts.length ? '(' + ts.map(() => "(l.title LIKE ? ESCAPE '\\' OR l.brand LIKE ? ESCAPE '\\' OR l.category LIKE ? ESCAPE '\\')").join(' AND ') + ')' : '0'} AS rel
-    FROM listings l WHERE l.status = 'active' AND l.seller_id IN (${ids.map(() => '?').join(',')}) ORDER BY rel DESC, l.published_at DESC, l.id DESC`, ...ts.flatMap((t) => [L(t), L(t), L(t)]), ...ids);
+    ${ts.length ? '(' + ts.map(() => "(l.title ILIKE ? ESCAPE '\\' OR l.brand ILIKE ? ESCAPE '\\' OR l.category ILIKE ? ESCAPE '\\')").join(' AND ') + ')' : '0'} AS rel
+    FROM listings l WHERE l.status = 'active' AND l.seller_id IN (${ids.map(() => '?').join(',')}) ORDER BY rel DESC, l.published_at DESC NULLS LAST, l.id DESC`, ...ts.flatMap((t) => [L(t), L(t), L(t)]), ...ids);
   const by = new Map(); for (const r of rows) { const a = by.get(r.seller_id) || []; if (a.length < perSeller) { a.push(r); by.set(r.seller_id, a); } }
   return sellers.map((s) => ({ ...s, previews: by.get(s.id) || [] }));
 }
 
 // ------------------------------------------------------------------ follows
-const publicSeller = async (handle) => await q.get('SELECT id, handle, store_name FROM users u WHERE u.handle = ? COLLATE NOCASE AND ' + PUBLIC, String(handle || '').slice(0, 40));
+const publicSeller = async (handle) => await q.get('SELECT id, handle, store_name FROM users u WHERE u.handle = ? AND ' + PUBLIC, String(handle || '').slice(0, 40));
 const followedSet = async (user) => new Set(user ? (await q.all('SELECT seller_id FROM seller_follows WHERE follower_id = ?', user.id)).map((r) => r.seller_id) : []);
 async function follow(user, handle) {
   const s = await publicSeller(handle); if (!s) throw new HttpError(404, 'Seller not found');
   if (s.id === user.id) throw new HttpError(400, 'You can\'t follow your own store.');
-  const r = await q.run('INSERT OR IGNORE INTO seller_follows(follower_id, seller_id, created_at) VALUES(?,?,?)', user.id, s.id, now());      // PK makes a duplicate a no-op
+  const r = await q.run('INSERT INTO seller_follows(follower_id, seller_id, created_at) VALUES(?,?,?) ON CONFLICT DO NOTHING', user.id, s.id, now());      // PK makes a duplicate a no-op
   return { following: true, changed: r.changes === 1 };
 }
 async function unfollow(user, handle) {
-  const s = await q.get('SELECT id FROM users WHERE handle = ? COLLATE NOCASE AND is_seller = 1', String(handle || '').slice(0, 40)); if (!s) throw new HttpError(404, 'Seller not found');
+  const s = await q.get('SELECT id FROM users WHERE handle = ? AND is_seller = 1', String(handle || '').slice(0, 40)); if (!s) throw new HttpError(404, 'Seller not found');
   const r = await q.run('DELETE FROM seller_follows WHERE follower_id = ? AND seller_id = ?', user.id, s.id);
   return { following: false, changed: r.changes === 1 };
 }
@@ -81,7 +81,7 @@ async function announceDrop(listingId) {
       if (!l || l.status !== 'active' || !l.published_at || l.banned || !l.is_seller) return 0;
       if ((await q.run('UPDATE listings SET drop_notified_at = ? WHERE id = ? AND drop_notified_at IS NULL', now(), l.id)).changes !== 1) return 0;     // already announced
       const img = (await q.get('SELECT file FROM listing_images WHERE listing_id = ? ORDER BY position, id LIMIT 1', l.id) || {}).file || null, who = l.store_name || l.handle;
-      return (await q.run(`INSERT OR IGNORE INTO notifications(user_id, title, body, link, image, dedupe_key, created_at) SELECT f.follower_id, ?, ?, ?, ?, ?, ? FROM seller_follows f JOIN users fu ON fu.id = f.follower_id AND fu.banned = 0 WHERE f.seller_id = ? AND f.follower_id <> ?`,
+      return (await q.run(`INSERT INTO notifications(user_id, title, body, link, image, dedupe_key, created_at) SELECT f.follower_id, ?, ?, ?, ?, ?, ? FROM seller_follows f JOIN users fu ON fu.id = f.follower_id AND fu.banned = 0 WHERE f.seller_id = ? AND f.follower_id <> ? ON CONFLICT DO NOTHING`,
         `New from ${who}`, `${l.title} · ${money(l.price_cents)}`, `/listing/${l.id}`, img, `drop:${l.id}`, now(), l.seller_id, l.seller_id)).changes;
     });
   } catch (e) { console.error('new-drop notification failed:', e.message); return 0; }       // never let a notification problem break publishing
@@ -114,7 +114,7 @@ let cache = { at: 0, rows: [] };
 /** Real counts over the recent window; only queries searched at least MIN_COUNT times qualify. Cached briefly so a page view costs no extra query. */
 async function popular({ force = false } = {}) {
   if (!force && Date.now() - cache.at < 60000) return cache.rows;
-  cache = { at: Date.now(), rows: await q.all('SELECT term, COUNT(*) n FROM search_log WHERE created_at >= ? GROUP BY term HAVING n >= ? ORDER BY n DESC, term LIMIT 50', now() - WINDOW_DAYS * 86400, MIN_COUNT) };
+  cache = { at: Date.now(), rows: await q.all('SELECT term, COUNT(*) n FROM search_log WHERE created_at >= ? GROUP BY term HAVING COUNT(*) >= ? ORDER BY n DESC, term LIMIT 50', now() - WINDOW_DAYS * 86400, MIN_COUNT) };
   return cache.rows;
 }
 const resetPopularCache = () => { cache = { at: 0, rows: [] }; };
@@ -127,9 +127,9 @@ const purgeSearchLog = async () => (await q.run('DELETE FROM search_log WHERE cr
 /** Brands and categories among the AVAILABLE listings that match the query. */
 async function relatedDiscoveries(qstr) {
   const ts = termsOf(qstr); if (!ts.length) return { brands: [], categories: [] };
-  const cond = ts.map(() => "(l.title LIKE ? ESCAPE '\\' OR l.brand LIKE ? ESCAPE '\\' OR l.category LIKE ? ESCAPE '\\' OR l.description LIKE ? ESCAPE '\\')").join(' AND '), p = ts.flatMap((t) => [L(t), L(t), L(t), L(t)]);
+  const cond = ts.map(() => "(l.title ILIKE ? ESCAPE '\\' OR l.brand ILIKE ? ESCAPE '\\' OR l.category ILIKE ? ESCAPE '\\' OR l.description ILIKE ? ESCAPE '\\')").join(' AND '), p = ts.flatMap((t) => [L(t), L(t), L(t), L(t)]);
   const base = `FROM listings l JOIN users u ON u.id = l.seller_id AND u.banned = 0 WHERE l.status = 'active' AND ${cond}`, me = ts.join(' ');
-  return { brands: (await q.all(`SELECT l.brand v, COUNT(*) n ${base} AND l.brand IS NOT NULL AND l.brand <> '' GROUP BY l.brand COLLATE NOCASE ORDER BY n DESC, v LIMIT 6`, ...p)).filter((r) => r.v.toLowerCase() !== me),
+  return { brands: (await q.all(`SELECT MIN(l.brand) v, COUNT(*) n ${base} AND l.brand IS NOT NULL AND l.brand <> '' GROUP BY lower(l.brand) ORDER BY n DESC, v LIMIT 6`, ...p)).filter((r) => r.v.toLowerCase() !== me),
     categories: (await q.all(`SELECT l.category v, COUNT(*) n ${base} GROUP BY l.category ORDER BY n DESC LIMIT 4`, ...p)).map((r) => ({ ...r, label: (config.categories.find((c) => c[0] === r.v) || [])[1] || r.v })) };
 }
 

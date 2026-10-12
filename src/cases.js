@@ -6,7 +6,7 @@
 //                                              -> buyer_disputes_refund    (escalates to an admin case)
 //       requested -> seller_declined | admin_closed | admin_verified_refund
 //     The order only becomes 'refunded' on buyer confirmation or an admin verification — never on the seller's say-so alone.
-const { q, tx, now } = require('./db');
+const { q, tx, now, lockKey } = require('./db');
 const { HttpError, clean } = require('./util');
 const { rateLimit } = require('./auth');
 const { ownedUploads } = require('./images');
@@ -37,12 +37,12 @@ async function reportOrder(user, orderId, { reason, evidence = [], category, pay
   rateLimit(`case:${user.id}`, 10, 3600);
   const why = text(reason), cat = F.category(category); const imgs = await ownedUploads(user.id, evidence.slice(0, 4));
   return await tx(async () => {
-    const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', Number(orderId), user.id);
+    const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ? FOR UPDATE', Number(orderId), user.id);
     if (!o) throw new HttpError(404, 'Order not found');
     if (!engaged(o) && !(paymentMismatch && o.status === 'pending_payment')) throw new HttpError(409, 'There is nothing to report yet: you have not opened the seller\'s payment link or said you paid. Cancel the order if you changed your mind.');
     if (await q.get("SELECT 1 x FROM cases WHERE order_id = ? AND reporter_id = ? AND kind = 'order_issue' AND status IN ('open','awaiting_seller','under_review')", o.id, user.id)) throw new HttpError(409, 'You already have an open report for this order.');
-    const c = await q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, payment_mismatch, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?, ?, ?)", o.id, user.id, o.seller_id, why, cat, paymentMismatch ? 1 : 0, now(), now());
-    const id = Number(c.lastInsertRowid);
+    const c = await q.insert("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, payment_mismatch, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'awaiting_seller', ?, ?, ?, ?)", o.id, user.id, o.seller_id, why, cat, paymentMismatch ? 1 : 0, now(), now());
+    const id = c;
     await addEvent(id, user, 'buyer', 'report', why); for (const f of imgs) await addEvent(id, user, 'buyer', 'evidence', null, { image: f });
     await F.preserveOrderRecord(id, o.id);
     await notify(o.seller_id, `case:${id}:opened`, paymentMismatch ? 'A buyer says your checkout amount did not match' : 'A buyer reported a problem with an order', `Order #${o.id}: please respond so it can be resolved.`, `/cases/${id}`);
@@ -53,10 +53,11 @@ async function reportOrder(user, orderId, { reason, evidence = [], category, pay
 async function reportSeller(user, handle, { reason, evidence = [], orderId, category }) {
   rateLimit(`case:${user.id}`, 10, 3600);
   const why = text(reason), cat = F.category(category), imgs = await ownedUploads(user.id, evidence.slice(0, 4));
-  const s = await q.get('SELECT id FROM users WHERE handle = ? COLLATE NOCASE AND is_seller = 1', String(handle || '').slice(0, 40));
+  const s = await q.get('SELECT id FROM users WHERE handle = ? AND is_seller = 1', String(handle || '').slice(0, 40));
   if (!s) throw new HttpError(404, 'Seller not found');
   if (s.id === user.id) throw new HttpError(403, "You can't report yourself.");
   return await tx(async () => {
+    await lockKey('case:seller', user.id, s.id);           // serialises the "one open report per reporter and seller" check below
     let oid = null;
     if (orderId !== undefined && orderId !== null && orderId !== '') {                       // optional: tie the report to one of the reporter's own orders with this seller
       const o = await q.get('SELECT id FROM orders WHERE id = ? AND buyer_id = ? AND seller_id = ?', Number(orderId), user.id, s.id);
@@ -64,8 +65,8 @@ async function reportSeller(user, handle, { reason, evidence = [], orderId, cate
       oid = o.id;
     }
     if (await q.get("SELECT 1 x FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? AND status IN ('open','awaiting_seller','under_review')", user.id, s.id)) throw new HttpError(409, 'You already have an open report about this seller. Add to it from your cases instead.');
-    const c = await q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?,?, 'open', ?, ?, ?)", oid, user.id, s.id, why, cat, now(), now());
-    const id = Number(c.lastInsertRowid);
+    const c = await q.insert("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?,?, 'open', ?, ?, ?)", oid, user.id, s.id, why, cat, now(), now());
+    const id = c;
     await addEvent(id, user, 'buyer', 'report', why); for (const f of imgs) await addEvent(id, user, 'buyer', 'evidence', null, { image: f });
     if (oid) await F.preserveOrderRecord(id, oid);
     await audit(user, 'case_opened', { type: 'case', id, detail: { kind: 'seller_issue', order: oid } });
@@ -78,9 +79,10 @@ async function appeal(user, { reason, evidence = [] }) {
   rateLimit(`appeal:${user.id}`, 5, 3600);
   const why = text(reason, 10, 2000, 'reason'), imgs = await ownedUploads(user.id, evidence.slice(0, 4));
   return await tx(async () => {
+    await lockKey('case:appeal', user.id);
     if (await q.get("SELECT 1 x FROM cases WHERE kind = 'seller_issue' AND reporter_id = ? AND subject_user_id = ? AND status IN ('open','awaiting_seller','under_review')", user.id, user.id)) throw new HttpError(409, 'You already have an open appeal. Add to it from your cases.');
-    const c = await q.run("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?, 'open', 'other', ?, ?)", user.id, user.id, `Appeal: ${why}`, now(), now());
-    const id = Number(c.lastInsertRowid);
+    const c = await q.insert("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, category, created_at, updated_at) VALUES('seller_issue',?,?,?, 'open', 'other', ?, ?)", user.id, user.id, `Appeal: ${why}`, now(), now());
+    const id = c;
     await addEvent(id, user, 'seller', 'report', `Appeal: ${why}`); for (const f of imgs) await addEvent(id, user, 'seller', 'evidence', null, { image: f });
     await audit(user, 'appeal_opened', { type: 'case', id });
     return id;
@@ -94,9 +96,9 @@ async function reportMessage(user, { conversationId, messageId, reason }) {
   if (messageId) { const m = await q.get('SELECT id FROM messages WHERE id = ? AND conversation_id = ?', Number(messageId), conv.id); if (!m) throw new HttpError(404, 'Message not found'); mid = m.id; }
   const subject = conv.buyer_id === user.id ? conv.seller_id : conv.buyer_id;
   return await tx(async () => {
-    const c = await q.run("INSERT INTO cases(kind, conversation_id, message_id, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('message_report',?,?,?,?,?, 'under_review', ?, ?)", conv.id, mid, user.id, subject, why, now(), now());
-    await addEvent(Number(c.lastInsertRowid), user, conv.buyer_id === user.id ? 'buyer' : 'seller', 'report', why); await audit(user, 'message_reported', { type: 'case', id: c.lastInsertRowid, detail: { conversation: conv.id, message: mid } });
-    return Number(c.lastInsertRowid);
+    const c = await q.insert("INSERT INTO cases(kind, conversation_id, message_id, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('message_report',?,?,?,?,?, 'under_review', ?, ?)", conv.id, mid, user.id, subject, why, now(), now());
+    await addEvent(c, user, conv.buyer_id === user.id ? 'buyer' : 'seller', 'report', why); await audit(user, 'message_reported', { type: 'case', id: c, detail: { conversation: conv.id, message: mid } });
+    return c;
   });
 }
 
@@ -205,28 +207,28 @@ async function requestRefund(user, orderId, { kind = 'refund', reason }) {
   if (!['refund', 'cancellation'].includes(kind)) throw new HttpError(422, 'Choose refund or cancellation.');
   const why = text(reason);
   return await tx(async () => {
-    const o = await q.get("SELECT * FROM orders WHERE id = ? AND buyer_id = ? AND payment_mode = 'external'", Number(orderId), user.id);
+    const o = await q.get("SELECT * FROM orders WHERE id = ? AND buyer_id = ? AND payment_mode = 'external' FOR UPDATE", Number(orderId), user.id);
     if (!o) throw new HttpError(404, 'Order not found');
     if (!REFUNDABLE.includes(o.status)) throw new HttpError(409, 'A refund can only be requested after the seller has confirmed your payment.');
     if (kind === 'cancellation' && o.status !== 'paid') throw new HttpError(409, 'Cancellation is only possible before the order ships. Request a refund instead.');
     if (await openRequest(o.id)) throw new HttpError(409, 'There is already an open refund request for this order.');
-    const r = await q.run("INSERT INTO refund_requests(order_id, kind, requested_by, reason, status, requested_at, updated_at) VALUES(?,?,?,?, 'requested', ?, ?)", o.id, kind, user.id, why, now(), now());
-    await notify(o.seller_id, `refund:${r.lastInsertRowid}:requested`, kind === 'cancellation' ? 'Cancellation requested' : 'Refund requested', `Order #${o.id}: respond in your order page. PairPlug does not move money; you refund through your own payment provider.`, `/dashboard/orders/${o.id}`);
+    const r = await q.insert("INSERT INTO refund_requests(order_id, kind, requested_by, reason, status, requested_at, updated_at) VALUES(?,?,?,?, 'requested', ?, ?)", o.id, kind, user.id, why, now(), now());
+    await notify(o.seller_id, `refund:${r}:requested`, kind === 'cancellation' ? 'Cancellation requested' : 'Refund requested', `Order #${o.id}: respond in your order page. PairPlug does not move money; you refund through your own payment provider.`, `/dashboard/orders/${o.id}`);
     await audit(user, 'refund_requested', { type: 'order', id: o.id, detail: { kind } });
-    return Number(r.lastInsertRowid);
+    return r;
   });
 }
 /** The seller states what THEY did. This is an assertion: it does not change the order status. */
 async function sellerRespond(user, orderId, { action, reference, note }) {
   const ref = clean(reference, 80) || null;
   return await tx(async () => {
-    const o = await q.get("SELECT * FROM orders WHERE id = ? AND seller_id = ? AND payment_mode = 'external'", Number(orderId), user.id);
+    const o = await q.get("SELECT * FROM orders WHERE id = ? AND seller_id = ? AND payment_mode = 'external' FOR UPDATE", Number(orderId), user.id);
     if (!o) throw new HttpError(404, 'Order not found');
     let req = await openRequest(o.id);
     if (action === 'report_refunded') {
       if (!REFUNDABLE.includes(o.status)) throw new HttpError(409, 'Only confirmed orders can be refunded.');
       if (req && req.status === 'seller_reported_refunded') throw new HttpError(409, 'You already reported this refund; waiting for the buyer to confirm.');
-      if (!req) { const r = await q.run("INSERT INTO refund_requests(order_id, kind, requested_by, reason, status, requested_at, updated_at) VALUES(?, 'refund', ?, 'Seller-initiated refund', 'requested', ?, ?)", o.id, user.id, now(), now()); req = await q.get('SELECT * FROM refund_requests WHERE id = ?', r.lastInsertRowid); }
+      if (!req) { const r = await q.insert("INSERT INTO refund_requests(order_id, kind, requested_by, reason, status, requested_at, updated_at) VALUES(?, 'refund', ?, 'Seller-initiated refund', 'requested', ?, ?)", o.id, user.id, now(), now()); req = await q.get('SELECT * FROM refund_requests WHERE id = ?', r); }
       await q.run("UPDATE refund_requests SET status = 'seller_reported_refunded', refund_reference = ?, seller_note = ?, seller_responded_at = ?, updated_at = ? WHERE id = ?", ref, clean(note, 1000) || null, now(), now(), req.id);
       await notify(o.buyer_id, `refund:${req.id}:reported`, 'The seller says your refund was sent', `Order #${o.id}: please check your payment account and confirm whether you received it. PairPlug cannot verify seller refunds.`, `/orders/${o.id}`);
     } else if (action === 'decline') {
@@ -247,7 +249,7 @@ async function completeRefund(orderId, actorLabel, note) {
 /** The BUYER confirms (or denies) receiving the refund the seller reported. Only this completes it. */
 async function buyerConfirm(user, orderId, { received, note }) {
   return await tx(async () => {
-    const o = await q.get("SELECT * FROM orders WHERE id = ? AND buyer_id = ? AND payment_mode = 'external'", Number(orderId), user.id);
+    const o = await q.get("SELECT * FROM orders WHERE id = ? AND buyer_id = ? AND payment_mode = 'external' FOR UPDATE", Number(orderId), user.id);
     const req = o && await openRequest(o.id);
     if (!req || req.status !== 'seller_reported_refunded') throw new HttpError(409, 'There is no seller-reported refund waiting for your confirmation.');
     if (received) {
@@ -259,8 +261,8 @@ async function buyerConfirm(user, orderId, { received, note }) {
       await q.run("UPDATE refund_requests SET status = 'buyer_disputes_refund', updated_at = ? WHERE id = ?", now(), req.id);
       let caseId = req.case_id;
       if (!caseId) {
-        const c = await q.run("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'under_review', ?, ?)", o.id, user.id, o.seller_id, `Refund not received: ${n}`, now(), now());
-        caseId = Number(c.lastInsertRowid); await q.run('UPDATE refund_requests SET case_id = ? WHERE id = ?', caseId, req.id);
+        const c = await q.insert("INSERT INTO cases(kind, order_id, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('order_issue',?,?,?,?, 'under_review', ?, ?)", o.id, user.id, o.seller_id, `Refund not received: ${n}`, now(), now());
+        caseId = c; await q.run('UPDATE refund_requests SET case_id = ? WHERE id = ?', caseId, req.id);
         await addEvent(caseId, user, 'buyer', 'report', `Refund not received: ${n}`);
       }
       await notify(o.seller_id, `refund:${req.id}:disputed`, 'The buyer says the refund has not arrived', `Order #${o.id}: PairPlug support was notified (case #${caseId}).`, `/cases/${caseId}`);
@@ -273,7 +275,7 @@ async function buyerConfirm(user, orderId, { received, note }) {
 async function adminResolveRefund(admin, requestId, { outcome, note }) {
   const n = text(note, 5, 1000, 'note');
   return await tx(async () => {
-    const req = await q.get('SELECT * FROM refund_requests WHERE id = ?', Number(requestId)); if (!req) throw new HttpError(404, 'Request not found');
+    const req = await q.get('SELECT * FROM refund_requests WHERE id = ? FOR UPDATE', Number(requestId)); if (!req) throw new HttpError(404, 'Request not found');
     if (!['requested', 'seller_reported_refunded', 'buyer_disputes_refund'].includes(req.status)) throw new HttpError(409, 'This request is already resolved.');
     if (outcome === 'verified') {
       await q.run("UPDATE refund_requests SET status = 'admin_verified_refund', seller_note = COALESCE(seller_note, ?), resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ?", n, now(), admin.id, now(), req.id);

@@ -64,7 +64,7 @@ r.get('/s/:handle', async (req, res) => {
 const S = [auth.requireSeller];
 r.get('/dashboard/storefront', S, async (req, res) => {
   const u = req.user, st = await SF.state(u.id), w = st.working;
-  const mine = await q.all("SELECT id, title FROM listings WHERE seller_id = ? AND status IN ('active','reserved') ORDER BY published_at DESC LIMIT 100", u.id);
+  const mine = await q.all("SELECT id, title FROM listings WHERE seller_id = ? AND status IN ('active','reserved') ORDER BY published_at DESC NULLS LAST LIMIT 100", u.id);
   const radio = (name, map, cur, extra = () => '') => Object.entries(map).map(([k, l]) => `<label class="opt-pick"><input type="radio" name="${name}" value="${k}"${cur === k ? ' checked' : ''}> ${extra(k)}<span>${esc(l)}</span></label>`).join('');
   const links = [...(w.links || []), ...Array(SF.LIMITS.links).fill({ kind: '', url: '' })].slice(0, SF.LIMITS.links);
   const body = `<h1>Storefront</h1><p class="muted small">Make your public page your own. Changes are saved as a private <strong>draft</strong>; use <strong>Preview</strong> to see exactly what visitors will see, then <strong>Publish</strong>. ${st.publishedAt ? '' : 'Nothing is published yet, so visitors currently see the default storefront.'}</p>

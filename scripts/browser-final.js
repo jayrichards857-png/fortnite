@@ -13,8 +13,9 @@ const { png } = require('./png');
 
 const SHOTS = process.argv.includes('--screenshots'), OUT = path.resolve(__dirname, '..', 'artifacts', 'screenshots');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-final-')), PORT = 3440, B = `http://localhost:${PORT}`;
-const root = path.resolve(__dirname, '..'), DB = path.join(tmp, 'f.db'), UP = path.join(tmp, 'up');
-const env = { ...process.env, PORT: String(PORT), PAIRPLUG_DB: DB, PAIRPLUG_UPLOADS: UP, CHECKOUT_MODE: 'external', SIGNUPS: 'closed', SELLER_ONBOARDING: 'invite', PUBLIC_RELEASE_DATE: '2026-11-01', PAYMENTS_MODE: '' };
+const fresh = require('../test/testdb').createSync(), dropFresh = () => require('../test/testdb').dropSync(fresh.name);   // own empty PostgreSQL database for this run
+const root = path.resolve(__dirname, '..'), UP = path.join(tmp, 'up');
+const env = { ...process.env, PORT: String(PORT), DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: UP, CHECKOUT_MODE: 'external', SIGNUPS: 'closed', SELLER_ONBOARDING: 'invite', PUBLIC_RELEASE_DATE: '2026-11-01', PAYMENTS_MODE: '' };
 const ADMIN = { email: 'founder@example.test', pw: 'admin-passphrase-123' };
 execFileSync(process.execPath, ['scripts/create-admin.js'], { cwd: root, env: { ...env, ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.pw }, stdio: 'ignore' });
 const server = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -175,5 +176,5 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     assert.deepEqual(errors, [], 'no uncaught page errors: ' + errors.join('; '));
     console.log('\nBROWSER FINAL JOURNEY PASSED');
   } catch (e) { console.error('\nBROWSER FINAL JOURNEY FAILED:', e.message); process.exitCode = 1; }
-  finally { await browser.close(); server.kill(); }
+  finally { await browser.close(); server.kill(); dropFresh(); }
 })();

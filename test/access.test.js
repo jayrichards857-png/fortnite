@@ -19,7 +19,7 @@ async function approvedSeller(adm, key) {
   const c = new H.Client(); c.email = email; c.handle = `${key}${Date.now() % 100000}`;
   const r = await c.post('/api/invitations/accept', { token: tokenOf(inv.json.link), display_name: `Seller ${key}`, password: 'a-long-password-1', store_name: `Store ${key}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true });
   assert.equal(r.status, 200, r.text);
-  await q.run("UPDATE users SET email_verified_at = strftime('%s','now') WHERE email = ?", email);
+  await q.run("UPDATE users SET email_verified_at = CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) WHERE email = ?", email);
   return c;
 }
 const listingBody = (file) => ({ title: 'Wool sweater', description: 'Warm', category: 'clothing', condition: 'good', size: 'M', price: '30.00', shipping: '5.00', shipping_payer: 'buyer', weight_oz: 20, payment_url: LINK, images: [file], status: 'active' });

@@ -4,7 +4,7 @@ process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const H = require('./helpers');
-const { q, now } = require('../src/db');
+const { q, now, tx } = require('../src/db');
 const D = require('../src/discovery');
 
 test.before(async () => await H.start());
@@ -63,7 +63,7 @@ test('Related discoveries come from real matching listings; Popular searches app
 });
 
 test('search logging is privacy-conscious: normalised, noise and personal data excluded, rapid repeats dropped, no user/IP stored, old rows purged', async () => {
-  const cols = (await q.all('PRAGMA table_info(search_log)')).map((c) => c.name); assert.deepEqual(cols.sort(), ['created_at', 'id', 'term']);
+  const cols = (await q.all("SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'search_log'")).map((c) => c.name); assert.deepEqual(cols.sort(), ['created_at', 'id', 'term']);
   for (const bad of ['', ' ', 'a', '!!!', 'person@example.com', 'call 4155551234 now', 'https://evil.example/x', 'aaaaaaaa', 'one two three four five six seven']) assert.equal(D.normalizeTerm(bad), null, JSON.stringify(bad));
   assert.equal(D.normalizeTerm('  Sp5der   HOODIE!! '), 'sp5der hoodie'); assert.equal(D.normalizeTerm('Levi’s 501'), 'levis 501');
   await q.run('DELETE FROM search_log'); const before = (await q.get('SELECT COUNT(*) n FROM search_log')).n;
@@ -135,8 +135,7 @@ test('new-drop notifications: only first genuine publication, once, to eligible 
 
 test('fan-out is set-based and safe for a seller with many followers', async () => {
   const seller = await shop('Popular Seller', 'popularseller', []); const sid = (await q.get('SELECT id FROM users WHERE handle = ?', 'popularseller')).id, t = now();
-  const ins = q.db ? null : null; void ins;
-  const { db } = require('../src/db'); db.exec('BEGIN'); for (let i = 0; i < 1500; i++) { const r = await q.run("INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?, 'x', ?, ?)", `bulk${i}@fan.test`, `Bulk ${i}`, t); await q.run('INSERT INTO seller_follows(follower_id, seller_id, created_at) VALUES(?,?,?)', Number(r.lastInsertRowid), sid, t); } db.exec('COMMIT');
+  await tx(async () => { for (let i = 0; i < 1500; i++) { const uid = await q.insert("INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?, 'x', ?, ?)", `bulk${i}@fan.test`, `Bulk ${i}`, t); await q.run('INSERT INTO seller_follows(follower_id, seller_id, created_at) VALUES(?,?,?)', uid, sid, t); } });
   const file = await H.upload(seller), t0 = Date.now(); const r = await seller.post('/api/seller/listings', { title: 'Mass drop', description: 'x', category: 'outerwear', size: 'M', condition: 'good', price: '30', shipping: '5', shipping_payer: 'buyer', weight_oz: 10, payment_url: LINK, images: [file], status: 'active' });
   assert.equal(r.status, 200); assert.equal((await q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?", `drop:${r.json.id}`)).n, 1500); assert.ok(Date.now() - t0 < 5000, 'one set-based insert');
   assert.equal(await D.announceDrop(r.json.id), 0); assert.equal((await q.get("SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?", `drop:${r.json.id}`)).n, 1500);

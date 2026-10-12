@@ -41,8 +41,8 @@ async function invite(actor, { email, note, suggestedName }) {
     if (await q.get('SELECT 1 x FROM moderator_invites WHERE email = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?', addr, now())) throw new HttpError(409, 'A live setup link for that email already exists. Revoke it first.');
     const raw = 'pp_mod_' + crypto.randomBytes(24).toString('base64url'), expires = now() + TTL_HOURS * 3600;
     let id;
-    try { id = (await q.run('INSERT INTO moderator_invites(token_hash, email, note, suggested_name, created_by, created_via, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?)',
-      sha(raw), addr, clean(note, 200) || null, cleanLine(suggestedName, 80) || null, typeof actor === 'object' ? actor.id : null, typeof actor === 'object' ? 'admin' : String(actor), now(), expires)).lastInsertRowid; } catch (e) { mapCap(e); }
+    try { id = (await q.insert('INSERT INTO moderator_invites(token_hash, email, note, suggested_name, created_by, created_via, created_at, expires_at) VALUES(?,?,?,?,?,?,?,?)',
+      sha(raw), addr, clean(note, 200) || null, cleanLine(suggestedName, 80) || null, typeof actor === 'object' ? actor.id : null, typeof actor === 'object' ? 'admin' : String(actor), now(), expires)); } catch (e) { mapCap(e); }
     await audit(actor, 'moderator_setup_link_created', { type: 'moderator_invite', id, detail: { email: addr, expiresAt: expires } });     // never the token
     return { id: Number(id), expiresAt: expires, link: `${config.publicUrl.replace(/\/$/, '')}/moderator/setup/${raw}` };
   });
@@ -53,9 +53,9 @@ async function revokeInvite(actor, id) {
   await audit(actor, 'moderator_setup_link_revoked', { type: 'moderator_invite', id });
 }
 /** Raw token -> live row, or null for every failure (unknown, malformed, used, revoked, expired). */
-async function lookup(raw) {
+async function lookup(raw, { lock = false } = {}) {
   if (typeof raw !== 'string' || !raw.startsWith('pp_mod_') || raw.length > 80) return null;
-  const r = await q.get('SELECT * FROM moderator_invites WHERE token_hash = ?', sha(raw));
+  const r = await q.get(`SELECT * FROM moderator_invites WHERE token_hash = ?${lock ? ' FOR UPDATE' : ''}`, sha(raw));       // lock inside the accepting tx
   return r && !r.used_at && !r.revoked_at && r.expires_at > now() ? r : null;
 }
 /** The invited person creates THEIR OWN account and password. One transaction: account + cap check + consuming the link. */
@@ -63,7 +63,7 @@ async function accept(raw, body) {
   const gone = () => new HttpError(400, 'This setup link is invalid, expired or already used. Ask an administrator for a new one.');
   if (!await lookup(raw)) throw gone();
   return await tx(async () => {
-    const inv = await lookup(raw); if (!inv) throw gone();
+    const inv = await lookup(raw, { lock: true }); if (!inv) throw gone();
     const f = {}; const name = cleanLine(body.display_name, 80), pw = String(body.password || '');
     if (name.length < 2) f.display_name = 'Enter your name.';
     if (pw.length < MIN_PASSWORD || pw.length > 200) f.password = `Use at least ${MIN_PASSWORD} characters.`;
@@ -71,7 +71,7 @@ async function accept(raw, body) {
     if (Object.keys(f).length) throw new HttpError(422, 'Please fix the highlighted fields.', f);
     if (await q.get('SELECT 1 x FROM users WHERE email = ?', inv.email)) throw gone();
     let uid;
-    try { uid = Number((await q.run('INSERT INTO users(email, password_hash, display_name, is_moderator, created_at, terms_version, terms_accepted_at) VALUES(?,?,?,1,?,?,?)', inv.email, hashPassword(pw), name, now(), LEGAL.VERSION, now())).lastInsertRowid); } catch (e) { mapCap(e); }
+    try { uid = Number((await q.insert('INSERT INTO users(email, password_hash, display_name, is_moderator, created_at, terms_version, terms_accepted_at) VALUES(?,?,?,1,?,?,?)', inv.email, hashPassword(pw), name, now(), LEGAL.VERSION, now()))); } catch (e) { mapCap(e); }
     if ((await q.run('UPDATE moderator_invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?', now(), uid, inv.id, now())).changes !== 1) throw gone();
     await audit({ id: uid }, 'moderator_account_created', { type: 'user', id: uid, detail: { invite: inv.id } });
     return uid;
@@ -105,7 +105,8 @@ const role = (u) => (u.is_admin ? 'admin' : 'moderator');
 /** Permission policy for acting on another account. Returns the target row or throws. */
 async function target(actor, targetId) {
   if (!isStaff(actor)) throw new HttpError(403, 'Moderator access required');
-  const t = await q.get('SELECT * FROM users WHERE id = ?', Number(targetId));
+  // FOR UPDATE: two staff acting on the same account at once queue here; the second sees the first's result (e.g. "already banned")
+  const t = await q.get('SELECT * FROM users WHERE id = ? FOR UPDATE', Number(targetId));
   if (!t) throw new HttpError(404, 'User not found');
   if (t.id === actor.id) throw new HttpError(400, "You can't take moderation action on your own account.");
   if (!actor.is_admin && (t.is_admin || t.is_moderator)) throw new HttpError(403, 'Moderators cannot act on administrator or moderator accounts.');
@@ -211,7 +212,7 @@ async function searchUsers(term, limit = 25) {
   const t = clean(term || '', 80); if (t.length < 2) return [];
   const like = `%${t.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
   return (await q.all(`SELECT id, display_name, handle, store_name, email, is_admin, is_moderator, is_seller, banned, selling_restricted_at, created_at FROM users
-    WHERE display_name LIKE ? ESCAPE '\\' OR handle LIKE ? ESCAPE '\\' OR store_name LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`, like, like, like, like, limit))
+    WHERE display_name ILIKE ? ESCAPE '\\' OR handle ILIKE ? ESCAPE '\\' OR store_name ILIKE ? ESCAPE '\\' OR email ILIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`, like, like, like, like, limit))
     .map(({ email, ...u }) => ({ ...u, emailMasked: maskEmail(email) }));
 }
 async function userView(id) {
@@ -223,7 +224,7 @@ async function userView(id) {
     listings: await q.all('SELECT id, title, status, price_cents FROM listings WHERE seller_id = ? ORDER BY id DESC LIMIT 50', u.id),
     cases: await q.all("SELECT id, kind, status, category, created_at, CASE WHEN reporter_id = ? THEN 'reporter' ELSE 'subject' END AS role FROM cases WHERE reporter_id = ? OR subject_user_id = ? ORDER BY id DESC LIMIT 50", u.id, u.id, u.id),
     actions: await q.all('SELECT a.*, x.display_name actor FROM moderation_actions a JOIN users x ON x.id = a.actor_id WHERE a.target_id = ? ORDER BY a.id DESC LIMIT 50', u.id),
-    orders: await q.get("SELECT COUNT(*) FILTER (WHERE buyer_id = ?) asBuyer, COUNT(*) FILTER (WHERE seller_id = ?) asSeller FROM orders WHERE payment_mode = 'external' AND (buyer_id = ? OR seller_id = ?)", u.id, u.id, u.id, u.id),
+    orders: await q.get("SELECT COUNT(*) FILTER (WHERE buyer_id = ?) \"asBuyer\", COUNT(*) FILTER (WHERE seller_id = ?) \"asSeller\" FROM orders WHERE payment_mode = 'external' AND (buyer_id = ? OR seller_id = ?)", u.id, u.id, u.id, u.id),
   };
 }
 const recentActions = async (n = 50) => await q.all('SELECT a.*, x.display_name actor, t.display_name targetName, t.handle FROM moderation_actions a JOIN users x ON x.id = a.actor_id JOIN users t ON t.id = a.target_id ORDER BY a.id DESC LIMIT ?', n);

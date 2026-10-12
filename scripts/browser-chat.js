@@ -11,7 +11,8 @@ const { png } = require('./png');
 
 const SHOTS = process.argv.includes('--screenshots'), OUT = path.resolve(__dirname, '..', 'artifacts', 'screenshots');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-chat-')), PORT = 3420, B = `http://localhost:${PORT}`;
-const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'c.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', RATE_LIMIT_SCALE: '100' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const fresh = require('../test/testdb').createSync(), dropFresh = () => require('../test/testdb').dropSync(fresh.name);   // own empty PostgreSQL database for this run
+const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: path.join(tmp, 'up'), PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', RATE_LIMIT_SCALE: '100' }, stdio: ['ignore', 'pipe', 'inherit'] });
 const ready = new Promise((r) => server.stdout.on('data', (d) => String(d).includes('listening') && r()));
 const step = (m) => console.log('•', m);
 
@@ -28,7 +29,7 @@ const cookieObj = (c) => { const [name, value] = c.split('='); return { name, va
   // --- data via the real API (throwaway DB) ---
   let s = await api('', 'POST', '/api/register', { email: 'sam@example.test', display_name: 'Sam Seller', terms: true, password: 'a-long-password-1' });
   const sellerCookie = (await api(s.cookie, 'POST', '/api/sell/onboard', { store_name: 'Sam Resale', handle: 'samresale', country: 'US', region: 'OR', city: 'Portland', agree: true, terms: true })).cookie || s.cookie;
-  require('./verify-email-helper')(path.join(tmp, 'c.db'));
+  await require('./verify-email-helper')(fresh.url);
   const file = (await api(sellerCookie, 'POST', '/api/uploads', png(240, 300, (x, y) => [150 - (y >> 4), 120, 90 + (x >> 4)]), 'image/png')).json.file;
   const listing = (await api(sellerCookie, 'POST', '/api/seller/listings', { title: 'Waxed field jacket', category: 'outerwear', brand: 'Test', size: 'M', condition: 'good', price: '95', shipping: '9', weight_oz: '40', images: [file], status: 'active' })).json.id;
   const b = await api('', 'POST', '/api/register', { email: 'bea@example.test', display_name: 'Bea Buyer', terms: true, password: 'a-long-password-2' });
@@ -111,5 +112,5 @@ const cookieObj = (c) => { const [name, value] = c.split('='); return { name, va
     }
     assert.deepEqual(errors, [], 'no uncaught browser errors');
     console.log('\nBROWSER CHAT TEST PASSED');
-  } finally { await browser.close(); server.kill(); }
-})().catch((e) => { console.error('\nBROWSER CHAT TEST FAILED:', e.message); server.kill(); process.exit(1); });
+  } finally { await browser.close(); server.kill(); dropFresh(); }
+})().catch((e) => { console.error('\nBROWSER CHAT TEST FAILED:', e.message); server.kill(); dropFresh(); process.exit(1); });

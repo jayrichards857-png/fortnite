@@ -21,19 +21,19 @@ async function searchListings(f) {
   const where = ["l.status = 'active'"], p = [];
   const terms = clean(f.q || '', 100).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
   for (const t of terms) {
-    where.push(`(l.title LIKE ? ESCAPE '\\' OR l.brand LIKE ? ESCAPE '\\' OR l.category LIKE ? ESCAPE '\\' OR l.description LIKE ? ESCAPE '\\' OR l.size LIKE ? ESCAPE '\\')`);
+    where.push(`(l.title ILIKE ? ESCAPE '\\' OR l.brand ILIKE ? ESCAPE '\\' OR l.category ILIKE ? ESCAPE '\\' OR l.description ILIKE ? ESCAPE '\\' OR l.size ILIKE ? ESCAPE '\\')`);
     const v = `%${likeEsc(t)}%`; p.push(v, v, v, v, v);
   }
   if (f.category && CATS.has(f.category)) { where.push('l.category = ?'); p.push(f.category); }
-  if (f.brand) { where.push('l.brand = ? COLLATE NOCASE'); p.push(f.brand); }
-  if (f.size) { where.push('l.size = ? COLLATE NOCASE'); p.push(f.size); }
+  if (f.brand) { where.push('lower(l.brand) = lower(?)'); p.push(f.brand); }
+  if (f.size) { where.push('lower(l.size) = lower(?)'); p.push(f.size); }
   if (f.condition && config.conditions[f.condition]) { where.push('l.condition = ?'); p.push(f.condition); }
-  if (f.seller) { where.push('u.handle = ? COLLATE NOCASE'); p.push(f.seller); }
+  if (f.seller) { where.push('u.handle = ?'); p.push(f.seller); }
   if (Array.isArray(f.exclude) && f.exclude.length) where.push(`l.id NOT IN (${f.exclude.map((x) => Number(x) | 0).join(',')})`);
   const min = dollarsToCents(f.min), max = dollarsToCents(f.max);
   if (min && !Number.isNaN(min)) { where.push('l.price_cents >= ?'); p.push(min); }
   if (max && !Number.isNaN(max)) { where.push('l.price_cents <= ?'); p.push(max); }
-  const order = { price_asc: 'l.price_cents ASC, l.id DESC', price_desc: 'l.price_cents DESC, l.id DESC' }[f.sort] || 'l.published_at DESC, l.id DESC';
+  const order = { price_asc: 'l.price_cents ASC, l.id DESC', price_desc: 'l.price_cents DESC, l.id DESC' }[f.sort] || 'l.published_at DESC NULLS LAST, l.id DESC';
   const perPage = 24, page = Math.max(1, parseInt(f.page, 10) || 1);
   const from = `FROM listings l JOIN users u ON u.id = l.seller_id AND u.banned = 0 WHERE ${where.join(' AND ')}`;
   const total = (await q.get(`SELECT COUNT(*) n ${from}`, ...p)).n;
@@ -42,7 +42,7 @@ async function searchListings(f) {
 }
 
 async function facets() {
-  const col = async (c) => (await q.all(`SELECT ${c} v, COUNT(*) n FROM listings WHERE status='active' AND ${c} IS NOT NULL AND ${c} <> '' GROUP BY ${c} COLLATE NOCASE ORDER BY n DESC, v LIMIT 30`)).map((r) => r.v);
+  const col = async (c) => (await q.all(`SELECT MIN(${c}) v, COUNT(*) n FROM listings WHERE status='active' AND ${c} IS NOT NULL AND ${c} <> '' GROUP BY lower(${c}) ORDER BY n DESC, v LIMIT 30`)).map((r) => r.v);
   return { brands: await col('brand'), sizes: await col('size'),
     categories: (await q.all("SELECT category v, COUNT(*) n FROM listings WHERE status='active' GROUP BY category")).reduce((a, r) => ({ ...a, [r.v]: r.n }), {}) };
 }
@@ -144,9 +144,9 @@ async function saveListing(user, id, body) {
       await q.run(`UPDATE listings SET ${cols.map((c) => c + ' = ?').join(', ')}, status = ?, published_at = ?, updated_at = ? WHERE id = ?`, ...vals, status, published_at, t, id);
       if (cur.price_cents > v.price_cents && status === 'active') await notifyPriceDrop(id, v.title, cur.price_cents, v.price_cents);
     } else {
-      const r = await q.run(`INSERT INTO listings(seller_id, ${cols.join(',')}, status, published_at, created_at, updated_at) VALUES(?, ${cols.map(() => '?').join(',')}, ?,?,?,?)`,
+      const r = await q.insert(`INSERT INTO listings(seller_id, ${cols.join(',')}, status, published_at, created_at, updated_at) VALUES(?, ${cols.map(() => '?').join(',')}, ?,?,?,?)`,
         user.id, ...vals, status, status === 'active' ? t : null, t, t);
-      listingId = Number(r.lastInsertRowid);
+      listingId = r;
     }
     await q.run('DELETE FROM listing_images WHERE listing_id = ?', listingId);
     for (const [i, f] of files.entries()) await q.run('INSERT INTO listing_images(listing_id, file, position) VALUES(?,?,?)', listingId, f, i);
@@ -177,10 +177,10 @@ async function duplicateListing(user, id) {
     const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ?', id, user.id);
     if (!l) throw new HttpError(404, 'Listing not found');
     const t = now();
-    const r = await q.run(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
+    const r = await q.insert(`INSERT INTO listings(seller_id,title,description,category,brand,size,condition,price_cents,cost_cents,shipping_cents,shipping_payer,payment_url,weight_oz,length_in,width_in,height_in,status,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`, user.id, l.title + ' (copy)', l.description, l.category, l.brand, l.size, l.condition, l.price_cents, l.cost_cents, l.shipping_cents, l.shipping_payer, null, l.weight_oz, l.length_in, l.width_in, l.height_in, t, t);
-    await q.run('INSERT INTO listing_images(listing_id,file,position) SELECT ?, file, position FROM listing_images WHERE listing_id = ?', r.lastInsertRowid, id);
-    return Number(r.lastInsertRowid);
+    await q.run('INSERT INTO listing_images(listing_id,file,position) SELECT ?, file, position FROM listing_images WHERE listing_id = ?', r, id);
+    return r;
   });
 }
 
@@ -206,7 +206,7 @@ async function bulkAction(user, { ids, action, status, price, percent }) {
           const hasImg = await q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
         }
-        await q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN ? = \'active\' THEN ? END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
+        await q.run('UPDATE listings SET status = ?, published_at = COALESCE(published_at, CASE WHEN CAST(? AS TEXT) = \'active\' THEN CAST(? AS BIGINT) END), updated_at = ? WHERE id = ?', status, status, now(), now(), id);
         if (status === 'active') published.push(id);
       } else if (action === 'price') {
         let np;

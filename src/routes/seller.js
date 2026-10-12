@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const config = require('../config');
-const { q, tx, now, getSettings } = require('../db');
+const { q, tx, now, getSettings, isUnique } = require('../db');
 const { esc, money, clean, cleanLine, date, HttpError, dollarsToCents, wrap } = require('../util');
 const V = require('../views');
 const PP = require('../paymentPolicy');
@@ -86,7 +86,7 @@ r.get('/dashboard', S, async (req, res) => {
 r.get('/dashboard/inventory', S, async (req, res) => {
   const f = req.query, where = ['seller_id = ?'], p = [req.user.id];
   if (f.status && ['draft', 'active', 'reserved', 'sold', 'archived'].includes(f.status)) { where.push('status = ?'); p.push(f.status); }
-  if (f.q) { const t = `%${String(f.q).slice(0, 80).replace(/[\\%_]/g, (c) => '\\' + c)}%`; where.push("(title LIKE ? ESCAPE '\\' OR sku LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\')"); p.push(t, t, t); }
+  if (f.q) { const t = `%${String(f.q).slice(0, 80).replace(/[\\%_]/g, (c) => '\\' + c)}%`; where.push("(title ILIKE ? ESCAPE '\\' OR sku ILIKE ? ESCAPE '\\' OR brand ILIKE ? ESCAPE '\\')"); p.push(t, t, t); }
   const pg = Math.max(1, parseInt(f.page, 10) || 1), per = 25;
   const total = (await q.get(`SELECT COUNT(*) n FROM listings WHERE ${where.join(' AND ')}`, ...p)).n;
   const rows = await q.all(`SELECT l.*, ${L.IMG_SQL} FROM listings l WHERE ${where.join(' AND ').replace(/\b(seller_id|status|title|sku|brand)\b/g, 'l.$1')} ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`, ...p, per, (pg - 1) * per);
@@ -248,7 +248,7 @@ r.post('/api/seller/orders/:id(\\d+)/ship', S, async (req, res) => {
     const o = await q.get('SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id);
     if (!o) throw new HttpError(404, 'Order not found');
     try { await transition(o.id, 'shipped', { actor: `seller:${req.user.id}`, note: `${carrier} ${tracking}`, set: { carrier, tracking_number: tracking, shipped_at: now(), ship_note: cleanLine(req.body.note, 200) || null } }); }
-    catch (e) { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; }
+    catch (e) { if (isUnique(e)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; }
     await notify(o.buyer_id, `order:${o.id}:shipped`, 'Your order shipped', `Order #${o.id} shipped with ${carrier}. Tracking: ${tracking}`, `/orders/${o.id}`);
   });
   res.json({ ok: true });
@@ -304,8 +304,8 @@ r.post('/api/seller/withdrawals', S, async (req, res) => {
     const bal = (await stats.wallet(req.user.id)).availableCents;
     if (amt > bal) throw new HttpError(422, 'Please fix the highlighted fields.', { amount: `You can withdraw up to ${money(bal)}.` });
     // Reserve funds immediately with a negative ledger row so the same balance can't be requested twice.
-    const w = await q.run("INSERT INTO withdrawals(user_id, amount_cents, created_at) VALUES(?,?,?)", req.user.id, amt, now());
-    await q.run("INSERT INTO ledger(user_id, kind, amount_cents, note, created_at) VALUES(?, 'withdrawal', ?, ?, ?)", req.user.id, -amt, `Withdrawal #${w.lastInsertRowid}`, now());
+    const w = await q.insert("INSERT INTO withdrawals(user_id, amount_cents, created_at) VALUES(?,?,?)", req.user.id, amt, now());
+    await q.run("INSERT INTO ledger(user_id, kind, amount_cents, note, created_at) VALUES(?, 'withdrawal', ?, ?, ?)", req.user.id, -amt, `Withdrawal #${w}`, now());
   });
   res.json({ ok: true, message: 'Withdrawal requested' });
 });

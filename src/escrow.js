@@ -45,13 +45,15 @@ async function releaseToSeller(orderId, actor) {
 
 /** Buyer confirms receipt. From `shipped` we record the delivery first so the audit trail stays complete. */
 async function buyerConfirm(orderId, userId) {
-  const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ?', orderId, userId);
-  if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
-  await assertPlatformOrder(orderId);
-  // Disputed orders are resolved by an admin only; the buyer's confirm button must not bypass that.
-  if (!['shipped', 'delivered'].includes(o.status)) throw Object.assign(new Error(`Order can't be confirmed while ${o.status.replace('_', ' ')}.`), { status: 409 });
-  if (o.status === 'shipped') await markDelivered(orderId, `buyer:${userId}`);
-  return await releaseToSeller(orderId, `buyer:${userId}`);
+  return await tx(async () => {        // one transaction + row lock: racing confirmations queue, the loser sees the final state
+    const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ? FOR UPDATE', orderId, userId);
+    if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
+    await assertPlatformOrder(orderId);
+    // Disputed orders are resolved by an admin only; the buyer's confirm button must not bypass that.
+    if (!['shipped', 'delivered'].includes(o.status)) throw Object.assign(new Error(`Order can't be confirmed while ${o.status.replace('_', ' ')}.`), { status: 409 });
+    if (o.status === 'shipped') await markDelivered(orderId, `buyer:${userId}`);
+    return await releaseToSeller(orderId, `buyer:${userId}`);
+  });
 }
 
 /** Cron-style job: release every delivered order whose hold window has elapsed. */

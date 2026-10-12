@@ -4,7 +4,7 @@ process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const H = require('./helpers');
-const { q } = require('../src/db');
+const { q, tx } = require('../src/db');
 const X = require('../src/externalCheckout');
 const { expireStaleCheckouts } = require('../src/payments');
 
@@ -26,7 +26,7 @@ test('the seller sets the quantity; it is validated, shown to buyers, and fixed 
   for (const bad of ['0', '-1', '1000', '1.5', 'abc', '1e2']) assert.equal((await seller.post('/api/seller/listings', { ...base, quantity: bad })).status, 422, bad);
   const ok = await seller.post('/api/seller/listings', { ...base, quantity: '12' }); assert.equal(ok.status, 200); assert.equal((await row(ok.json.id)).quantity, 12);
   assert.equal((await seller.put(`/api/seller/listings/${ok.json.id}`, { ...base, quantity: 5 })).status, 200); assert.equal((await row(ok.json.id)).quantity, 5);
-  await assert.rejects(async () => await q.run('UPDATE listings SET quantity = -1 WHERE id = ?', id), /CHECK/);
+  await assert.rejects(async () => await q.run('UPDATE listings SET quantity = -1 WHERE id = ?', id), /check constraint/i);
 });
 
 test('reserve -> quantity down; cancel/reject/expire -> quantity back; confirmed payment keeps the unit taken; sold only when none is left', async () => {
@@ -61,9 +61,9 @@ test('concurrent buyers cannot take more units than exist', async () => {
 test('refunds and recorded sales keep the unit count honest', async () => {
   const { seller, id } = await stock(2); const b = await H.newUser('R'); const o = await buy(b, id), oid = oidOf(o);
   await seller.post(`/api/seller/orders/${oid}/confirm-payment`, {}); assert.equal((await row(id)).quantity, 1);
-  await q.run('BEGIN IMMEDIATE'); try { await X.afterRefund(oid, true); await q.run('COMMIT'); } catch (e) { await q.run('ROLLBACK'); throw e; }
+  await tx(async () => { await X.afterRefund(oid, true); });
   assert.deepEqual([(await row(id)).quantity, (await row(id)).status], [2, 'active'], 'a refunded unit the seller relists is back in stock');
-  await q.run('BEGIN IMMEDIATE'); try { await X.afterRefund(oid, false); await q.run('COMMIT'); } catch (e) { await q.run('ROLLBACK'); throw e; }
+  await tx(async () => { await X.afterRefund(oid, false); });
   assert.equal((await row(id)).status, 'active', 'other stock remains, so the listing is not archived');
   // recording sales made elsewhere
   const two = await stock(2), rec = (x) => two.seller.post(`/api/seller/listings/${two.id}/record-sale`, { origin: 'in_person', fulfillment: 'pickup', payment_status: 'unconfirmed', sold_on: new Date().toISOString().slice(0, 10), price: '30', ...x });
@@ -75,10 +75,11 @@ test('refunds and recorded sales keep the unit count honest', async () => {
 test('a single-unit listing behaves exactly as before; migration 14 backfills quantities without changing statuses', async () => {
   const { seller, id } = await stock(1); const b = await H.newUser('One'); const o = await buy(b, id);
   assert.deepEqual([(await row(id)).quantity, (await row(id)).status], [0, 'reserved']); await seller.post(`/api/seller/orders/${oidOf(o)}/confirm-payment`, {}); assert.deepEqual([(await row(id)).quantity, (await row(id)).status], [0, 'sold']);
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); assert.ok(MIGRATIONS.length >= 14);
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 13; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)').run('s@x.test', 'x', 'S', 1);
-  for (const st of ['active', 'reserved', 'sold', 'draft', 'archived']) d.prepare("INSERT INTO listings(seller_id, title, category, price_cents, status, created_at, updated_at) VALUES(1,?,'clothing',500,?,1,1)").run(st, st);
-  d.exec(MIGRATIONS[13]);
-  assert.deepEqual(d.prepare('SELECT status, quantity, payment_total_ack_cents a FROM listings ORDER BY id').all().map((r) => [r.status, r.quantity, r.a]), [['active', 1, null], ['reserved', 0, null], ['sold', 0, null], ['draft', 1, null], ['archived', 1, null]]); d.close();
+  const { dbAt } = require('./pgmig'); const d = await dbAt(13);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', 's@x.test', 'x', 'S', 1);
+    for (const st of ['active', 'reserved', 'sold', 'draft', 'archived']) await d.run("INSERT INTO listings(seller_id, title, category, price_cents, status, created_at, updated_at) VALUES(1,?,'clothing',500,?,1,1)", st, st);
+    await d.applyNext();
+    assert.deepEqual((await d.all('SELECT status, quantity, payment_total_ack_cents a FROM listings ORDER BY id')).map((r) => [r.status, Number(r.quantity), r.a]), [['active', 1, null], ['reserved', 0, null], ['sold', 0, null], ['draft', 1, null], ['archived', 1, null]]);
+  } finally { await d.close(); }
 });

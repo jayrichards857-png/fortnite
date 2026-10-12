@@ -14,7 +14,7 @@ test.after(() => H.stop());
 
 const ROOT = path.resolve(__dirname, '..');
 function cli(args, extra = {}) {
-  try { return { code: 0, out: execFileSync(process.execPath, ['scripts/create-admin.js', ...args], { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_DB: process.env.PAIRPLUG_DB, PAIRPLUG_UPLOADS: process.env.PAIRPLUG_UPLOADS, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }), err: '' }; }
+  try { return { code: 0, out: execFileSync(process.execPath, ['scripts/create-admin.js', ...args], { cwd: ROOT, env: { PATH: process.env.PATH, DATABASE_URL: process.env.DATABASE_URL, PAIRPLUG_UPLOADS: process.env.PAIRPLUG_UPLOADS, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }), err: '' }; }
   catch (e) { return { code: e.status, out: String(e.stdout || ''), err: String(e.stderr || '') }; }
 }
 const tempPassword = (out) => (out.match(/^\s{4}(\S{16,})$/m) || [])[1];

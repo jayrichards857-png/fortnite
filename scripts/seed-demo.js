@@ -1,15 +1,16 @@
 'use strict';
 // ISOLATED FIXTURE DATA — never touches the live database.
-// Builds data/demo.db by driving the real HTTP API (so every record is produced by production code paths),
-// then back-dates a few rows so the analytics chart has history. Used only for screenshots / manual QA.
-//   node scripts/seed-demo.js && PAIRPLUG_DB=data/demo.db PAIRPLUG_UPLOADS=data/demo-uploads PAYMENTS_MODE=sandbox npm start
+// Builds a throwaway PostgreSQL database named pp_demo (dropped and recreated on every run) by driving the real HTTP API (so every record
+// is produced by production code paths), then back-dates a few rows so the analytics chart has history. Used only for screenshots / manual QA.
+// Needs a local throwaway PostgreSQL server: scripts/pg-test.sh start, then  eval "$(scripts/pg-test.sh env)"
+//   node scripts/seed-demo.js     (prints the DATABASE_URL to run the app against it: DATABASE_URL=<url> PAIRPLUG_UPLOADS=data/demo-uploads PAYMENTS_MODE=sandbox npm start)
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const dbFile = path.join(root, 'data', 'demo.db'), upDir = path.join(root, 'data', 'demo-uploads');
-for (const f of [dbFile, dbFile + '-wal', dbFile + '-shm']) fs.rmSync(f, { force: true });
+const upDir = path.join(root, 'data', 'demo-uploads');
 fs.rmSync(upDir, { recursive: true, force: true });
-process.env.PAIRPLUG_DB = dbFile; process.env.PAIRPLUG_UPLOADS = upDir; process.env.PAYMENTS_MODE = 'sandbox'; process.env.TAX_RATE_BPS = '0';
+const demoUrl = require('../test/testdb').ensureSync('pp_demo', true);
+process.env.PAIRPLUG_TEST_DATABASE_URL = demoUrl; process.env.PAIRPLUG_UPLOADS = upDir; process.env.PAYMENTS_MODE = 'sandbox'; process.env.TAX_RATE_BPS = '0';
 
 const H = require('../test/helpers');
 const { png } = require('./png');
@@ -63,7 +64,7 @@ const PW = 'demo-password-1';
   await q.run('UPDATE users SET email = ?, password_hash = ? WHERE email = ?', 'buyer@demo.test', hashPassword(PW), buyer.email);
   await q.run('UPDATE users SET email = ?, password_hash = ? WHERE id = (SELECT id FROM users WHERE handle = ?)', 'seller@demo.test', hashPassword(PW), 'northfield');
   await q.run('UPDATE users SET email = ?, password_hash = ? WHERE id = (SELECT id FROM users WHERE handle = ?)', 'seller2@demo.test', hashPassword(PW), 'maple');
-  await q.run("INSERT INTO users(email, password_hash, display_name, is_admin, created_at) VALUES('admin@demo.test', ?, 'Admin', 1, strftime('%s','now'))", hashPassword(PW));
+  await q.run("INSERT INTO users(email, password_hash, display_name, is_admin, created_at) VALUES('admin@demo.test', ?, 'Admin', 1, CAST(EXTRACT(EPOCH FROM now()) AS BIGINT))", hashPassword(PW));
 
   const buy = async (c, listingIds) => { for (const id of listingIds) await c.post('/api/cart', { listingId: id }); const ck = await H.checkout(c); await H.pay(c, ck.json.checkoutId); return await q.all('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId); };
   const ship = (s, o, n) => s.post(`/api/seller/orders/${o.id}/ship`, { carrier: 'USPS', tracking: `9400${1000000 + n}`.padEnd(14, '0') });
@@ -88,6 +89,6 @@ const PW = 'demo-password-1';
   await buyer.post('/api/cart', { listingId: ids[12] }); await buyer.post('/api/cart', { listingId: ids[14] }); await buyer.post('/api/cart', { listingId: ids[13] });
   await buyer.put(`/api/favorites/${ids[8]}`); await buyer.put(`/api/favorites/${ids[11]}`);
   await q.run('UPDATE listings SET published_at = published_at - ? WHERE id IN (?, ?)', 120 * day, ids[5], ids[9]); // aged inventory
-  console.log('Demo DB ready:', dbFile, '| logins: buyer@demo.test, seller@demo.test, seller2@demo.test, admin@demo.test | password:', PW);
+  console.log('Demo DB ready (DATABASE_URL='+demoUrl+')', '| logins: buyer@demo.test, seller@demo.test, seller2@demo.test, admin@demo.test | password:', PW);
   await H.stop(); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -76,7 +76,7 @@ test('every Contact link in the header, footer and on sign-in, sign-up, help, le
 // ---------------------------------------------------------------- Account Management
 const link = (r) => r.json.link.split('/').pop();
 const post = (c, body) => c.post('/api/admin/accounts/invite', body);
-const clear = async () => { await q.run('UPDATE users SET is_moderator = 0 WHERE is_moderator = 1'); await q.run("UPDATE moderator_invites SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); await q.run("UPDATE invitations SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); };
+const clear = async () => { await q.run('UPDATE users SET is_moderator = 0 WHERE is_moderator = 1'); await q.run("UPDATE moderator_invites SET revoked_at = CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) WHERE used_at IS NULL AND revoked_at IS NULL"); await q.run("UPDATE invitations SET revoked_at = CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) WHERE used_at IS NULL AND revoked_at IS NULL"); };
 
 test('Account Management: only the owner/admin can open it or create invitations; everyone else is refused server-side', async () => {
   await clear(); const adm = await mkAdmin(), seller = await H.newSeller('Sly'), buyer = await H.newUser('Pal'), inv = await adm.post('/api/admin/moderators/invite', { email: `m${Date.now()}@example.test` });
@@ -132,8 +132,8 @@ test('Account Management: moderator links share the five-slot cap, are bound to 
 });
 
 test('no fake accounts are ever created: a fresh database has no users, and an existing owner keeps working', async () => {
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); const d = new DatabaseSync(':memory:'); for (const m of MIGRATIONS) d.exec(m);
-  for (const t of ['users', 'listings', 'orders', 'seller_reviews', 'invitations', 'moderator_invites']) assert.equal(d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n, 0, `${t} starts empty`); d.close();
+  const { dbAt, MIGRATIONS } = require('./pgmig'); const d = await dbAt(MIGRATIONS.length);          // a brand-new database with every migration applied
+  try { for (const t of ['users', 'listings', 'orders', 'seller_reviews', 'invitations', 'moderator_invites']) assert.equal(Number((await d.one(`SELECT COUNT(*) n FROM ${t}`)).n), 0, `${t} starts empty`); } finally { await d.close(); }
   const adm = await mkAdmin(); const before = await q.get('SELECT * FROM users WHERE email = ?', adm.email); assert.equal((await new H.Client().post('/api/login', { email: adm.email, password: 'correct-horse-9' })).status, 200);
   await post(adm, { role: 'seller', email: `fine${Date.now()}@example.test`, confirm: true }); const after = await q.get('SELECT * FROM users WHERE email = ?', adm.email); assert.equal(after.password_hash, before.password_hash, 'the owner\'s credentials are untouched'); assert.equal(after.is_admin, 1);
   void config;

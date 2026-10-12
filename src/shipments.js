@@ -4,7 +4,7 @@
 // PairPlug never pays for postage. Every function takes the acting user and scopes by seller_id, so another seller's order/address/label is a 404.
 const crypto = require('node:crypto');
 const config = require('./config');
-const { q, tx, now } = require('./db');
+const { q, tx, now, isUnique } = require('./db');
 const { HttpError, cleanLine } = require('./util');
 const { rateLimit } = require('./auth');
 const { audit } = require('./audit');
@@ -145,7 +145,8 @@ async function buy(user, orderId, body = {}) {
   if (body.confirm !== true) fail({ confirm: 'Confirm the purchase to continue.' }, 'Please confirm the label purchase.');
   const el = eligibility(o); if (!el.ok) throw new HttpError(409, el.reason);
   const claimed = await tx(async () => {
-    const s = await q.get("SELECT * FROM shipments WHERE order_id = ? AND test = ? AND status = 'rates_ready' ORDER BY id DESC LIMIT 1", o.id, t);
+    // FOR UPDATE + the checked UPDATE below: concurrent buy requests queue here and exactly one can claim the quote (the others find no rates_ready row)
+    const s = await q.get("SELECT * FROM shipments WHERE order_id = ? AND test = ? AND status = 'rates_ready' ORDER BY id DESC LIMIT 1 FOR UPDATE", o.id, t);
     if (!s) throw new HttpError(409, 'Get shipping rates first.');
     if (now() - s.rates_fetched_at > RATES_TTL) throw new HttpError(409, 'These rates have expired. Get fresh rates.');
     const from = await shipFromRow(user.id), to = await toRow(o);
@@ -154,8 +155,9 @@ async function buy(user, orderId, body = {}) {
     if (!rate) throw new HttpError(422, 'Choose one of the listed shipping services.', { rateId: 'Not an available rate' });
     if (Number(body.expectedAmountCents) !== rate.amountCents) throw new HttpError(409, 'The price shown no longer matches this rate. Reload the rates and confirm again.');
     try {
-      await q.run("UPDATE shipments SET status = 'purchasing', selected_rate_id = ?, carrier = ?, service = ?, price_cents = ?, currency = ?, confirmed_at = ?, error_message = NULL, updated_at = ? WHERE id = ? AND status = 'rates_ready'", rate.id, rate.carrier, rate.service, rate.amountCents, rate.currency, now(), now(), s.id);
-    } catch (e) { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'A label purchase is already in progress or complete for this order.'); throw e; }
+      const claim = await q.run("UPDATE shipments SET status = 'purchasing', selected_rate_id = ?, carrier = ?, service = ?, price_cents = ?, currency = ?, confirmed_at = ?, error_message = NULL, updated_at = ? WHERE id = ? AND status = 'rates_ready'", rate.id, rate.carrier, rate.service, rate.amountCents, rate.currency, now(), now(), s.id);
+      if (claim.changes !== 1) throw new HttpError(409, 'A label purchase is already in progress or complete for this order.');
+    } catch (e) { if (isUnique(e)) throw new HttpError(409, 'A label purchase is already in progress or complete for this order.'); throw e; }
     return { s, rate };
   });
   await audit(user, 'label_purchase_started', { type: 'order', id: o.id, detail: { test: Boolean(t), carrier: claimed.rate.carrier, service: claimed.rate.service, price_cents: claimed.rate.amountCents, currency: claimed.rate.currency } });

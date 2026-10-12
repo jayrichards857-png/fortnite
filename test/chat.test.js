@@ -160,7 +160,7 @@ test('duplicates: idempotency key + UNIQUE constraint → exactly one row, even 
   assert.ok(rs.every((r) => r.status === 200)); assert.equal(new Set(rs.map((r) => r.json.data.message.id)).size, 1);
   assert.equal(await count('SELECT COUNT(*) n FROM messages WHERE client_id IN (?, ?)', key, key2), 2);
   // the database itself rejects a duplicate even if application code is bypassed
-  await assert.rejects(async () => await q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, created_at) SELECT conversation_id, sender_id, body, client_id, created_at FROM messages WHERE client_id = ?', key), /UNIQUE/);
+  await assert.rejects(async () => await q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, created_at) SELECT conversation_id, sender_id, body, client_id, created_at FROM messages WHERE client_id = ?', key), /unique constraint/i);
   // the same key from the *other* participant is a different message
   const other = await send(seller, conv, 'hello', key); assert.equal(other.json.data.duplicate, false);
   // duplicates must not push a second event to the recipient

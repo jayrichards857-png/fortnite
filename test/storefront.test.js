@@ -160,7 +160,7 @@ test('listing validation & hybrid purchase UI: currency, prices, contact-only li
   for (const price of ['-5', '0', '0.50', 'abc', '12.345', '10001', '1e3', '$', '']) assert.equal((await s.post('/api/seller/listings', { ...base, price })).status, 422, price);
   const ok = await s.post('/api/seller/listings', { ...base, price: '19.99' }); assert.equal(ok.status, 200);
   assert.equal((await q.get('SELECT price_cents p, currency c FROM listings WHERE id = ?', ok.json.id)).p, 1999); assert.equal((await q.get('SELECT currency c FROM listings WHERE id = ?', ok.json.id)).c, 'USD');
-  await assert.rejects(async () => await q.run("UPDATE listings SET currency = 'EUR' WHERE id = ?", ok.json.id), /CHECK/);
+  await assert.rejects(async () => await q.run("UPDATE listings SET currency = 'EUR' WHERE id = ?", ok.json.id), /check constraint/i);
   const page = (await buyer.get(`/listing/${ok.json.id}`)).text;
   assert.doesNotMatch(page, />Buy now</); assert.doesNotMatch(page, /href="\/buy\//); assert.match(page, /Contact seller/); assert.match(page, /Online checkout|set up checkout|arrange payment/i); assert.match(page, /USD/);
   assert.equal((await buyer.post('/api/purchases', { listingId: ok.json.id, acknowledged: true, address: H.address })).status, 409, 'and the API agrees');

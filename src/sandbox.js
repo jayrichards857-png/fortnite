@@ -14,10 +14,12 @@ const MARK = '[TEST DATA]';
 const FIXTURE_ADDRESS = { name: 'TEST Buyer (sandbox)', line1: '215 Clayton St', city: 'San Francisco', region: 'CA', postal: '94117', country: 'US' };   // a public Shippo documentation sample address
 
 /** Pure pre-flight checks. Throws Error with a safe message (never includes the key). */
-function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, manual = false, dbFile, realDbFile }) {
+function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, manual = false, databaseUrl, realDatabaseUrl }) {
   if (fake && manual) throw new Error('Choose either --fake-shippo or --manual-only, not both.');
   if (/^production\b/.test(String(nodeEnv).trim())) throw new Error('The shipping sandbox is development-only and refuses to run with NODE_ENV=production.');
-  if (path.resolve(dbFile) === path.resolve(realDbFile)) throw new Error('Refusing to use the real PairPlug database. The sandbox has its own database file.');
+  const ident = (u) => { const x = new URL(u); return `${x.hostname}:${x.port || 5432}/${decodeURIComponent(x.pathname.slice(1))}`; };
+  if (realDatabaseUrl && ident(databaseUrl) === ident(realDatabaseUrl)) throw new Error('Refusing to use the real PairPlug database. The sandbox has its own database.');
+  if (!/^pp_sandbox/.test(decodeURIComponent(new URL(databaseUrl).pathname.slice(1)))) throw new Error('The sandbox database must be named pp_sandbox* (it is created and dropped by the sandbox only).');
   if (!fake && !manual) {          // --manual-only never uses Shippo (any key in the environment is ignored and removed), so there is nothing to validate
     if (!shippoKey) throw new Error('Set SHIPPO_API_KEY to a Shippo TEST token (starts with shippo_test_) in this terminal, or run with --fake-shippo to try the UI without Shippo.');
     if (/^shippo_live_/.test(shippoKey)) throw new Error('A LIVE Shippo key was found. The sandbox only accepts shippo_test_ tokens and will not run with a live key.');
@@ -27,8 +29,8 @@ function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, man
 
 /** The sandbox database must be empty or contain ONLY sandbox data. Anything else is treated as real data and the sandbox refuses to touch it. */
 async function assertSandboxDb(q) {
-  const foreign = (await q.get(`SELECT COUNT(*) n FROM users WHERE email NOT LIKE '%@${DOMAIN}'`)).n;
-  const orders = (await q.get(`SELECT COUNT(*) n FROM orders o JOIN users b ON b.id = o.buyer_id WHERE b.email NOT LIKE '%@${DOMAIN}'`)).n;
+  const foreign = (await q.get(`SELECT COUNT(*) n FROM users WHERE email NOT ILIKE '%@${DOMAIN}'`)).n;
+  const orders = (await q.get(`SELECT COUNT(*) n FROM orders o JOIN users b ON b.id = o.buyer_id WHERE b.email NOT ILIKE '%@${DOMAIN}'`)).n;
   if (foreign || orders) throw new Error('This database contains non-sandbox accounts or orders. The shipping sandbox only runs on its own throwaway database (use --reset to rebuild it).');
 }
 
@@ -42,8 +44,8 @@ async function seed({ q, now, hashPassword, setSetting, listings, images, checko
   const upsert = async (key, fields) => {
     const row = await q.get('SELECT id FROM users WHERE email = ?', email[key]);
     if (row) { await q.run('UPDATE users SET password_hash = ?, banned = 0 WHERE id = ?', hashPassword(pw[key]), row.id); await q.run('DELETE FROM sessions WHERE user_id = ?', row.id); return row.id; }
-    return Number((await q.run(`INSERT INTO users(email, password_hash, display_name, is_seller, handle, store_name, country, region, city, email_verified_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-      email[key], hashPassword(pw[key]), fields.name, fields.seller ? 1 : 0, fields.handle || null, fields.store || null, fields.seller ? 'US' : null, fields.seller ? 'CA' : null, fields.seller ? 'San Francisco' : null, now(), now())).lastInsertRowid);
+    return Number((await q.insert(`INSERT INTO users(email, password_hash, display_name, is_seller, handle, store_name, country, region, city, email_verified_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      email[key], hashPassword(pw[key]), fields.name, fields.seller ? 1 : 0, fields.handle || null, fields.store || null, fields.seller ? 'US' : null, fields.seller ? 'CA' : null, fields.seller ? 'San Francisco' : null, now(), now())));
   };
   const sellerId = await upsert('seller', { name: `${MARK} Seller`, seller: true, handle: 'sandbox-test', store: `${MARK} Store` });
   const buyerId = await upsert('buyer', { name: `${MARK} Buyer` });

@@ -6,12 +6,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const { DatabaseSync } = require('node:sqlite');
+const { Client } = require('pg');
 const { chromium } = require('playwright-core');
 const { png } = require('./png');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-rev-')), PORT = 3450, B = `http://localhost:${PORT}`, root = path.resolve(__dirname, '..');
-const DB = path.join(tmp, 'r.db'), env = { ...process.env, PORT: String(PORT), PAIRPLUG_DB: DB, PAIRPLUG_UPLOADS: path.join(tmp, 'up'), CHECKOUT_MODE: 'external', SELLER_ONBOARDING: 'open', PAYMENTS_MODE: '' };
+const fresh = require('../test/testdb').createSync(), dropFresh = () => require('../test/testdb').dropSync(fresh.name), DB = fresh.url;   // own empty PostgreSQL database for this run
+const dbq = async (sql, ...p) => { const c = new Client({ connectionString: DB }); await c.connect(); try { return (await c.query(sql, p)).rows; } finally { await c.end(); } };
+const env = { ...process.env, PORT: String(PORT), DATABASE_URL: DB, PAIRPLUG_UPLOADS: path.join(tmp, 'up'), CHECKOUT_MODE: 'external', SELLER_ONBOARDING: 'open', PAYMENTS_MODE: '' };
 const ADMIN = { email: 'owner@example.test', pw: 'owner-passphrase-123' };
 execFileSync(process.execPath, ['scripts/create-admin.js'], { cwd: root, env: { ...env, ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.pw }, stdio: 'ignore' });
 const server = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -33,13 +35,13 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     const s = await mk(), b = await mk(), r2 = await mk(), mod = await mk(), adm = await mk();
     assert.equal((await api(s.ctx, 'POST', '/api/register', { email: 'seller@example.test', display_name: 'Sam Seller', password: 'a-long-password-1', terms: true })).status, 200);
     assert.equal((await api(s.ctx, 'POST', '/api/sell/onboard', { store_name: 'Sam Store', handle: 'samstore', country: 'US', region: 'OR', city: 'Portland', agree: true })).status, 200);
-    const d = new DatabaseSync(DB); d.exec("UPDATE users SET email_verified_at = strftime('%s','now') WHERE handle = 'samstore'"); d.close();
+    await dbq("UPDATE users SET email_verified_at = CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) WHERE handle = 'samstore'");
     const l = await api(s.ctx, 'POST', '/api/seller/listings', { title: 'Vintage varsity jacket', description: 'Wool, size L', category: 'outerwear', brand: 'Champion', size: 'L', condition: 'good', price: '60.00', shipping: '8.00', weight_oz: '32', quantity: 2, images: [await upload(s.ctx)], status: 'active', payment_url: 'https://buy.stripe.com/test_rev_journey', payment_amount_ack: true });
     assert.equal(l.status, 200, JSON.stringify(l.json)); const listingId = l.json.id;
     assert.equal((await api(b.ctx, 'POST', '/api/register', { email: 'buyer@example.test', display_name: 'Bea Buyer', password: 'a-long-password-2', terms: true })).status, 200);
     const o = await api(b.ctx, 'POST', '/api/purchases', { listingId, acknowledged: true, address: { name: 'Bea Buyer', line1: '1 Main St', city: 'Austin', region: 'TX', postal: '78701', country: 'US' } }); const orderId = Number(String(o.json.redirect).match(/(\d+)/)[1]);
     assert.equal((await api(s.ctx, 'POST', `/api/seller/orders/${orderId}/confirm-payment`, {})).status, 200); assert.equal((await api(s.ctx, 'POST', `/api/seller/orders/${orderId}/ship`, { carrier: 'USPS', tracking: '9400111899223344' })).status, 200);
-    { const dq = new DatabaseSync(DB); const row = dq.prepare('SELECT quantity, status FROM listings WHERE id = ?').get(listingId); dq.close(); assert.deepEqual({ ...row }, { quantity: 1, status: 'active' }); step('listing with quantity 2: one unit reserved by the order -> 1 left, still for sale'); }
+    { const [row] = await dbq('SELECT quantity, status FROM listings WHERE id = $1', listingId); assert.deepEqual({ ...row }, { quantity: 1, status: 'active' }); step('listing with quantity 2: one unit reserved by the order -> 1 left, still for sale'); }
 
     // ---- buyer leaves a review through the UI
     await b.pg.goto(B + `/orders/${orderId}`); await b.pg.click('button[data-post$="/received"]'); await b.pg.waitForLoadState('networkidle'); await b.pg.reload();
@@ -83,4 +85,4 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
     console.log('\nBROWSER REVIEWS/MODERATION/CONTACT JOURNEY PASSED');
   } finally { await browser.close(); }
-})().catch((e) => { console.error('\nBROWSER REVIEWS JOURNEY FAILED:', e.message); process.exitCode = 1; }).finally(() => { server.kill(); fs.rmSync(tmp, { recursive: true, force: true }); });
+})().catch((e) => { console.error('\nBROWSER REVIEWS JOURNEY FAILED:', e.message); process.exitCode = 1; }).finally(() => { server.kill(); fs.rmSync(tmp, { recursive: true, force: true }); dropFresh(); });

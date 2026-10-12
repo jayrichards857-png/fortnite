@@ -125,13 +125,14 @@ test('reports, moderator hide/restore/dismiss with reasons, immutable content, a
   assert.ok(await q.get("SELECT 1 x FROM review_events WHERE review_id = ? AND kind = 'hidden' AND actor_id = ? AND detail LIKE '%Advertisement%'", rx, await uid(mod.email)));
 });
 
-test('existing accounts, orders and the old reviews table are untouched; migration 14 is additive', () => {
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db');
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 13; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, is_admin, created_at) VALUES(?,?,?,?,?)').run('owner@x.test', 'x', 'Owner', 1, 1); d.prepare('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)').run('b@x.test', 'x', 'B', 1);
-  const before = d.prepare('SELECT * FROM users ORDER BY id').all(); d.exec(MIGRATIONS[13]);
-  const after = d.prepare('SELECT * FROM users ORDER BY id').all(); for (let i = 0; i < before.length; i++) for (const k of Object.keys(before[i])) assert.equal(after[i][k], before[i][k], k);
-  assert.equal(d.prepare('SELECT COUNT(*) n FROM seller_reviews').get().n, 0, 'no review is invented'); assert.equal(d.prepare('SELECT COUNT(*) n FROM reviews').get().n, 0); d.close();
+test('existing accounts, orders and the old reviews table are untouched; migration 14 is additive', async () => {
+  const { dbAt } = require('./pgmig'); const d = await dbAt(13);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, is_admin, created_at) VALUES(?,?,?,?,?)', 'owner@x.test', 'x', 'Owner', 1, 1); await d.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', 'b@x.test', 'x', 'B', 1);
+    const before = await d.all('SELECT * FROM users ORDER BY id'); await d.applyNext();
+    const after = await d.all('SELECT * FROM users ORDER BY id'); for (let i = 0; i < before.length; i++) for (const k of Object.keys(before[i])) assert.equal(after[i][k], before[i][k], k);
+    assert.equal(Number((await d.one('SELECT COUNT(*) n FROM seller_reviews')).n), 0, 'no review is invented'); assert.equal(Number((await d.one('SELECT COUNT(*) n FROM reviews')).n), 0);
+  } finally { await d.close(); }
 });
 
 test('policies and help disclose reviews, order-linked labels, unverified payments and the amount check — without promises', async () => {

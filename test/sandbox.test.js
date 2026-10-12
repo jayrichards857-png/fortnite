@@ -24,11 +24,12 @@ test.before(async () => { await H.start(); config.shippo = { apiKey: KEY, mode: 
 test.after(() => { SH.setTransport(null); config.shippo = { apiKey: '', mode: 'off' }; config.sandbox = false; return H.stop(); });
 
 test('pre-flight guards: production, live keys, missing/invalid keys and the real database are all refused (the key is never echoed)', () => {
-  const ok = { nodeEnv: 'development', shippoKey: KEY, fake: false, dbFile: '/x/sandbox.db', realDbFile: '/x/pairplug.db' };
+  const ok = { nodeEnv: 'development', shippoKey: KEY, fake: false, databaseUrl: 'postgres://u@db.local:5432/pp_sandbox_x', realDatabaseUrl: 'postgres://u@db.local:5432/pairplug' };
   assert.doesNotThrow(() => sb.assertSafeEnvironment(ok));
   assert.doesNotThrow(() => sb.assertSafeEnvironment({ ...ok, shippoKey: '', fake: true }));
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, nodeEnv: 'production' }), /development-only/);
-  assert.throws(() => sb.assertSafeEnvironment({ ...ok, dbFile: '/x/pairplug.db' }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: ok.realDatabaseUrl }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: 'postgres://u@other.host:5432/pairplug_copy', realDatabaseUrl: null }), /named pp_sandbox/, 'only pp_sandbox* databases are ever used');
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, shippoKey: '' }), /SHIPPO_API_KEY/);
   for (const bad of ['shippo_live_SECRETVALUE123', 'sk_live_abc', 'whatever']) {
     try { sb.assertSafeEnvironment({ ...ok, shippoKey: bad }); assert.fail('should refuse ' + bad); } catch (e) { assert.ok(!e.message.includes(bad), 'message does not echo the key'); assert.match(e.message, /shippo_test_|LIVE/); }
@@ -40,11 +41,11 @@ test('the CLI refuses production and live keys before touching anything, and nev
   const prod = run({ NODE_ENV: 'production', SHIPPO_API_KEY: KEY }); assert.equal(prod.status, 1); assert.match(prod.stderr, /development-only/);
   const live = run({ SHIPPO_API_KEY: 'shippo_live_SUPERSECRET999' }); assert.equal(live.status, 1); assert.match(live.stderr, /LIVE Shippo key/); assert.ok(!(live.stdout + live.stderr).includes('SUPERSECRET999'));
   const none = run({}); assert.equal(none.status, 1); assert.match(none.stderr, /--fake-shippo/);
-  const other = run({ SHIPPO_API_KEY: KEY, PAIRPLUG_DB: path.join(ROOT, 'data', 'pairplug.db') }); assert.equal(other.status, 1); assert.match(other.stderr, /another database/);
+  const other = run({ SHIPPO_API_KEY: KEY, DATABASE_URL: 'postgres://app@127.0.0.1:5432/pairplug' }); assert.equal(other.status, 1); assert.match(other.stderr, /another database/);
 });
 
 test('config.sandbox is ignored in production', () => {
-  const get = (env) => execFileSync(process.execPath, ['-e', "console.log(require('./src/config').sandbox)"], { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_DB: ':memory:', PAIRPLUG_UPLOADS: '/tmp/pp-sbx', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop();
+  const get = (env) => execFileSync(process.execPath, ['-e', "console.log(require('./src/config').sandbox)"], { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_UPLOADS: '/tmp/pp-sbx', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop();
   assert.equal(get({ PAIRPLUG_SANDBOX: '1' }), 'true'); assert.equal(get({ PAIRPLUG_SANDBOX: '1', NODE_ENV: 'production', PUBLIC_URL: 'https://x.example' }), 'false'); assert.equal(get({}), 'false');
 });
 
@@ -121,20 +122,21 @@ test('the sandbox refuses a database that holds real (non-sandbox) accounts or o
 
 // ------------------------------------------------------------------ --manual-only: the sandbox as the exact live-beta seller experience
 test('--manual-only guards: needs no Shippo credential, cannot combine with --fake-shippo, and keeps every other refusal', () => {
-  const ok = { nodeEnv: 'development', shippoKey: '', manual: true, dbFile: '/x/sandbox.db', realDbFile: '/x/pairplug.db' };
+  const ok = { nodeEnv: 'development', shippoKey: '', manual: true, databaseUrl: 'postgres://u@db.local:5432/pp_sandbox_x', realDatabaseUrl: 'postgres://u@db.local:5432/pairplug' };
   assert.doesNotThrow(() => sb.assertSafeEnvironment(ok));
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, fake: true }), /either --fake-shippo or --manual-only/);
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, nodeEnv: 'production' }), /development-only/);
-  assert.throws(() => sb.assertSafeEnvironment({ ...ok, dbFile: '/x/pairplug.db' }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: ok.realDatabaseUrl }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: 'postgres://u@other.host:5432/pairplug_copy', realDatabaseUrl: null }), /named pp_sandbox/, 'only pp_sandbox* databases are ever used');
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, manual: false }), /SHIPPO_API_KEY|--fake-shippo/, 'without the flag a key is still required');
 });
 
 test('--manual-only process: isolated test data, the exact beta order page (no label UI), Shippo credentials ignored and never printed', async () => {
   const net = require('node:net'), os = require('node:os'), fs = require('node:fs'), { spawn } = require('node:child_process');
   const port = await new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port: p } = s.address(); s.close(() => r(p)); }); });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-sbx-manual-')), realDb = path.join(ROOT, 'data', 'pairplug.db');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-sbx-manual-')), realDb = path.join(ROOT, 'data', 'pairplug.db'), sbxName = `pp_sandbox_t${process.pid}`;
   const before = fs.existsSync(realDb) ? fs.statSync(realDb).mtimeMs : null;
-  const child = spawn(process.execPath, ['scripts/shipping-sandbox.js', '--manual-only', '--data-dir', dir, '--port', String(port)], { cwd: ROOT, env: { PATH: process.env.PATH, SHIPPO_API_KEY: 'shippo_live_MUST_BE_IGNORED_999' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['scripts/shipping-sandbox.js', '--manual-only', '--data-dir', dir, '--port', String(port), '--db-name', sbxName], { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_TEST_PG: process.env.PAIRPLUG_TEST_PG || '', SHIPPO_API_KEY: 'shippo_live_MUST_BE_IGNORED_999' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = ''; child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
   try {
     await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('sandbox did not start: ' + out.slice(0, 300))), 20000); const iv = setInterval(() => { if (out.includes('Press Ctrl+C')) { clearInterval(iv); clearTimeout(t); res(); } }, 100); });
@@ -149,9 +151,9 @@ test('--manual-only process: isolated test data, the exact beta order page (no l
     assert.equal((await get('/api/seller/orders/1/shipping/rates', { method: 'POST', headers: h, body: '{}' })).status, 503);
     // the unpaid order has no shipping form; the real-database path was never created or touched
     assert.ok(!(await (await get('/dashboard/orders/2')).text()).includes('Mark shipped'));
-    assert.ok(fs.existsSync(path.join(dir, 'shipping-sandbox.db')) && !fs.existsSync(path.join(dir, 'pairplug.db')));
+    assert.ok(!fs.existsSync(path.join(dir, 'pairplug.db')), 'no SQLite file is created any more');
     assert.equal(fs.existsSync(realDb) ? fs.statSync(realDb).mtimeMs : null, before, 'your real database file is untouched');
     // and the manual workflow itself works on the test order
     const ship = await get('/api/seller/orders/1/ship', { method: 'POST', headers: h, body: JSON.stringify({ carrier: 'USPS', tracking: '9400111899223399', note: 'sandbox test' }) }); assert.equal(ship.status, 200);
-  } finally { child.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { child.kill(); fs.rmSync(dir, { recursive: true, force: true }); await new Promise((r) => setTimeout(r, 300)); require('./testdb').dropSync(sbxName); }
 });

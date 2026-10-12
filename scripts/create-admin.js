@@ -7,7 +7,7 @@
 // setup/reset generate a strong random TEMPORARY password, print it ONCE to this terminal, and force a password change at first login.
 // Non-interactive deployments may instead pass ADMIN_EMAIL + ADMIN_PASSWORD (10+ chars) in the environment; that password is the operator's own choice.
 const crypto = require('node:crypto');
-const { q, now } = require('../src/db');
+const { q, now, ready, close } = require('../src/db');
 const { hashPassword } = require('../src/auth');
 const { audit } = require('../src/audit');
 const config = require('../src/config');
@@ -39,6 +39,7 @@ function chooseSecret() {
 }
 
 async function main() {
+  await ready();                                   // connects and brings the schema up to date (a brand-new database is created here)
 if (cmd === 'status') {
   const a = await admins();
   if (!a.length) console.log('No administrator exists yet. Run:  node scripts/create-admin.js setup --email you@example.com');
@@ -73,4 +74,4 @@ if (cmd === 'status') {
   console.log(`${email} is now an administrator. Their password is unchanged.`);
 } else fail('Usage: node scripts/create-admin.js status | setup --email X | reset --email X | promote --email X');
 }
-main().then(() => process.exit(0), (e) => { console.error(e && e.message ? e.message : e); process.exit(1); });
+main().then(() => close().then(() => process.exit(0)), (e) => { console.error(e && e.message ? e.message : e); process.exit(1); });

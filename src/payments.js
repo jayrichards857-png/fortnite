@@ -99,10 +99,10 @@ async function releaseCheckoutItems(checkoutId) {
  */
 async function handlePaymentEvent(providerName, ev) {
   return await tx(async () => {
-    const ins = await q.run('INSERT OR IGNORE INTO payment_events(event_id, provider, type, processed_at) VALUES(?,?,?,?)', ev.id, providerName, ev.type, now());
+    const ins = await q.run('INSERT INTO payment_events(event_id, provider, type, processed_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING', ev.id, providerName, ev.type, now());
     if (ins.changes === 0) return { duplicate: true };
     if (ev.type === 'ignored') return { ignored: true };
-    const checkout = await q.get('SELECT * FROM checkouts WHERE id = ?', ev.checkoutId);
+    const checkout = await q.get('SELECT * FROM checkouts WHERE id = ? FOR UPDATE', ev.checkoutId);
     if (!checkout) return { ignored: true };
     // A provider webhook can never mark a seller-direct checkout paid: only the seller's own confirmation can.
     if (checkout.mode === 'external') return { ignored: true };
@@ -143,7 +143,7 @@ async function handlePaymentEvent(providerName, ev) {
 /** Expire stale checkouts (reservation timeout). Safe to run repeatedly. */
 async function expireStaleCheckouts() {
   return await tx(async () => {
-    const stale = await q.all("SELECT id FROM checkouts WHERE status = 'pending' AND expires_at < ?", now());
+    const stale = await q.all("SELECT id FROM checkouts WHERE status = 'pending' AND expires_at < ? ORDER BY id FOR UPDATE SKIP LOCKED", now());      // another tick/instance already working on a row: skip it
     for (const c of stale) {
       await q.run("UPDATE checkouts SET status = 'expired' WHERE id = ?", c.id);
       for (const o of await q.all('SELECT id, buyer_id, payment_mode FROM orders WHERE checkout_id = ?', c.id)) {

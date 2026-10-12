@@ -6,6 +6,9 @@ const config = require('./config');
 const { q, now } = require('./db');
 const { HttpError } = require('./util');
 
+// Images stay on the local filesystem in this release (PAIRPLUG_UPLOADS); the directory must be on persistent storage in production.
+fs.mkdirSync(config.uploadDir, { recursive: true });
+
 const MAX_SIDE = 8000, MAX_PIXELS = 40e6;
 
 // We trust file *contents*, not the client-declared type: check magic bytes and pick the extension ourselves.
@@ -78,8 +81,8 @@ async function isReferenced(file) {
   return Boolean(
     await q.get('SELECT 1 x FROM listing_images WHERE file = ?', file) || await q.get('SELECT 1 x FROM order_items WHERE image = ?', file) ||
     await q.get('SELECT 1 x FROM dispute_evidence WHERE image = ?', file) || await q.get('SELECT 1 x FROM case_events WHERE image = ?', file) ||
-    await q.get('SELECT 1 x FROM storefronts WHERE draft_json LIKE ? OR published_json LIKE ?', like, like) ||
-    await q.get('SELECT 1 x FROM orders WHERE snapshot_json LIKE ?', like));
+    await q.get('SELECT 1 x FROM storefronts WHERE draft_json ILIKE ? OR published_json ILIKE ?', like, like) ||
+    await q.get('SELECT 1 x FROM orders WHERE snapshot_json ILIKE ?', like));
 }
 /** Delete an uploaded file ONLY if nothing references it any more. Never throws. */
 async function removeIfUnreferenced(file) {

@@ -30,7 +30,7 @@ async function newMod(adm, name = 'Mod') {
   const r = await c.post('/api/moderator/setup', { token: tokenOf(inv.json.link), display_name: `${name} ${n}`, password: 'a-very-long-passphrase', terms: true }); assert.equal(r.status, 200, r.text);
   return c;
 }
-const clearSlots = async () => { await q.run('UPDATE users SET is_moderator = 0 WHERE is_moderator = 1'); await q.run("UPDATE moderator_invites SET revoked_at = strftime('%s','now') WHERE used_at IS NULL AND revoked_at IS NULL"); };
+const clearSlots = async () => { await q.run('UPDATE users SET is_moderator = 0 WHERE is_moderator = 1'); await q.run("UPDATE moderator_invites SET revoked_at = CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) WHERE used_at IS NULL AND revoked_at IS NULL"); };
 
 test('the official support email is the default, clickable, consistent, and honest about what email is', async () => {
   assert.equal(config.supportEmail, OFFICIAL); assert.equal(config.supportEmailOverridden, false);
@@ -136,7 +136,7 @@ test('setup links: hashed at rest, single-use, expiring, revocable, personal; th
 });
 
 test('the setup command provisions moderators from the server, prints the link once, and refuses a sixth', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-mod-')), env = { ...process.env, PAIRPLUG_DB: path.join(dir, 'x.db'), PAIRPLUG_UPLOADS: path.join(dir, 'up'), PUBLIC_URL: 'https://example.test' };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-mod-')), fresh = require('./testdb').createSync(), env = { ...process.env, DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: path.join(dir, 'up'), PUBLIC_URL: 'https://example.test' };      // its own empty database
   const run = (...a) => spawnSync(process.execPath, ['scripts/moderator.js', ...a], { cwd: path.join(__dirname, '..'), env, encoding: 'utf8' });
   try {
     assert.match(run('status').stdout, /0 of 5 used/);
@@ -144,7 +144,7 @@ test('the setup command provisions moderators from the server, prints the link o
     const sixth = run('invite', '--email', 'cli5@example.test'); assert.notEqual(sixth.status, 0); assert.match(sixth.stderr, /All moderator slots are in use/);
     assert.match(run('status').stdout, /5 of 5 used/); assert.doesNotMatch(run('status').stdout, /pp_mod_/, 'status never prints links');
     assert.equal(run('revoke', '--id', '1').status, 0); assert.match(run('status').stdout, /4 of 5 used/);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); require('./testdb').dropSync(fresh.name); }
 });
 
 test('moderators can search, view and ban/unban with recorded reasons; ban rules and the permission policy are enforced server-side', async () => {
@@ -240,7 +240,7 @@ test('every moderation action is auditable and the logs cannot be rewritten; mod
   for (const a of ['moderation_restrict_selling', 'case_decided']) assert.ok(await q.get('SELECT 1 x FROM audit_log WHERE action = ? AND actor_id = ?', a, await uid(mod.email)), a);
   await assert.rejects(async () => await q.run("UPDATE moderation_actions SET reason = 'rewritten history' WHERE id = ?", acts[0].id), /append-only/); await assert.rejects(async () => await q.run('DELETE FROM moderation_actions WHERE id = ?', acts[0].id), /append-only/);
   await assert.rejects(async () => await q.run("UPDATE audit_log SET action = 'x' WHERE actor_id = ?", await uid(mod.email)), /append-only/); await assert.rejects(async () => await q.run('DELETE FROM audit_log WHERE actor_id = ?', await uid(mod.email)), /append-only/);
-  await assert.rejects(async () => await q.run("INSERT INTO moderation_actions(actor_id, actor_role, target_id, action, reason, created_at) VALUES(1,'moderator',1,'ban','no',1)"), /CHECK/);
+  await assert.rejects(async () => await q.run("INSERT INTO moderation_actions(actor_id, actor_role, target_id, action, reason, created_at) VALUES(1,'moderator',1,'ban','no',1)"), /check constraint/i);
   assert.match(await get(mod, '/moderation/log'), /restrict selling/); assert.match(await get(mod, '/moderation'), /Recent actions/);
   // a moderator is not shown admin-only navigation, and cannot read the admin audit page
   assert.doesNotMatch(await get(mod, '/moderation'), /href="\/admin\/moderators"/); assert.equal((await mod.get('/admin/audit')).status, 403);
@@ -251,11 +251,12 @@ test('policies describe the staff roles accurately', async () => {
   assert.match(t, /moderators/i); assert.match(t, /masked email/i); assert.match(t, /Administrators/);
 });
 
-test('migration 13 is additive: existing users keep their roles; nobody becomes a moderator', () => {
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); assert.ok(MIGRATIONS.length >= 13);
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 12; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, is_admin, banned, created_at) VALUES(?,?,?,?,?,?)').run('a@x.test', 'x', 'A', 1, 0, 1); d.prepare('INSERT INTO users(email, password_hash, display_name, banned, created_at) VALUES(?,?,?,?,?)').run('b@x.test', 'x', 'B', 1, 1);
-  d.exec(MIGRATIONS[12]); const us = d.prepare('SELECT email, is_admin, banned, is_moderator, banned_by, banned_reason FROM users ORDER BY id').all();
-  assert.deepEqual(us.map((u) => [u.email, u.is_admin, u.banned, u.is_moderator, u.banned_by, u.banned_reason]), [['a@x.test', 1, 0, 0, null, null], ['b@x.test', 0, 1, 0, null, null]]);
-  assert.equal(d.prepare("SELECT value v FROM settings WHERE key = 'moderator_cap'").get().v, '5'); d.close();
+test('migration 13 is additive: existing users keep their roles; nobody becomes a moderator', async () => {
+  const { dbAt } = require('./pgmig'); const d = await dbAt(12);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, is_admin, banned, created_at) VALUES(?,?,?,?,?,?)', 'a@x.test', 'x', 'A', 1, 0, 1); await d.run('INSERT INTO users(email, password_hash, display_name, banned, created_at) VALUES(?,?,?,?,?)', 'b@x.test', 'x', 'B', 1, 1);
+    await d.applyNext(); const us = await d.all('SELECT email, is_admin, banned, is_moderator, banned_by, banned_reason FROM users ORDER BY id');
+    assert.deepEqual(us.map((u) => [u.email, Number(u.is_admin), Number(u.banned), Number(u.is_moderator), u.banned_by, u.banned_reason]), [['a@x.test', 1, 0, 0, null, null], ['b@x.test', 0, 1, 0, null, null]]);
+    assert.equal((await d.one("SELECT value v FROM settings WHERE key = 'moderator_cap'")).v, '5');
+  } finally { await d.close(); }
 });

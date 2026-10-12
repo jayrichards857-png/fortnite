@@ -15,6 +15,7 @@ const ts = (t) => new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' '
 
 (async () => {
 try {
+  await require('../src/db').ready();
   if (cmd === 'status') {
     const s = await M.slots(), r = await M.roster();
     console.log(`Moderator slots: ${s.active + s.pending} of ${s.cap} used (${s.active} active, ${s.pending} unused setup link(s)); ${s.available} free.`);
@@ -32,6 +33,7 @@ try {
     await M.revokeInvite('cli:root', id); console.log(`Setup link #${id} revoked.`);
   } else fail('Commands: status | invite --email <address> | revoke --id <n>');
 } catch (e) { fail(e.message || String(e)); }
+await require('../src/db').close();
 process.exit(0);
 })();
 void q;

@@ -52,7 +52,7 @@ test('Mark shipped saves carrier, tracking and message, updates the order, shows
   assert.deepEqual((await events(o)).map((e) => e.to_status), ['pending_payment', 'paid', 'shipped']); assert.match((await events(o))[2].note, new RegExp(`UPS ${t}`)); assert.equal((await events(o))[2].actor, `seller:${(await q.get('SELECT seller_id s FROM orders WHERE id = ?', o)).s}`);
   // the shipment is saved even if the in-app notification cannot be written, and the response does not claim it was sent
   const b = await scene(), orig = q.run;
-  q.run = (sql, ...a) => { if (/INSERT OR IGNORE INTO notifications/.test(sql)) throw new Error('notification store down'); return orig(sql, ...a); };
+  q.run = (sql, ...a) => { if (/INSERT INTO notifications/.test(sql)) throw new Error('notification store down'); return orig(sql, ...a); };
   try { const f = await b.seller.post(`/api/seller/orders/${b.o}/ship`, { carrier: 'USPS', tracking: trk() }); assert.equal(f.status, 200); assert.equal(f.json.notified, false); } finally { q.run = orig; }
   assert.equal((await row(b.o)).status, 'shipped');
 });

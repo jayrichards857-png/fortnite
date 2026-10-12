@@ -119,10 +119,11 @@ test('public profiles, discovery and search never expose private account data', 
   assert.deepEqual(Object.keys(await q.get('SELECT * FROM search_log LIMIT 1') || { id: 1, term: 1, created_at: 1 }).sort(), ['created_at', 'id', 'term'], 'search log stores no user or address');
 });
 
-test('migration 11 is additive: users created before it keep NULL acceptance (nobody is marked as having accepted)', () => {
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); assert.ok(MIGRATIONS.length >= 11);
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 10; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)').run('old@x.test', 'x', 'Old', 1700000000);
-  d.exec(MIGRATIONS[10]); const u = d.prepare('SELECT terms_version, terms_accepted_at, email FROM users').get();
-  assert.equal(u.email, 'old@x.test'); assert.equal(u.terms_version, null); assert.equal(u.terms_accepted_at, null); d.close();
+test('migration 11 is additive: users created before it keep NULL acceptance (nobody is marked as having accepted)', async () => {
+  const { dbAt } = require('./pgmig'); const d = await dbAt(10);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', 'old@x.test', 'x', 'Old', 1700000000);
+    await d.applyNext(); const u = await d.one('SELECT terms_version, terms_accepted_at, email FROM users');
+    assert.equal(u.email, 'old@x.test'); assert.equal(u.terms_version, null); assert.equal(u.terms_accepted_at, null);
+  } finally { await d.close(); }
 });

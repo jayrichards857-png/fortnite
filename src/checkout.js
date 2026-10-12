@@ -39,7 +39,7 @@ async function addToCart(userId, listingId) {
   const l = await q.get('SELECT id, seller_id, status FROM listings WHERE id = ?', listingId);
   if (!l || l.status !== 'active') throw new HttpError(409, 'This item is no longer available.');
   if (l.seller_id === userId) throw new HttpError(403, "You can't buy your own listing.");
-  await q.run('INSERT OR IGNORE INTO cart_items(user_id, listing_id, created_at) VALUES(?,?,?)', userId, listingId, now());
+  await q.run('INSERT INTO cart_items(user_id, listing_id, created_at) VALUES(?,?,?) ON CONFLICT DO NOTHING', userId, listingId, now());
 }
 
 const ADDR = { name: 'ship_name', line1: 'ship_line1', line2: 'ship_line2', city: 'ship_city', region: 'ship_region', postal: 'ship_postal', country: 'ship_country' };
@@ -75,13 +75,13 @@ async function createCheckout(user, { address, idempotencyKey }) {
     if (unavailable.length) throw new HttpError(409, `${unavailable[0].title} is no longer available. Remove it from your cart to continue.`);
     if (!qt.groups.length) throw new HttpError(422, 'Your cart is empty.');
     const t = now(), expires = t + s.reservation_minutes * 60;
-    const ck = await q.run(`INSERT INTO checkouts(buyer_id, idempotency_key, total_cents, ship_name, ship_line1, ship_line2, ship_city, ship_region, ship_postal, ship_country, expires_at, created_at)
+    const ck = await q.insert(`INSERT INTO checkouts(buyer_id, idempotency_key, total_cents, ship_name, ship_line1, ship_line2, ship_city, ship_region, ship_postal, ship_country, expires_at, created_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, user.id, idempotencyKey, qt.totalCents, addr.ship_name, addr.ship_line1, addr.ship_line2, addr.ship_city, addr.ship_region, addr.ship_postal, addr.ship_country, expires, t);
-    const checkoutId = Number(ck.lastInsertRowid);
+    const checkoutId = ck;
     for (const g of qt.groups) {
-      const o = await q.run(`INSERT INTO orders(checkout_id,buyer_id,seller_id,subtotal_cents,shipping_cents,tax_cents,total_cents,fee_bps,platform_fee_cents,processing_fee_cents,seller_payout_cents,created_at,updated_at)
+      const o = await q.insert(`INSERT INTO orders(checkout_id,buyer_id,seller_id,subtotal_cents,shipping_cents,tax_cents,total_cents,fee_bps,platform_fee_cents,processing_fee_cents,seller_payout_cents,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, checkoutId, user.id, g.sellerId, g.subtotalCents, g.shippingCents, g.taxCents, g.totalCents, g.feeBps, g.platformFeeCents, g.processingFeeCents, g.sellerPayoutCents, t, t);
-      const orderId = Number(o.lastInsertRowid);
+      const orderId = o;
       await q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, created_at) VALUES(?, NULL, 'pending_payment', ?, ?)", orderId, `buyer:${user.id}`, t);
       for (const it of g.items) {
         const r = await q.run("UPDATE listings SET status='reserved', reserved_until=?, reserved_checkout_id=? WHERE id=? AND status='active'", expires, checkoutId, it.id);

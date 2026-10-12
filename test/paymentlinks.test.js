@@ -199,15 +199,16 @@ test('sellers can appeal; staff see appeals, repeat violations and unconfirmed l
   assert.match(await get(mod, '/moderation/payment-links'), /cannot see the amount Stripe charges/);
 });
 
-test('existing data stays intact: migration 16 is additive, old listings simply start unconfirmed, and seller-written text is untouched', () => {
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); assert.ok(MIGRATIONS.length >= 16);
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 15; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, created_at, bio) VALUES(?,?,?,?,?)').run('s@x.test', 'x', 'S', 1, 'My bio');
-  d.prepare("INSERT INTO listings(seller_id, title, category, price_cents, shipping_cents, shipping_payer, status, payment_url, payment_total_ack_cents, quantity, created_at, updated_at) VALUES(1,'Old','clothing',5000,500,'buyer','active','https://buy.stripe.com/old_link1',5500,2,1,1)").run();
-  d.prepare("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('seller_issue',1,1,'old','open',1,1)").run();
-  d.exec(MIGRATIONS[15]);
-  const l = d.prepare('SELECT title, price_cents, payment_url, payment_total_ack_cents a, payment_ack_at, payment_ack_policy, quantity FROM listings').get(); assert.deepEqual({ ...l }, { title: 'Old', price_cents: 5000, payment_url: 'https://buy.stripe.com/old_link1', a: 5500, payment_ack_at: null, payment_ack_policy: null, quantity: 2 });
-  assert.equal(d.prepare('SELECT payment_mismatch m FROM cases').get().m, 0); assert.equal(d.prepare('SELECT bio FROM users').get().bio, 'My bio'); assert.equal(d.prepare('SELECT selling_restricted_until u FROM users').get().u, null);
-  d.exec('UPDATE listings SET price_cents = 6000'); assert.equal(d.prepare('SELECT payment_total_ack_cents a FROM listings').get().a, null, 'the DB trigger clears a confirmation that no longer matches'); d.close();
+test('existing data stays intact: migration 16 is additive, old listings simply start unconfirmed, and seller-written text is untouched', async () => {
+  const { dbAt } = require('./pgmig'); const d = await dbAt(15);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, created_at, bio) VALUES(?,?,?,?,?)', 's@x.test', 'x', 'S', 1, 'My bio');
+    await d.run("INSERT INTO listings(seller_id, title, category, price_cents, shipping_cents, shipping_payer, status, payment_url, payment_total_ack_cents, quantity, created_at, updated_at) VALUES(1,'Old','clothing',5000,500,'buyer','active','https://buy.stripe.com/old_link1',5500,2,1,1)");
+    await d.run("INSERT INTO cases(kind, reporter_id, subject_user_id, reason, status, created_at, updated_at) VALUES('seller_issue',1,1,'old','open',1,1)");
+    await d.applyNext();
+    const l = await d.one('SELECT title, price_cents, payment_url, payment_total_ack_cents a, payment_ack_at, payment_ack_policy, quantity FROM listings'); assert.deepEqual({ ...l }, { title: 'Old', price_cents: 5000, payment_url: 'https://buy.stripe.com/old_link1', a: 5500, payment_ack_at: null, payment_ack_policy: null, quantity: 2 });
+    assert.equal(Number((await d.one('SELECT payment_mismatch m FROM cases')).m), 0); assert.equal((await d.one('SELECT bio FROM users')).bio, 'My bio'); assert.equal((await d.one('SELECT selling_restricted_until u FROM users')).u, null);
+    await d.run('UPDATE listings SET price_cents = 6000'); assert.equal((await d.one('SELECT payment_total_ack_cents a FROM listings')).a, null, 'the DB trigger clears a confirmation that no longer matches');
+  } finally { await d.close(); }
   assert.equal(resolveLink({ payment_url: 'https://buy.stripe.com/old_link1' }).source, 'listing');
 });

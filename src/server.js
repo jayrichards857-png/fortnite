@@ -2,7 +2,7 @@
 const express = require('express');
 const path = require('node:path');
 const config = require('./config');
-const { q } = require('./db');
+const { q, ready: dbReady, close: dbClose, schemaVersion } = require('./db');
 const auth = require('./auth');
 const V = require('./views');
 const { HttpError } = require('./util');
@@ -31,6 +31,8 @@ app.disable('x-powered-by');
 // rate-limit bucket. TRUST_PROXY defaults to 'loopback' (proxy on the same machine); set a number of hops for other platforms.
 app.set('trust proxy', config.trustProxy);
 
+// No request is served before the schema is current (a resolved promise after the first call).
+app.use(async (req, res, next) => { try { await dbReady(); next(); } catch (e) { console.error(e); res.status(503).type('text/plain').send('Database unavailable'); } });
 app.use((req, res, next) => { if (hostAllowed(req)) return next(); res.status(421).type('text/plain').send('Misdirected request'); });
 app.use((req, res, next) => {
   const wsOrigin = `ws://${req.headers.host} wss://${req.headers.host}`; // explicit for browsers that don't treat 'self' as ws(s)
@@ -76,7 +78,7 @@ app.use(require('./routes/chat').router);
 
 // Health check for uptime monitors / process managers: proves the process is up AND the database answers.
 app.get('/healthz', async (req, res) => {
-  try { await q.get('SELECT 1'); res.json({ ok: true, checkoutMode: config.checkoutMode }); }
+  try { await q.get('SELECT 1'); res.json({ ok: true, checkoutMode: config.checkoutMode, schema: await schemaVersion() }); }
   catch { res.status(503).json({ ok: false }); }
 });
 
@@ -111,6 +113,13 @@ function createServer() {
 /** Refuse to start in production with settings that would be unsafe or misleading. */
 function assertProductionConfig() {
   const problems = [...config.envProblems];
+  if (!config.db.url) problems.push('DATABASE_URL is required (postgres://user:pass@host:5432/dbname)');
+  else {
+    let u = null; try { u = new URL(config.db.url); } catch { problems.push('DATABASE_URL is not a valid postgres:// URL'); }
+    // a database reached over a network must be encrypted (managed databases): DATABASE_SSL=1 or ?sslmode=require. DATABASE_ALLOW_PLAINTEXT=1 is an explicit opt-out for a private network.
+    if (u && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname) && !config.db.ssl && !/sslmode=(require|verify-ca|verify-full)/.test(config.db.url) && process.env.DATABASE_ALLOW_PLAINTEXT !== '1')
+      problems.push('DATABASE_URL points at a remote database without TLS: set DATABASE_SSL=1 (or ?sslmode=require), or DATABASE_ALLOW_PLAINTEXT=1 on a private network');
+  }
   if (!/^https:\/\//.test(config.publicUrl)) problems.push('PUBLIC_URL must be the public https:// address of the site');
   if (config.paymentsMode === 'sandbox') problems.push('PAYMENTS_MODE=sandbox simulates payments and must never run in production');
   if (config.isProd && config.shippo.apiKey) problems.push('SHIPPO_API_KEY must not be set in production: label purchasing is test-mode only until postage billing is verified (docs/SHIPPING.md)');
@@ -128,17 +137,19 @@ if (require.main === module) {
     if (problems.length) { console.error('Refusing to start:\n - ' + problems.join('\n - ')); process.exit(1); }
   }
   if (config.supportEmailOverridden) console.warn(`NOTE: SUPPORT_EMAIL is set to ${config.supportEmail}, which overrides the official PairPlug address (${config.officialSupportEmail}). Make sure that is intended.`);
+  dbReady().then(() => {
   const server = createServer();
   server.listen(config.port, config.host, async () => {
     try { await startJobs(); } catch (e) { console.error('startup jobs failed', e); process.exit(1); }
     const p = payments.getProvider();
     console.log(`PairPlug listening on ${config.publicUrl} [bound to ${config.host}:${config.port}]  (checkout: ${config.checkoutMode}${config.checkoutMode === 'platform' ? `, payments: ${p ? p.name : 'DISABLED'}` : ', sellers are paid directly'})`);
   });
+  }, (e) => { console.error('Cannot start: ' + e.message); process.exit(1); });
 }
-// Graceful shutdown (systemd stop / deploy): stop accepting connections, flush the SQLite WAL, exit.
+// Graceful shutdown (systemd stop / deploy): close the PostgreSQL pool and exit.
 if (require.main === module) {
   const stop = (sig) => { console.log(`${sig}: shutting down`); setTimeout(() => process.exit(0), 5000).unref();
-    require('./db').db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); process.exit(0); };
+    dbClose().catch(() => {}).finally(() => process.exit(0)); };
   process.on('SIGTERM', () => stop('SIGTERM')); process.on('SIGINT', () => stop('SIGINT'));
 }
 module.exports = { app, createServer, startJobs, assertProductionConfig };

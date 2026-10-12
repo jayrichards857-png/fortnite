@@ -28,11 +28,12 @@ class TransitionError extends Error {
 const canTransition = (from, to) => (TRANSITIONS[from] || []).includes(to);
 
 /**
- * Atomically move an order. The UPDATE is conditional on the current status, so two concurrent
- * actors (e.g. buyer confirm + auto-release job) can't both win. Must be called inside tx().
+ * Atomically move an order. The order row is locked (FOR UPDATE) and the UPDATE is conditional on the status that was read,
+ * so two concurrent actors (e.g. buyer confirm + auto-release job) can't both win. Must be called inside tx().
  */
 async function transition(orderId, to, { actor, note = null, set = {} } = {}) {
-  const order = await q.get('SELECT status FROM orders WHERE id = ?', orderId);
+  // FOR UPDATE: concurrent transitions of one order queue up here and each sees the previous one's committed status.
+  const order = await q.get('SELECT status FROM orders WHERE id = ? FOR UPDATE', orderId);
   if (!order) throw Object.assign(new Error('Order not found'), { status: 404 });
   if (!canTransition(order.status, to)) throw new TransitionError(order.status, to);
   const cols = Object.keys(set);

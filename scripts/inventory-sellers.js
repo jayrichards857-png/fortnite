@@ -1,16 +1,19 @@
 'use strict';
 // READ-ONLY report of seller accounts against the beta cap. Changes nothing.   node scripts/inventory-sellers.js
-const { DatabaseSync } = require('node:sqlite');
-const fs = require('node:fs');
+const { Client } = require('pg');
 const config = require('../src/config');
-if (!fs.existsSync(config.dbFile)) { console.log('No database at ' + config.dbFile); process.exit(0); }
-const db = new DatabaseSync(config.dbFile, { readOnly: true });
-const one = (sql) => { try { return db.prepare(sql).get(); } catch { return null; } };
-const cap = Number(one("SELECT value FROM settings WHERE key = 'seller_cap'")?.value ?? 3);
-const sellers = db.prepare('SELECT id, handle, store_name, banned, created_at FROM users WHERE is_seller = 1 ORDER BY id').all();
-const pending = one("SELECT COUNT(*) n FROM invitations WHERE kind = 'seller' AND used_at IS NULL AND revoked_at IS NULL AND expires_at > strftime('%s','now')")?.n ?? 0;
-console.log(`Seller accounts: ${sellers.length}   cap: ${cap}   pending seller invitations: ${pending}`);
-for (const s of sellers) console.log(`  #${s.id} @${s.handle} ${s.store_name || ''}${s.banned ? '  [suspended]' : ''}`);
-if (sellers.length > cap) console.log(`OVER CAP by ${sellers.length - cap}. Nothing is deleted; new seller onboarding stays blocked until slots are released by an admin.`);
-else console.log(`Free slots (before pending invitations): ${cap - sellers.length}`);
-db.close();
+(async () => {
+  if (!config.db.url) { console.log('DATABASE_URL is not set.'); return; }
+  const c = new Client({ connectionString: config.db.url, ssl: config.db.ssl }); await c.connect();
+  try {
+    await c.query('SET default_transaction_read_only = on');
+    const one = async (sql) => { try { return (await c.query(sql)).rows[0]; } catch { return null; } };
+    const cap = Number((await one("SELECT value FROM settings WHERE key = 'seller_cap'"))?.value ?? 3);
+    const sellers = (await c.query('SELECT id, handle, store_name, banned, created_at FROM users WHERE is_seller = 1 ORDER BY id')).rows;
+    const pending = (await one("SELECT COUNT(*) n FROM invitations WHERE kind = 'seller' AND used_at IS NULL AND revoked_at IS NULL AND expires_at > CAST(EXTRACT(EPOCH FROM now()) AS BIGINT)"))?.n ?? 0;
+    console.log(`Seller accounts: ${sellers.length}   cap: ${cap}   pending seller invitations: ${pending}`);
+    for (const s of sellers) console.log(`  #${s.id} @${s.handle} ${s.store_name || ''}${s.banned ? '  [suspended]' : ''}`);
+    if (sellers.length > cap) console.log(`OVER CAP by ${sellers.length - cap}. Nothing is deleted; new seller onboarding stays blocked until slots are released by an admin.`);
+    else console.log(`Free slots (before pending invitations): ${cap - sellers.length}`);
+  } finally { await c.end(); }
+})().catch((e) => { console.error('inventory failed:', e.message); process.exit(1); });

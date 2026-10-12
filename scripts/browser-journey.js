@@ -11,9 +11,10 @@ const { chromium } = require('playwright-core');
 const { png } = require('./png');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-journey-'));
+const fresh = require('../test/testdb').createSync(), dropFresh = () => require('../test/testdb').dropSync(fresh.name);   // own empty PostgreSQL database for this run
 const photo = path.join(tmp, 'photo.png'); fs.writeFileSync(photo, png(300, 380, (x, y) => [90 + (x >> 3), 110, 100 + (y >> 4)]));
 const PORT = 3410, B = `http://localhost:${PORT}`;
-const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'j.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', RATE_LIMIT_SCALE: '100' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: path.join(tmp, 'up'), PAYMENTS_MODE: 'sandbox', CHECKOUT_MODE: 'platform', RATE_LIMIT_SCALE: '100' }, stdio: ['ignore', 'pipe', 'inherit'] });
 const ready = new Promise((r) => server.stdout.on('data', (d) => String(d).includes('listening') && r()));
 
 const step = (m) => console.log('•', m);
@@ -27,7 +28,7 @@ const step = (m) => console.log('•', m);
     await Promise.all([s.waitForURL(B + '/'), s.click('button[type=submit]')]); step('seller registered');
     await s.goto(B + '/sell'); await s.fill('#sn', 'Riley Resale'); await s.fill('#sh', 'riley'); await s.fill('#sr', 'OR'); await s.fill('#sy', 'Portland'); await s.check('input[name=agree]');
     await Promise.all([s.waitForURL(B + '/dashboard'), s.click('button[type=submit]')]); step('seller onboarded → dashboard');
-    require('./verify-email-helper')(path.join(tmp, 'j.db'));
+    await require('./verify-email-helper')(fresh.url);
     assert.match(await s.textContent('body'), /No orders yet/); // honest empty state
 
     await s.goto(B + '/dashboard/listings/new');
@@ -66,5 +67,5 @@ const step = (m) => console.log('•', m);
     assert.match(await s.textContent('body'), /Available to withdraw/); step('seller finance page: ' + (await s.textContent('.stat .v')));
     assert.deepEqual(errors, [], 'no uncaught browser errors');
     console.log('\nBROWSER JOURNEY PASSED');
-  } finally { await browser.close(); server.kill(); }
-})().catch((e) => { console.error('\nBROWSER JOURNEY FAILED:', e.message); server.kill(); process.exit(1); });
+  } finally { await browser.close(); server.kill(); dropFresh(); }
+})().catch((e) => { console.error('\nBROWSER JOURNEY FAILED:', e.message); server.kill(); dropFresh(); process.exit(1); });

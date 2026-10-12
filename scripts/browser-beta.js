@@ -12,8 +12,9 @@ const { png } = require('./png');
 
 const SHOTS = process.argv.includes('--screenshots'), OUT = path.resolve(__dirname, '..', 'artifacts', 'screenshots');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-beta-')), PORT = 3430, B = `http://localhost:${PORT}`;
+const fresh = require('../test/testdb').createSync(), dropFresh = () => require('../test/testdb').dropSync(fresh.name);   // own empty PostgreSQL database for this run
 const photo = path.join(tmp, 'photo.png'); fs.writeFileSync(photo, png(300, 380, (x, y) => [120 + (y >> 5), 100, 90 + (x >> 4)]));
-const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), PAIRPLUG_DB: path.join(tmp, 'b.db'), PAIRPLUG_UPLOADS: path.join(tmp, 'up'), RATE_LIMIT_SCALE: '100', PAYMENTS_MODE: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, SELLER_ONBOARDING: 'open', PORT: String(PORT), DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: path.join(tmp, 'up'), RATE_LIMIT_SCALE: '100', PAYMENTS_MODE: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
 const ready = new Promise((r) => server.stdout.on('data', (d) => String(d).includes('listening') && r(String(d))));
 const step = (m) => console.log('•', m);
 const LINK = 'https://buy.stripe.com/test_beta_journey_123';
@@ -37,7 +38,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await s.pg.goto(B + '/sell'); assert.match(await s.pg.textContent('main'), /no PairPlug fees/i); assert.doesNotMatch(await s.pg.textContent('main'), /escrow/i);
     await s.pg.fill('#sn', 'Riley Resale'); await s.pg.fill('#sh', 'riley'); await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); if (await s.pg.$('input[name=terms]')) await s.pg.check('input[name=terms]'); await s.pg.check('input[name=agree]');
     await Promise.all([s.pg.waitForURL(B + '/dashboard'), s.pg.click('button[type=submit]')]); step('seller onboarded (no fees/escrow language)');
-    require('./verify-email-helper')(path.join(tmp, 'b.db'));
+    await require('./verify-email-helper')(fresh.url);
     await s.pg.goto(B + '/dashboard/settings');
     await s.pg.fill('#cu', 'http://evil.example/pay'); await s.pg.click('button[type=submit]'); await s.pg.locator('.err').first().waitFor(); step('unsafe checkout link rejected: "' + (await s.pg.locator('.err').first().textContent()) + '"');
     await shot(s.pg, 'beta-01-seller-settings.png');
@@ -117,5 +118,5 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     assert.ok(external.length >= 1 && external.every((u) => new URL(u).hostname === 'buy.stripe.com'), 'PairPlug only ever redirected to the seller\'s allowlisted checkout host');
     assert.deepEqual(errors, [], 'no uncaught browser errors');
     console.log('\nBROWSER BETA JOURNEY PASSED');
-  } finally { await browser.close(); server.kill(); }
-})().catch((e) => { console.error('\nBROWSER BETA JOURNEY FAILED:', e.message); server.kill(); process.exit(1); });
+  } finally { await browser.close(); server.kill(); dropFresh(); }
+})().catch((e) => { console.error('\nBROWSER BETA JOURNEY FAILED:', e.message); server.kill(); dropFresh(); process.exit(1); });

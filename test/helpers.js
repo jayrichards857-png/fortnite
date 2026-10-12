@@ -4,8 +4,21 @@ const os = require('node:os');
 const path = require('node:path');
 // Each test file gets its own throwaway database and upload dir: fixtures can never touch the live marketplace.
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pairplug-test-'));
-process.env.PAIRPLUG_DB = process.env.PAIRPLUG_DB || path.join(dir, 'test.db');
+// A private, empty PostgreSQL database per test file (dropped on exit). See test/testdb.js and scripts/pg-test.sh.
+{
+  const testdb = require('./testdb');
+  if (process.env.PAIRPLUG_TEST_DATABASE_URL) {          // an explicit, named throwaway database (scripts/seed-demo.js): kept after the run, never dropped here
+    const name = decodeURIComponent(new URL(process.env.PAIRPLUG_TEST_DATABASE_URL).pathname.slice(1));
+    if (!testdb.NAME.test(name)) throw new Error('PAIRPLUG_TEST_DATABASE_URL must name a pp_test_*, pp_sandbox* or pp_demo* database');
+    process.env.DATABASE_URL = process.env.PAIRPLUG_TEST_DATABASE_URL;
+  } else {
+    const created = testdb.createSync();
+    process.env.DATABASE_URL = created.url;
+    process.on('exit', () => testdb.dropSync(created.name));
+  }
+}
 process.env.PAIRPLUG_UPLOADS = process.env.PAIRPLUG_UPLOADS || path.join(dir, 'uploads');
+process.env.PG_IDLE_TIMEOUT_MS = process.env.PG_IDLE_TIMEOUT_MS ?? '300';      // idle connections close quickly so test processes exit promptly
 process.env.PAYMENTS_MODE = process.env.PAYMENTS_MODE ?? 'sandbox';
 process.env.CARRIER_WEBHOOK_SECRET = 'carrier-secret';
 // Test sellers are created through the dev/test-only open onboarding path; invitation-only behaviour is tested by flipping config explicitly.
@@ -28,7 +41,7 @@ async function start() {
   config.port = server.address().port; // sandbox pay endpoint calls back into this server
   base = `http://127.0.0.1:${config.port}`;
 }
-const stop = () => new Promise((r) => { server.closeAllConnections(); server.close(r); });
+const stop = async () => { if (server) await new Promise((r) => { server.closeAllConnections(); server.close(r); }); await require('../src/db').close(); };
 
 class Client {
   constructor() { this.cookie = ''; }
@@ -59,7 +72,7 @@ async function newSeller(name = 'Seller', plan) {
   c.handle = `h${n}${Date.now() % 100000}`;
   const r = await c.post('/api/sell/onboard', { store_name: `${name} store ${n}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true });
   if (r.status !== 200) throw new Error('onboard failed ' + r.text);
-  await require('../src/db').q.run('UPDATE users SET email_verified_at = strftime(\'%s\',\'now\') WHERE handle = ?', c.handle);   // test sellers are pre-verified unless a test says otherwise
+  await require('../src/db').q.run('UPDATE users SET email_verified_at = CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) WHERE handle = ?', c.handle);   // test sellers are pre-verified unless a test says otherwise
   if (plan) await require('../src/db').q.run('UPDATE users SET plan = ? WHERE handle = ?', plan, c.handle);
   return c;
 }

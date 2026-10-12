@@ -18,7 +18,7 @@ const parseEnvFile = (file) => Object.fromEntries(fs.readFileSync(file, 'utf8').
 const cfgIn = (env) => JSON.parse(execFileSync(process.execPath, ['-e', `
   const c=require('./src/config');const {assertProductionConfig}=require('./src/server');
   console.log(JSON.stringify({onb:c.sellerOnboarding,signups:c.signups,mode:c.checkoutMode,host:c.host,prod:c.isProd,problems:assertProductionConfig(),release:c.releaseDate}))`],
-  { cwd: ROOT, env: { PATH: process.env.PATH, PAIRPLUG_DB: ':memory:', PAIRPLUG_UPLOADS: path.join(os.tmpdir(), 'pp-cfg-up'), ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
+  { cwd: ROOT, env: { PATH: process.env.PATH, DATABASE_URL: 'postgres://app@127.0.0.1:5432/pairplug', PAIRPLUG_UPLOADS: path.join(os.tmpdir(), 'pp-cfg-up'), ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n').pop());
 
 test.before(async () => await H.start());
 test.after(() => H.stop());
@@ -30,7 +30,7 @@ test('deploy env examples are valid for systemd (no inline comments) and pass th
     for (const [k, v] of Object.entries(kv)) assert.ok(!/\s#/.test(v) && !/^#/.test(v), `${f}: ${k} has an inline comment`);
   }
   const kv = parseEnvFile(path.join(ROOT, 'deploy/pairplug.env.example'));
-  for (const k of ['NODE_ENV', 'PUBLIC_URL', 'CHECKOUT_MODE', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SIGNUPS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER']) assert.ok(k in kv, 'missing ' + k);
+  for (const k of ['NODE_ENV', 'PUBLIC_URL', 'CHECKOUT_MODE', 'DATABASE_URL', 'PAIRPLUG_UPLOADS', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SIGNUPS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER']) assert.ok(k in kv, 'missing ' + k);
   assert.ok(!('PAYMENTS_MODE' in kv) && !('RATE_LIMIT_SCALE' in kv));
   const c = cfgIn({ ...kv, PUBLIC_URL: 'https://beta.example.test' });
   assert.deepEqual(c.problems, []); assert.equal(c.prod, true); assert.equal(c.onb, 'invite'); assert.equal(c.mode, 'external'); assert.equal(c.host, '127.0.0.1');
@@ -90,8 +90,8 @@ async function inviteBuyer(base, adminCookie, email) {
 }
 
 test('production process: DB, sessions and uploaded photos survive a restart; cookie flags; closed sign-ups; loopback-only bind', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-prod-')), port = await free();
-  const env = { PORT: String(port), PAIRPLUG_DB: path.join(dir, 'p.db'), PAIRPLUG_UPLOADS: path.join(dir, 'up'), SIGNUPS: 'closed' };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-prod-')), port = await free(), fresh = require('./testdb').createSync();      // own empty PostgreSQL database
+  const env = { PORT: String(port), DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: path.join(dir, 'up'), SIGNUPS: 'closed' };
   adminScript({ ...env, PUBLIC_URL: 'https://beta.example.test' }, { ADMIN_EMAIL: 'boss@example.test', ADMIN_PASSWORD: 'a-long-admin-password' });
   const base = `http://127.0.0.1:${port}`;
   let { p, out } = await startProd(env);
@@ -133,14 +133,14 @@ test('production process: DB, sessions and uploaded photos survive a restart; co
     assert.equal(Buffer.compare(Buffer.from(await (await pf(`${base}/uploads/${file}`)).arrayBuffer()), photo), 0, 'uploaded photo survived the restart');
     const login = await pf(base + '/api/login', { method: 'POST', headers: J, body: JSON.stringify({ email: 'persist@example.test', password: 'a-long-password-1' }) });
     assert.equal(login.status, 200, 'account (DB row) survived the restart');
-    assert.deepEqual(await (await pf(base + '/healthz')).json(), { ok: true, checkoutMode: 'external' });
+    assert.deepEqual(await (await pf(base + '/healthz')).json(), { ok: true, checkoutMode: 'external', schema: require('../src/db').MIGRATIONS.length });
     await pf(base + '/api/logout', { method: 'POST', headers: { ...J, cookie } });
     assert.equal((await pf(base + '/account', { headers: { cookie }, redirect: 'manual' })).status, 302);
-  } finally { await stopProc(p); }
+  } finally { await stopProc(p); require('./testdb').dropSync(fresh.name); }
 });
 
 test('production start-up refuses unsafe configuration (real process, non-zero exit, no listener)', async () => {
-  const bad = (env) => new Promise((resolve) => { const p = spawn(process.execPath, ['src/server.js'], { cwd: ROOT, env: { PATH: process.env.PATH, NODE_ENV: 'production', PAIRPLUG_DB: ':memory:', PAIRPLUG_UPLOADS: path.join(os.tmpdir(), 'pp-bad-up'), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); let err = '', out = ''; p.stderr.on('data', (d) => { err += d; }); p.stdout.on('data', (d) => { out += d; }); p.on('exit', (code) => resolve({ code, err, out })); setTimeout(() => p.kill(), 8000); });
+  const bad = (env) => new Promise((resolve) => { const p = spawn(process.execPath, ['src/server.js'], { cwd: ROOT, env: { PATH: process.env.PATH, NODE_ENV: 'production', PAIRPLUG_UPLOADS: path.join(os.tmpdir(), 'pp-bad-up'), ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); let err = '', out = ''; p.stderr.on('data', (d) => { err += d; }); p.stdout.on('data', (d) => { out += d; }); p.on('exit', (code) => resolve({ code, err, out })); setTimeout(() => p.kill(), 8000); });
   for (const [env, re] of [[{ PUBLIC_URL: 'http://insecure.test' }, /https/], [{ PUBLIC_URL: 'https://x.test', PAYMENTS_MODE: 'sandbox' }, /sandbox/], [{ PUBLIC_URL: 'https://x.test', SELLER_ONBOARDING: 'invite # c' }, /inline/]]) {
     const r = await bad(env); assert.equal(r.code, 1); assert.match(r.err, re); assert.doesNotMatch(r.out, /listening/);
   }
@@ -148,8 +148,8 @@ test('production start-up refuses unsafe configuration (real process, non-zero e
 
 // ------------------------------------------------------------------ admin creation
 test('create-admin: creates a working admin, promotes an existing user, rejects weak passwords', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-adm-')), port = await free();
-  const env = { PATH: process.env.PATH, PAIRPLUG_DB: path.join(dir, 'a.db'), PAIRPLUG_UPLOADS: path.join(dir, 'up') };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-adm-')), port = await free(), fresh = require('./testdb').createSync();
+  const env = { PATH: process.env.PATH, DATABASE_URL: fresh.url, PAIRPLUG_UPLOADS: path.join(dir, 'up') };
   const run = (extra) => { try { return { code: 0, out: execFileSync(process.execPath, ['scripts/create-admin.js'], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; } catch (e) { return { code: e.status, out: String(e.stderr) }; } };
   assert.equal(run({ ADMIN_EMAIL: 'boss@example.test', ADMIN_PASSWORD: 'short' }).code, 1);
   assert.equal(run({}).code, 1);
@@ -171,6 +171,7 @@ test('create-admin: creates a working admin, promotes an existing user, rejects 
   await new Promise((r) => setTimeout(r, 100));
   const reset = execFileSync(process.execPath, ['scripts/create-admin.js', 'reset', '--email', 'boss@example.test'], { cwd: ROOT, env: { ...env, ADMIN_PASSWORD: 'another-long-password' }, encoding: 'utf8' });
   assert.match(reset, /Administrator account: boss@example\.test/); assert.doesNotMatch(reset, /another-long-password/);
+  require('./testdb').dropSync(fresh.name);
 });
 
 // ------------------------------------------------------------------ direct-checkout defects found in review

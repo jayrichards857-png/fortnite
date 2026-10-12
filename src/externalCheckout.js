@@ -12,7 +12,7 @@
 //   cancelled        abandoned/expired/rejected before payment was confirmed; item released
 //   refunded         seller declares they refunded the buyer in their own provider (PairPlug moves no money)
 const config = require('./config');
-const { q, tx, now, getSettings } = require('./db');
+const { q, tx, now, getSettings, isUnique } = require('./db');
 const { HttpError, cleanLine } = require('./util');
 const { rateLimit } = require('./auth');
 const { validateAddress } = require('./checkout');
@@ -70,7 +70,8 @@ async function startPurchase(user, { listingId, address, acknowledged }) {
   rateLimit(`buy:${user.id}`, 12, 3600);
   await expireStaleCheckouts(); // free any expired holds first so a stale reservation can't block a real buyer
   const out = await tx(async () => {
-    const l = await q.get('SELECT * FROM listings WHERE id = ?', Number(listingId));
+    // lock the listing: concurrent purchases of the same item queue here, so the "already holds a reservation" check, the unit hold and the order insert are one atomic step
+    const l = await q.get('SELECT * FROM listings WHERE id = ? FOR UPDATE', Number(listingId));
     if (!l) throw new HttpError(404, 'Listing not found');
     if (l.seller_id === user.id) throw new HttpError(403, "You can't buy your own listing.");
     // retry/double-click: this buyer already holds a reservation on this listing
@@ -83,15 +84,15 @@ async function startPurchase(user, { listingId, address, acknowledged }) {
 
     const seller = p.seller, link = resolveLink(l), t = terms(l), tNow = now();
     const expires = tNow + (await getSettings()).external_hold_minutes * 60;
-    const ck = await q.run(`INSERT INTO checkouts(buyer_id, idempotency_key, total_cents, mode, ship_name, ship_line1, ship_line2, ship_city, ship_region, ship_postal, ship_country, expires_at, created_at)
+    const ck = await q.insert(`INSERT INTO checkouts(buyer_id, idempotency_key, total_cents, mode, ship_name, ship_line1, ship_line2, ship_city, ship_region, ship_postal, ship_country, expires_at, created_at)
       VALUES(?,?,?, 'external', ?,?,?,?,?,?,?,?,?)`, user.id, `ext-${randomUUID()}`, t.totalCents, addr.ship_name, addr.ship_line1, addr.ship_line2, addr.ship_city, addr.ship_region, addr.ship_postal, addr.ship_country, expires, tNow);
-    const checkoutId = Number(ck.lastInsertRowid);
+    const checkoutId = ck;
     // Reservation = conditional decrement of the listing's quantity inside a BEGIN IMMEDIATE transaction: exactly one buyer can win the last unit.
     if (!await INV.holdUnit(l.id)) throw new HttpError(409, 'This item was just taken by another buyer.');
     // PairPlug takes no fees and moves no money in this mode: fee/payout columns are zero by definition.
-    const o = await q.run(`INSERT INTO orders(checkout_id, buyer_id, seller_id, payment_mode, shipping_payer, subtotal_cents, shipping_cents, tax_cents, total_cents, fee_bps, platform_fee_cents, processing_fee_cents, seller_payout_cents, snapshot_json, created_at, updated_at)
+    const o = await q.insert(`INSERT INTO orders(checkout_id, buyer_id, seller_id, payment_mode, shipping_payer, subtotal_cents, shipping_cents, tax_cents, total_cents, fee_bps, platform_fee_cents, processing_fee_cents, seller_payout_cents, snapshot_json, created_at, updated_at)
       VALUES(?,?,?, 'external', ?, ?,?,0,?, 0,0,0,0, ?, ?,?)`, checkoutId, user.id, seller.id, t.shippingPayer, t.itemCents, t.shippingCents, t.totalCents, await snapshotOf(l, seller, link, t), tNow, tNow);
-    const orderId = Number(o.lastInsertRowid);
+    const orderId = o;
     await q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?, NULL, 'pending_payment', ?, 'Buyer started seller checkout (not paid)', ?)", orderId, `buyer:${user.id}`, tNow);
     await q.run('INSERT INTO order_items(order_id, listing_id, title, price_cents, cost_cents, image) SELECT ?, id, title, price_cents, cost_cents, (SELECT file FROM listing_images WHERE listing_id = listings.id ORDER BY position LIMIT 1) FROM listings WHERE id = ?', orderId, l.id);
     await INV.sync(l.id);                                                                  // now that the order exists, the legacy reserved_* markers can point at it
@@ -104,12 +105,12 @@ async function startPurchase(user, { listingId, address, acknowledged }) {
 }
 
 async function buyerOrder(user, orderId) {
-  const o = await q.get(`SELECT * FROM orders WHERE id = ? AND buyer_id = ? AND payment_mode = 'external'`, Number(orderId), user.id);
+  const o = await q.get(`SELECT * FROM orders WHERE id = ? AND buyer_id = ? AND payment_mode = 'external' FOR UPDATE`, Number(orderId), user.id);   // row lock (inside a tx): racing requests on one order queue and re-read
   if (!o) throw new HttpError(404, 'Order not found');
   return o;
 }
 async function sellerOrder(user, orderId) {
-  const o = await q.get(`SELECT * FROM orders WHERE id = ? AND seller_id = ? AND payment_mode = 'external'`, Number(orderId), user.id);
+  const o = await q.get(`SELECT * FROM orders WHERE id = ? AND seller_id = ? AND payment_mode = 'external' FOR UPDATE`, Number(orderId), user.id);
   if (!o) throw new HttpError(404, 'Order not found');
   return o;
 }
@@ -244,7 +245,7 @@ function shipInput(body) {
   if (Object.keys(f).length) throw new HttpError(422, 'Please fix the highlighted fields.', f);
   return { carrier, tracking, note };
 }
-const uniqueMsg = (e) => { if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; };
+const uniqueMsg = (e) => { if (isUnique(e)) throw new HttpError(409, 'That tracking number is already used on another order.'); throw e; };
 
 /** Mark a PAID order shipped. Idempotent for the same carrier+tracking; validates recipient, carrier and tracking; records history in order_events. */
 async function sellerShip(user, orderId, body = {}) {

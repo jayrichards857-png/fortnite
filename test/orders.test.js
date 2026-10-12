@@ -3,7 +3,6 @@
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { DatabaseSync } = require('node:sqlite');
 const H = require('./helpers');
 const { q } = require('../src/db');
 const config = require('../src/config');
@@ -113,8 +112,8 @@ test('duplicate confirmation / release requests (double clicks, retries, paralle
 
 test('orders persist: a fresh database connection and a fresh login still show them', async () => {
   const { seller, buyer, id } = await scene('Persistent jacket'), o = (await buy(buyer, id)).json.orderId; await seller.post(`/api/seller/orders/${o}/confirm-payment`);
-  const db = new DatabaseSync(process.env.PAIRPLUG_DB, { readOnly: true });
-  try { const r = db.prepare('SELECT status, payment_confirmed_by FROM orders WHERE id = ?').get(o); assert.equal(r.status, 'paid'); assert.ok(r.payment_confirmed_by); assert.equal(db.prepare("SELECT status FROM listings WHERE id = ?").get(id).status, 'sold'); } finally { db.close(); }
+  const { Client } = require('pg'); const fresh = new Client({ connectionString: process.env.DATABASE_URL }); await fresh.connect();     // a brand-new connection, not the app's pool
+  try { const r = (await fresh.query('SELECT status, payment_confirmed_by FROM orders WHERE id = $1', [o])).rows[0]; assert.equal(r.status, 'paid'); assert.ok(r.payment_confirmed_by); assert.equal((await fresh.query('SELECT status FROM listings WHERE id = $1', [id])).rows[0].status, 'sold'); } finally { await fresh.end(); }
   const again = new H.Client(); assert.equal((await again.post('/api/login', { email: seller.email, password: 'correct-horse-9' })).status, 200);
   assert.match((await sellerPage(again)).text, /Persistent jacket/);
   const b2 = new H.Client(); await b2.post('/api/login', { email: buyer.email, password: 'correct-horse-9' }); assert.match((await buyerPage(b2)).text, /Persistent jacket/);
@@ -141,6 +140,6 @@ test('migration 7 backfills who confirmed existing paid direct orders from their
   const who = (await row(o)).payment_confirmed_by; assert.ok(who);
   await q.run('UPDATE orders SET payment_confirmed_by = NULL WHERE id = ?', o);                          // simulate an order paid before the column existed
   const backfill = MIGRATIONS[6].split('\n').filter((l) => !/^ALTER TABLE/.test(l)).join('\n');   // the UPDATE part of migration 7
-  q.db ? q.db.exec(backfill) : require('../src/db').db.exec(backfill);
+  await q.run(backfill);
   assert.equal((await row(o)).payment_confirmed_by, who, 'restored from the order history'); void config;
 });

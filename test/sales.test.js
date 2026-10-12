@@ -143,22 +143,23 @@ test('corrections, tracking updates and voids are validated, logged and safe; a 
 });
 
 test('migration 9 shape: legacy columns preserved, active-sale uniqueness is per listing, history tables exist', async () => {
-  const cols = (await q.all('PRAGMA table_info(external_sales)')).map((c) => c.name); for (const c of ['listing_id', 'sold_on', 'price_cents', 'channel', 'reference', 'note', 'recorded_at', 'origin', 'payment_status', 'fulfillment', 'recipient_name', 'tracking_number', 'voided_at']) assert.ok(cols.includes(c), c);
-  assert.ok(await q.get("SELECT 1 x FROM sqlite_master WHERE name = 'idx_external_sales_listing_active'")); assert.ok(!await q.get("SELECT 1 x FROM sqlite_master WHERE name = 'idx_external_sales_listing'")); assert.ok(await q.get("SELECT 1 x FROM sqlite_master WHERE name = 'sale_events'"));
+  const cols = (await q.all("SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'external_sales'")).map((c) => c.name); for (const c of ['listing_id', 'sold_on', 'price_cents', 'channel', 'reference', 'note', 'recorded_at', 'origin', 'payment_status', 'fulfillment', 'recipient_name', 'tracking_number', 'voided_at']) assert.ok(cols.includes(c), c);
+  const idx = async (n) => await q.get('SELECT 1 x FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?', n);
+  assert.ok(await idx('idx_external_sales_listing_active')); assert.ok(!await idx('idx_external_sales_listing')); assert.ok(await q.get("SELECT 1 x FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'sale_events'"));
 });
 
-test('migration 9 applied to a populated v8 database keeps every existing external-sale row exactly as it was', () => {
-  const { DatabaseSync } = require('node:sqlite'); const { MIGRATIONS } = require('../src/db');
-  const db = new DatabaseSync(':memory:'); for (let i = 0; i < 8; i++) db.exec(MIGRATIONS[i]);
-  db.exec("INSERT INTO users(id, email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES (1,'s@x.test','h','S',1,'s','Store','US',1700000000)");
-  db.exec("INSERT INTO listings(id, seller_id, title, category, price_cents, shipping_cents, status, created_at, updated_at) VALUES (1,1,'Old sold hoodie','clothing',9000,0,'sold',1700000000,1700000000)");
-  db.exec("INSERT INTO external_sales(listing_id, seller_id, sold_on, price_cents, channel, reference, note, recorded_at) VALUES (1,1,'2026-09-01',5000,'Depop','OLD-1','old note',1700000001)");
-  const before = db.prepare('SELECT id, listing_id, seller_id, sold_on, price_cents, channel, reference, note, recorded_at FROM external_sales').get();
-  db.exec(MIGRATIONS[8]);
-  const after = db.prepare('SELECT * FROM external_sales').get();
-  for (const k of Object.keys(before)) assert.equal(after[k], before[k], k);
-  assert.deepEqual([after.origin, after.payment_status, after.fulfillment, after.shipment_status, after.voided_at], [null, 'unconfirmed', null, null, null], 'legacy meaning is not relabelled');
-  assert.throws(() => db.exec("DELETE FROM external_sales"), /cannot be deleted/); assert.throws(() => db.exec("UPDATE external_sales SET origin = 'other'"), /cannot be changed/);
-  db.exec("UPDATE external_sales SET note = 'edited'");                                       // ordinary corrections are now possible (and are logged by the app)
-  db.close();
+test('migration 9 applied to a populated v8 database keeps every existing external-sale row exactly as it was', async () => {
+  const { dbAt } = require('./pgmig'); const db = await dbAt(8);
+  try {
+    await db.run("INSERT INTO users(id, email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES (1,'s@x.test','h','S',1,'s','Store','US',1700000000)");
+    await db.run("INSERT INTO listings(id, seller_id, title, category, price_cents, shipping_cents, status, created_at, updated_at) VALUES (1,1,'Old sold hoodie','clothing',9000,0,'sold',1700000000,1700000000)");
+    await db.run("INSERT INTO external_sales(listing_id, seller_id, sold_on, price_cents, channel, reference, note, recorded_at) VALUES (1,1,'2026-09-01',5000,'Depop','OLD-1','old note',1700000001)");
+    const before = await db.one('SELECT id, listing_id, seller_id, sold_on, price_cents, channel, reference, note, recorded_at FROM external_sales');
+    await db.applyNext();
+    const after = await db.one('SELECT * FROM external_sales');
+    for (const k of Object.keys(before)) assert.equal(after[k], before[k], k);
+    assert.deepEqual([after.origin, after.payment_status, after.fulfillment, after.shipment_status, after.voided_at], [null, 'unconfirmed', null, null, null], 'legacy meaning is not relabelled');
+    await assert.rejects(db.run('DELETE FROM external_sales'), /cannot be deleted/); await assert.rejects(db.run("UPDATE external_sales SET origin = 'other'"), /cannot be changed/);
+    await db.run("UPDATE external_sales SET note = 'edited'");                                       // ordinary corrections are now possible (and are logged by the app)
+  } finally { await db.close(); }
 });

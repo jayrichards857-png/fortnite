@@ -93,13 +93,14 @@ test('a reported order is preserved as a frozen, staff-only record; messages sta
   const msgsBefore = (await q.get('SELECT COUNT(*) n FROM messages')).n; await adm.post(`/api/admin/cases/${cid}/action`, { action: 'suspend_seller', reason: 'Confirmed non-delivery' }); assert.equal((await q.get('SELECT COUNT(*) n FROM messages')).n, msgsBefore); assert.equal((await q.get('SELECT COUNT(*) n FROM case_records WHERE case_id = ?', cid)).n, 1);
 });
 
-test('the future payment-protection design is documented as design-only, makes no unsupported claims, and migration 15 is additive', () => {
+test('the future payment-protection design is documented as design-only, makes no unsupported claims, and migration 15 is additive', async () => {
   const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'PAYMENT_PROTECTION_DESIGN.md'), 'utf8');
   for (const h of ['DESIGN ONLY', 'Stripe Connect', 'merchant of record', 'delayed payouts', 'Reserves', 'onboarding', 'Fees', 'already been paid out', 'verify']) assert.ok(doc.toLowerCase().includes(h.toLowerCase()), h);
   assert.match(doc, /Do not say PairPlug can freeze funds/); assert.match(doc, /No code in this repository calls any provider's Connect, transfer, payout or refund API/);
   const pay = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments.js'), 'utf8'); assert.ok(!/accounts\.create|transfers\.create|payouts\.create|\/v1\/transfers|\/v1\/accounts/.test(pay), 'no Connect/transfer/payout calls exist in the payment code');
-  const { DatabaseSync } = require('node:sqlite'), { MIGRATIONS } = require('../src/db'); assert.ok(MIGRATIONS.length >= 15);
-  const d = new DatabaseSync(':memory:'); for (let i = 0; i < 14; i++) d.exec(MIGRATIONS[i]);
-  d.prepare('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)').run('a@x.test', 'x', 'A', 1); d.exec(MIGRATIONS[14]);
-  assert.equal(d.prepare('SELECT COUNT(*) n FROM users').get().n, 1); assert.equal(d.prepare('SELECT COUNT(*) n FROM case_records').get().n, 0); d.close();
+  const { dbAt } = require('./pgmig'); const d = await dbAt(14);
+  try {
+    await d.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', 'a@x.test', 'x', 'A', 1); await d.applyNext();
+    assert.equal(Number((await d.one('SELECT COUNT(*) n FROM users')).n), 1); assert.equal(Number((await d.one('SELECT COUNT(*) n FROM case_records')).n), 0);
+  } finally { await d.close(); }
 });

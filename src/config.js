@@ -33,6 +33,19 @@ module.exports = {
   envProblems,
   // Production listens on loopback only (the reverse proxy is the public entry point). Set HOST=0.0.0.0 deliberately if needed.
   host: val('HOST') || (isProd ? '127.0.0.1' : '0.0.0.0'),
+  // PostgreSQL (the application database). DATABASE_URL is required; there is no file fallback any more.
+  db: {
+    url: val('DATABASE_URL'),
+    poolMax: Number(env.PGPOOL_MAX || 10),
+    connectTimeoutMs: Number(env.PG_CONNECT_TIMEOUT_MS || 5000),
+    idleTimeoutMs: Number(env.PG_IDLE_TIMEOUT_MS || 30000),
+    statementTimeoutMs: Number(env.PG_STATEMENT_TIMEOUT_MS || 20000),
+    // DATABASE_SSL=1 turns on TLS with certificate verification (managed databases); DATABASE_SSL_CA=/path/ca.pem pins a CA.
+    ssl: ['1', 'true', 'require'].includes(val('DATABASE_SSL').toLowerCase())
+      ? { rejectUnauthorized: true, ...(val('DATABASE_SSL_CA') ? { ca: require('node:fs').readFileSync(val('DATABASE_SSL_CA'), 'utf8') } : {}) }
+      : undefined,
+  },
+  // LEGACY: the old SQLite file. Only the one-off importer (scripts/sqlite-to-pg.js) reads it, never the running app.
   dbFile: env.PAIRPLUG_DB || path.join(root, 'data', 'pairplug.db'),
   uploadDir: env.PAIRPLUG_UPLOADS || path.join(root, 'data', 'uploads'),
   publicUrl: env.PUBLIC_URL || `http://localhost:${env.PORT || 3000}`,

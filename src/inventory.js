@@ -12,7 +12,7 @@ const pendingFor = async (listingId) => await q.all(`SELECT o.id, o.checkout_id,
 
 /** Bring status (and the legacy reserved_* markers) in line with quantity and pending reservations. Only touches active/reserved/sold listings. */
 async function sync(listingId) {
-  const l = await q.get('SELECT id, status, quantity FROM listings WHERE id = ?', Number(listingId));
+  const l = await q.get('SELECT id, status, quantity FROM listings WHERE id = ? FOR UPDATE', Number(listingId));      // lock: status is derived from quantity + pending reservations
   if (!l || !['active', 'reserved', 'sold'].includes(l.status)) return null;
   let status;
   if (l.quantity > 0) status = 'active';
@@ -30,7 +30,7 @@ async function holdUnit(listingId) {
 }
 /** Give one unit back (after a reservation ends without a sale, or an item is restocked). */
 async function returnUnit(listingId, n = 1) {
-  await q.run('UPDATE listings SET quantity = MIN(999, quantity + ?) WHERE id = ?', n, Number(listingId));
+  await q.run('UPDATE listings SET quantity = LEAST(999, quantity + ?) WHERE id = ?', n, Number(listingId));
   await sync(listingId);
 }
 /** Release every unit held by an external checkout (cancel, reject, expiry). Call once per ended reservation, inside a transaction. */

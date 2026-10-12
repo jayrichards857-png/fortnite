@@ -57,7 +57,7 @@ async function wallet(userId) {
 
 async function salesByDay(sellerId, days = 30) {
   const since = Math.floor(Date.now() / 1000) - days * 86400;
-  const rows = await q.all(`SELECT date(paid_at, 'unixepoch') d, COUNT(*) orders, SUM(subtotal_cents) gross FROM orders
+  const rows = await q.all(`SELECT to_char(to_timestamp(paid_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') d, COUNT(*) orders, SUM(subtotal_cents) gross FROM orders
     WHERE seller_id = ? AND paid_at >= ? AND status IN ${COUNTED} GROUP BY d ORDER BY d`, sellerId, since);
   const map = Object.fromEntries(rows.map((r) => [r.d, r]));
   const out = [];
@@ -76,15 +76,15 @@ async function analytics(sellerId) {
       COUNT(*) FILTER (WHERE age < 7) d7, COUNT(*) FILTER (WHERE age >= 7 AND age < 30) d30,
       COUNT(*) FILTER (WHERE age >= 30 AND age < 90) d90, COUNT(*) FILTER (WHERE age >= 90) d90p,
       COALESCE(SUM(price_cents),0) value
-    FROM (SELECT price_cents, (strftime('%s','now') - published_at) / 86400 AS age FROM listings WHERE seller_id = ? AND status = 'active' AND published_at IS NOT NULL)`, sellerId);
+    FROM (SELECT price_cents, (CAST(EXTRACT(EPOCH FROM now()) AS BIGINT) - published_at) / 86400 AS age FROM listings WHERE seller_id = ? AND status = 'active' AND published_at IS NOT NULL)`, sellerId);
   const itemProfit = await q.all(`SELECT oi.listing_id, oi.title, oi.price_cents, oi.cost_cents, o.id order_id, o.paid_at
       FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.seller_id = ? AND o.status IN ${COUNTED} AND oi.cost_cents IS NOT NULL
-      ORDER BY o.paid_at DESC LIMIT 25`, sellerId);
+      ORDER BY o.paid_at DESC NULLS LAST LIMIT 25`, sellerId);
   return { overview: ov, days: await salesByDay(sellerId), itemsSold: items, orders: all.n, gross: all.gross, aov: all.n ? Math.round(all.gross / all.n) : 0, aging, itemProfit };
 }
 
 async function monthlyTax(sellerId) {
-  return await q.all(`SELECT strftime('%Y-%m', released_at, 'unixepoch') month, COUNT(*) orders,
+  return await q.all(`SELECT to_char(to_timestamp(released_at) AT TIME ZONE 'UTC', 'YYYY-MM') AS month, COUNT(*) orders,
       SUM(subtotal_cents) gross, SUM(shipping_cents) shipping, SUM(tax_cents) tax,
       SUM(platform_fee_cents + processing_fee_cents) fees, SUM(seller_payout_cents) net
     FROM orders WHERE seller_id = ? AND status = 'released' GROUP BY month ORDER BY month DESC`, sellerId);

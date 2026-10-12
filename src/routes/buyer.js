@@ -188,8 +188,8 @@ r.post('/api/register', wrap(async (req, res) => {
   if (req.body.terms !== true) fields.terms = 'Please accept the Terms of Service and Privacy Policy to create an account.';
   if (!fields.email && await q.get('SELECT 1 x FROM users WHERE email = ?', email)) fields.email = 'An account with this email already exists.';
   if (Object.keys(fields).length) throw new HttpError(422, 'Please fix the highlighted fields.', fields);
-  const u = await q.run('INSERT INTO users(email, password_hash, display_name, created_at, terms_version, terms_accepted_at) VALUES(?,?,?,?,?,?)', email, auth.hashPassword(pw), name, now(), LEGAL.VERSION, now());
-  await auth.createSession(res, Number(u.lastInsertRowid));
+  const u = await q.insert('INSERT INTO users(email, password_hash, display_name, created_at, terms_version, terms_accepted_at) VALUES(?,?,?,?,?,?)', email, auth.hashPassword(pw), name, now(), LEGAL.VERSION, now());
+  await auth.createSession(res, u);
   res.json({ ok: true, redirect: safeNext(req.body.next) });
 }));
 r.post('/api/login', wrap(async (req, res) => {
@@ -234,7 +234,7 @@ r.get('/favorites', auth.requireUser, async (req, res) => {
 r.put('/api/favorites/:id', auth.requireUser, async (req, res) => {
   const l = await q.get("SELECT id FROM listings WHERE id = ? AND status IN ('active','reserved','sold')", Number(req.params.id));
   if (!l) throw new HttpError(404, 'Listing not found');
-  await q.run('INSERT OR IGNORE INTO favorites(user_id, listing_id, created_at) VALUES(?,?,?)', req.user.id, l.id, now());
+  await q.run('INSERT INTO favorites(user_id, listing_id, created_at) VALUES(?,?,?) ON CONFLICT DO NOTHING', req.user.id, l.id, now());
   res.json({ ok: true });
 });
 r.delete('/api/favorites/:id', auth.requireUser, async (req, res) => { await q.run('DELETE FROM favorites WHERE user_id = ? AND listing_id = ?', req.user.id, Number(req.params.id)); res.json({ ok: true }); });
@@ -392,8 +392,8 @@ r.post('/api/orders/:id(\\d+)/dispute', auth.requireUser, async (req, res) => {
     if (o.payment_mode === 'external') throw new HttpError(409, 'This order was paid directly to the seller. Message the seller about problems; refunds and payment disputes are handled by the seller and their payment provider.');
     if (await q.get('SELECT 1 x FROM disputes WHERE order_id = ?', o.id)) throw new HttpError(409, 'A dispute is already open for this order.');
     await transition(o.id, 'disputed', { actor: `buyer:${req.user.id}`, note: reason.slice(0, 120), set: { auto_release_at: null } });
-    const d = await q.run('INSERT INTO disputes(order_id, opened_by, reason, created_at) VALUES(?,?,?,?)', o.id, req.user.id, reason, now());
-    for (const f of images) await q.run("INSERT INTO dispute_evidence(dispute_id, user_id, party, image, created_at) VALUES(?,?, 'buyer', ?, ?)", d.lastInsertRowid, req.user.id, f, now());
+    const d = await q.insert('INSERT INTO disputes(order_id, opened_by, reason, created_at) VALUES(?,?,?,?)', o.id, req.user.id, reason, now());
+    for (const f of images) await q.run("INSERT INTO dispute_evidence(dispute_id, user_id, party, image, created_at) VALUES(?,?, 'buyer', ?, ?)", d, req.user.id, f, now());
     await notify(o.seller_id, `order:${o.id}:disputed`, 'Dispute opened', `The buyer opened a dispute on order #${o.id}. Add your evidence.`, `/orders/${o.id}`);
   });
   res.json({ ok: true });

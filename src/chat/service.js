@@ -37,13 +37,13 @@ async function startConversation(user, arg) {
     if (!l || !['active', 'reserved', 'sold'].includes(l.status) || l.banned || !l.is_seller) throw new HttpError(404, 'Listing not found');
     sellerId = l.seller_id; listingId = l.id;
   } else if (input.sellerHandle) {
-    const sel = await q.get('SELECT id, banned, is_seller FROM users WHERE handle = ? COLLATE NOCASE', String(input.sellerHandle).slice(0, 40));
+    const sel = await q.get('SELECT id, banned, is_seller FROM users WHERE handle = ?', String(input.sellerHandle).slice(0, 40));
     if (!sel || !sel.is_seller || sel.banned) throw new HttpError(404, 'Seller not found');
     sellerId = sel.id;
   } else throw new HttpError(400, 'Choose a listing or a seller to contact.');
   if (sellerId === user.id) throw new HttpError(403, "You can't message yourself.");
   return await tx(async () => {
-    await q.run('INSERT OR IGNORE INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES(?,?,?,?)', user.id, sellerId, listingId, now());
+    await q.run('INSERT INTO conversations(buyer_id, seller_id, listing_id, created_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING', user.id, sellerId, listingId, now());
     // an existing conversation keeps its history; a listing-based contact just moves the listing context
     if (listingId) await q.run('UPDATE conversations SET listing_id = ? WHERE buyer_id = ? AND seller_id = ?', listingId, user.id, sellerId);
     return (await q.get('SELECT * FROM conversations WHERE buyer_id = ? AND seller_id = ?', user.id, sellerId)).id;
@@ -77,14 +77,14 @@ async function sendMessage(user, { conversationId, clientId, body }) {
   let msg, duplicate = false;
   await tx(async () => {
     const t = now();
-    const r = await q.run('INSERT INTO messages(conversation_id, sender_id, body, client_id, listing_id, created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(conversation_id, sender_id, client_id) DO NOTHING',
+    const r = await q.insert('INSERT INTO messages(conversation_id, sender_id, body, client_id, listing_id, created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(conversation_id, sender_id, client_id) DO NOTHING',
       c.id, user.id, text, clientId, c.listing_id, t);
-    if (r.changes === 0) { duplicate = true; msg = await q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId); return; }
-    msg = await q.get('SELECT * FROM messages WHERE id = ?', r.lastInsertRowid);
+    if (r == null) { duplicate = true; msg = await q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId); return; }
+    msg = await q.get('SELECT * FROM messages WHERE id = ?', r);
     await q.run('UPDATE conversations SET last_message_at = ? WHERE id = ?', t, c.id);
     // sending implies you've read everything up to your own message
     await q.run(`INSERT INTO conversation_reads(conversation_id, user_id, last_read_message_id, updated_at) VALUES(?,?,?,?)
-           ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_message_id = MAX(last_read_message_id, excluded.last_read_message_id), updated_at = excluded.updated_at`, c.id, user.id, msg.id, t);
+           ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_message_id = GREATEST(conversation_reads.last_read_message_id, excluded.last_read_message_id), updated_at = excluded.updated_at`, c.id, user.id, msg.id, t);
   });
   const out = present(msg);
   if (!duplicate) {
@@ -101,7 +101,7 @@ async function markRead(user, { conversationId, upTo }) {
   const max = (await q.get('SELECT COALESCE(MAX(id), 0) m FROM messages WHERE conversation_id = ?', c.id)).m;
   const target = Math.min(Math.max(0, Math.floor(Number(upTo) || 0)), max);
   await q.run(`INSERT INTO conversation_reads(conversation_id, user_id, last_read_message_id, updated_at) VALUES(?,?,?,?)
-         ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_message_id = MAX(last_read_message_id, excluded.last_read_message_id), updated_at = excluded.updated_at`, c.id, user.id, target, now());
+         ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_message_id = GREATEST(conversation_reads.last_read_message_id, excluded.last_read_message_id), updated_at = excluded.updated_at`, c.id, user.id, target, now());
   const readUpTo = (await q.get('SELECT last_read_message_id r FROM conversation_reads WHERE conversation_id = ? AND user_id = ?', c.id, user.id)).r;
   const ev = { t: 'read', conversationId: c.id, userId: user.id, upTo: readUpTo };
   getHub().publish(other(c, user.id), ev); getHub().publish(user.id, ev);
