@@ -14,7 +14,7 @@ test.after(() => H.stop());
 const sellerCount = () => q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1').n;
 const insertUser = (email, isSeller = 0, handle = null) => q.run('INSERT INTO users(email, password_hash, display_name, is_seller, handle, created_at) VALUES(?,?,?,?,?,1700000000)', email, 'x', 'T', isSeller, handle);
 async function admin() { const a = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; }
-const body = (over = {}) => ({ display_name: 'Invited Person', password: 'a-long-password-1', store_name: 'Store', handle: 'h' + Math.random().toString(36).slice(2, 10), country: 'US', region: 'NY', city: 'Brooklyn', agree: true, ...over });
+const body = (over = {}) => ({ display_name: 'Invited Person', password: 'a-long-password-1', store_name: 'Store', handle: 'h' + Math.random().toString(36).slice(2, 10), country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true, ...over });
 const tokenOf = (link) => link.split('/').pop();
 async function invite(adm, kind, email) { return adm.post('/api/admin/invitations', { kind, email }); }
 
@@ -112,7 +112,7 @@ test('race: 8 simultaneous attempts to become the last seller yield exactly one;
   const prev = config.sellerOnboarding; config.sellerOnboarding = 'open';                 // the open path exists only in dev/test; the cap is the same trigger
   try {
     const users = await Promise.all(Array.from({ length: 8 }, () => H.newUser('Racer')));
-    const rs = await Promise.all(users.map((u, i) => u.post('/api/sell/onboard', { store_name: 'R' + i, handle: 'race' + i + Date.now() % 1000, country: 'US', region: 'NY', city: 'B', agree: true })));
+    const rs = await Promise.all(users.map((u, i) => u.post('/api/sell/onboard', { store_name: 'R' + i, handle: 'race' + i + Date.now() % 1000, country: 'US', region: 'NY', city: 'B', agree: true, terms: true })));
     assert.equal(rs.filter((r) => r.status === 200).length, 1, JSON.stringify(rs.map((r) => r.status)));
     assert.equal(rs.filter((r) => r.status === 409).length, 7);
   } finally { config.sellerOnboarding = prev; }
@@ -141,18 +141,18 @@ test('buyers register without consuming slots; admins cannot create sellers by a
   const before = sellerCount();
   const adm = await admin(), made = await invite(adm, 'buyer', 'newbuyer@x.test');
   const c = new H.Client();
-  assert.equal((await c.post('/api/invitations/accept', { token: tokenOf(made.json.link), display_name: 'Buyer', password: 'a-long-password-1', is_seller: 1, is_admin: 1, store_name: 'X', handle: 'xx' })).status, 200);
+  assert.equal((await c.post('/api/invitations/accept', { token: tokenOf(made.json.link), display_name: 'Buyer', password: 'a-long-password-1', terms: true, is_seller: 1, is_admin: 1, store_name: 'X', handle: 'xx' })).status, 200);
   const u = q.get("SELECT is_seller, is_admin FROM users WHERE email = 'newbuyer@x.test'"); assert.deepEqual({ ...u }, { is_seller: 0, is_admin: 0 });
   assert.equal(sellerCount(), before);
   // self-registration in open mode can't smuggle roles either
-  const reg = new H.Client(); await reg.post('/api/register', { email: 'sneaky@x.test', display_name: 'Sneaky', password: 'a-long-password-1', is_seller: 1, is_admin: 1, role: 'admin' });
+  const reg = new H.Client(); await reg.post('/api/register', { email: 'sneaky@x.test', display_name: 'Sneaky', terms: true, password: 'a-long-password-1', is_seller: 1, is_admin: 1, role: 'admin' });
   assert.deepEqual({ ...q.get("SELECT is_seller, is_admin FROM users WHERE email = 'sneaky@x.test'") }, { is_seller: 0, is_admin: 0 });
   // profile/account endpoints ignore role fields; admin and seller APIs refuse a buyer
   await reg.req('PATCH', '/api/account', { display_name: 'Sneaky', is_admin: 1, is_seller: 1, banned: 0 });
   assert.deepEqual({ ...q.get("SELECT is_seller, is_admin FROM users WHERE email = 'sneaky@x.test'") }, { is_seller: 0, is_admin: 0 });
   for (const [m, u] of [['post', '/api/admin/invitations'], ['post', '/api/admin/users/1/ban'], ['put', '/api/admin/settings'], ['post', '/api/seller/listings'], ['put', '/api/seller/settings']]) assert.equal((await reg[m](u, {})).status, 403, u);
   const prevO = config.sellerOnboarding; config.sellerOnboarding = 'invite';
-  try { assert.equal((await reg.post('/api/sell/onboard', { store_name: 'S', handle: 'sneakyshop', country: 'US', region: 'NY', city: 'B', agree: true })).status, 403, 'a buyer cannot open a store without an invitation'); }
+  try { assert.equal((await reg.post('/api/sell/onboard', { store_name: 'S', handle: 'sneakyshop', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403, 'a buyer cannot open a store without an invitation'); }
   finally { config.sellerOnboarding = prevO; }
   // existing buyer upgraded through a seller invitation only when logged in as that account
   q.run("UPDATE users SET is_seller = 0 WHERE email LIKE 'fill%'");
@@ -172,7 +172,7 @@ test('Coming soon: closed sign-ups show the release date, create nothing, but lo
     const anon = new H.Client(), before = q.get('SELECT COUNT(*) n FROM users').n;
     const reg = await anon.get('/register'); assert.equal(reg.status, 200);
     assert.match(reg.text, /Coming soon/i); assert.match(reg.text, /Selling available <strong>November 1, 2026<\/strong>/);
-    const api = await anon.post('/api/register', { email: 'closed@x.test', display_name: 'Closed', password: 'a-long-password-1' });
+    const api = await anon.post('/api/register', { email: 'closed@x.test', display_name: 'Closed', terms: true, password: 'a-long-password-1' });
     assert.equal(api.status, 403); assert.match(api.json.error, /paused/i);
     assert.equal(q.get('SELECT COUNT(*) n FROM users').n, before); assert.equal(q.get("SELECT COUNT(*) n FROM users WHERE email = 'closed@x.test'").n, 0);
     const sell = await anon.get('/sell'); assert.match(sell.text, /Coming soon/i); assert.match(sell.text, /November 1, 2026/);
@@ -181,7 +181,7 @@ test('Coming soon: closed sign-ups show the release date, create nothing, but lo
     const existing = q.get("SELECT email FROM users WHERE email = 'newbuyer@x.test'");
     assert.equal((await anon.post('/api/login', { email: existing.email, password: 'a-long-password-1' })).status, 200);
     assert.match((await anon.get('/sell')).text, /Coming soon/i);
-    assert.equal((await anon.post('/api/sell/onboard', { store_name: 'S', handle: 'nopeshop', country: 'US', region: 'NY', city: 'B', agree: true })).status, 403);
+    assert.equal((await anon.post('/api/sell/onboard', { store_name: 'S', handle: 'nopeshop', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403);
     // without a configured date we say "very soon" instead of inventing one
     config.releaseDate = ''; assert.match((await new H.Client().get('/register')).text, /Selling opens very soon/);
   } finally { config.signups = prevS; config.releaseDate = prevD; config.sellerOnboarding = prevO; }

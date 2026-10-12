@@ -41,7 +41,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     const v = await mk(); await v.pg.goto(B + '/register');
     let t = await v.pg.textContent('body'); assert.match(t, /Coming soon/i); assert.match(t, /November 1, 2026|2026-11-01|Nov(ember)? 1/i, 'release date shown'); assert.equal(await v.pg.locator('input[type=password]').count(), 0, 'no sign-up form');
     await v.pg.goto(B + '/sell'); assert.match(await v.pg.textContent('body'), /Coming soon/i); await shot(v.pg, 'final-01-coming-soon.png');
-    assert.equal((await api(v.ctx, 'POST', '/api/register', { email: 'x@x.test', display_name: 'X', password: 'a-long-password-1' })).status, 403);
+    assert.equal((await api(v.ctx, 'POST', '/api/register', { email: 'x@x.test', display_name: 'X', terms: true, password: 'a-long-password-1' })).status, 403);
     assert.notEqual((await api(v.ctx, 'POST', '/api/sell/onboard', { store_name: 'X', handle: 'xxx' })).status, 200);
     // Sell link from the real navigation, desktop + phone width, and the auth screens
     await v.pg.goto(B + '/shop'); await Promise.all([v.pg.waitForURL(B + '/sell'), v.pg.click('nav.nav a[href="/sell"]')]);
@@ -67,7 +67,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     for (const key of ['s1', 's2', 's3']) {
       const s = await mk(); sellers[key] = s; await s.pg.goto(links[key].replace(/^https?:\/\/[^/]+/, B));
       await s.pg.fill('#n', `Seller ${key}`); await s.pg.fill('#p', 'a-long-password-1'); await s.pg.fill('#sn', `Store ${key}`); await s.pg.fill('#sh', `store-${key}`);
-      await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); await s.pg.check('input[name=agree]');
+      await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); if (await s.pg.$('input[name=terms]')) await s.pg.check('input[name=terms]'); await s.pg.check('input[name=agree]');
       await Promise.all([s.pg.waitForURL(B + '/account'), s.pg.click('button[type=submit]')]);
     }
     assert.match(await sellers.s1.pg.textContent('body'), /verify/i, 'unverified banner / prompt shown');
@@ -83,8 +83,8 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
 
     // ---- 4. 4th seller race: a 4th invitation cannot be created, and a direct onboarding POST by a buyer fails
     const b = await mk(); await b.pg.goto(links.buyer.replace(/^https?:\/\/[^/]+/, B));
-    await b.pg.fill('#n', 'Bea Buyer'); await b.pg.fill('#p', 'a-long-password-2'); await Promise.all([b.pg.waitForURL(B + '/account'), b.pg.click('button[type=submit]')]);
-    const race = await Promise.all(Array.from({ length: 5 }, () => api(b.ctx, 'POST', '/api/sell/onboard', { store_name: 'Sneaky', handle: 'sneaky', country: 'US', region: 'OR', city: 'Portland', agree: true })));
+    await b.pg.fill('#n', 'Bea Buyer'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]'); await Promise.all([b.pg.waitForURL(B + '/account'), b.pg.click('button[type=submit]')]);
+    const race = await Promise.all(Array.from({ length: 5 }, () => api(b.ctx, 'POST', '/api/sell/onboard', { store_name: 'Sneaky', handle: 'sneaky', country: 'US', region: 'OR', city: 'Portland', agree: true, terms: true })));
     assert.ok(race.every((r) => r.status === 403), 'closed onboarding: ' + JSON.stringify(race.map((r) => r.status)));
     step('4. concurrent self-onboarding attempts by a buyer all refused (cap + closed onboarding)');
 
@@ -167,10 +167,10 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
 
     // ---- 11. mobile: key pages have no horizontal overflow
     const m = await mk({ width: 375, height: 760 }); await login(m.pg, 'buyer@example.test', 'a-long-password-2');
-    for (const p of ['/', '/sellers', '/following', '/shop', `/listing/${l2}`, '/s/store-s1', '/messages', `/orders/${orderId}`, '/support', '/account']) {
+    for (const p of ['/', '/sellers', '/following', '/shop', `/listing/${l2}`, '/s/store-s1', '/messages', `/orders/${orderId}`, '/support', '/account', '/legal', '/terms', '/privacy', '/payments', '/rules']) {
       await m.pg.goto(B + p); const over = await m.pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth); assert.ok(over <= 1, `${p} overflows by ${over}px`);
     }
-    await shot(m.pg, 'final-11-mobile-store.png'); step('11. mobile layout (375px): no horizontal overflow on 8 key pages');
+    await shot(m.pg, 'final-11-mobile-store.png'); step('11. mobile layout (375px): no horizontal overflow on key pages incl. legal pages');
 
     assert.deepEqual(errors, [], 'no uncaught page errors: ' + errors.join('; '));
     console.log('\nBROWSER FINAL JOURNEY PASSED');

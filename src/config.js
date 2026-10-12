@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
 // values fall back to the *restrictive* setting, and every problem is reported (production refuses to start; see server.js).
 const envProblems = [];
 const val = (k) => String(env[k] ?? '').trim();
-for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'SHIPPO_API_KEY', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
+for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'LEGAL_ENTITY', 'LEGAL_ADDRESS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'SHIPPO_API_KEY', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
   if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
 if (val('SHIPPO_API_KEY') && !/^shippo_(test|live)_\S+$/.test(val('SHIPPO_API_KEY'))) envProblems.push('SHIPPO_API_KEY must start with shippo_test_ (live keys are refused in this release)');
 const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
@@ -60,6 +60,8 @@ module.exports = {
   sellerOnboardingRequested: onboardingRaw,
   // Public BUYER account creation (never grants seller/admin). 'closed' hides it and shows "Coming soon"; default is open.
   signups: signupsRaw === 'closed' ? 'closed' : signupsRaw === 'open' || signupsRaw === '' ? 'open' : 'closed',   // buyer sign-up is open by default (creates buyer accounts only); 'closed' hides it
+  // Optional business identity shown on the legal pages. Never invented: empty means the pages say these details are not published yet.
+  legalEntity: val('LEGAL_ENTITY').slice(0, 120), legalAddress: val('LEGAL_ADDRESS').slice(0, 240),
   releaseDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) ? releaseRaw : '',
   inviteTtlHours: 168,
   supportEmail: /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(val('SUPPORT_EMAIL') || '') ? val('SUPPORT_EMAIL') : '',

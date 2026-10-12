@@ -19,6 +19,7 @@ const { resolveLink } = require('../paymentLinks');
 const r = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const D = require('../discovery');
+const LEGAL = require('../legal');
 const favSet = (user) => new Set(user ? q.all('SELECT listing_id FROM favorites WHERE user_id = ?', user.id).map((f) => f.listing_id) : []);
 const page = (req, res, opts) => res.send(V.layout({ user: req.user, path: req.path, ...opts }));
 const stars = (n) => `<span class="stars" aria-label="${n} out of 5">${'★'.repeat(Math.round(n))}${'☆'.repeat(5 - Math.round(n))}</span>`;
@@ -30,7 +31,7 @@ r.get('/', (req, res) => {
   const latest = L.searchListings({ sort: 'newest' }).items.slice(0, 12);
   const cats = L.facets().categories;
   const disc = D.withPreviews(D.discoverSellers({ per: 8 }).items), fol = D.followedSet(req.user);
-  const sellerStrip = disc.length ? `<section class="discover" aria-labelledby="disc-h"><div class="sechead"><h2 id="disc-h">Discover Sellers</h2><a href="/sellers" class="small">View all sellers →</a></div><p class="muted small" style="margin:-6px 0 10px">Real stores with items available now, most recently listed first.</p>
+  const sellerStrip = disc.length ? `<section class="discover" aria-labelledby="disc-h"><div class="sechead"><h2 id="disc-h">Discover Sellers</h2><a href="/sellers" class="small">View all sellers →</a></div><p class="muted small" style="margin:-6px 0 10px">Real stores, most recently listed first.</p>
     <div class="scroller" role="list">${disc.map((s) => `<div role="listitem" class="scroller-item">${D.sellerCard(s, { following: fol, user: req.user })}</div>`).join('')}</div></section>` : '';
   const body = `<section class="hero"><h1>Discover secondhand finds <em>and</em> the people selling them.</h1><p class="hero-sub">Shop one-of-a-kind pieces, then follow the sellers you love.</p>
     <form action="/shop" role="search"><label class="sr" for="hq2">Search listings</label><input id="hq2" name="q" type="search" placeholder="Search brand, item or size"><button class="btn">Search</button></form></section>
@@ -149,7 +150,7 @@ r.get('/s/:handle', (req, res) => {
     <div class="muted small">@${esc(s.handle)} · ${esc(place(s))} ${isLocalShip(s.country) ? '<span class="badge-local">Local ship</span>' : ''}</div>
     <div class="small">${rate.n ? `${stars(rate.avg)} ${rate.avg.toFixed(1)} (${rate.n})` : '<span class="muted">No reviews yet</span>'} · ${sold} completed sale${sold === 1 ? '' : 's'}</div></div></div>
     ${s.bio ? `<p>${esc(s.bio)}</p>` : ''}<h2>Available (${result.total})</h2>
-    ${result.items.length ? V.grid(result.items, { favs: favSet(req.user) }) + V.pager(result.page, result.pages, {}) : V.empty('Nothing listed right now', 'This seller has no available items at the moment.')}
+    ${result.items.length ? V.grid(result.items, { favs: favSet(req.user) }) + V.pager(result.page, result.pages, {}) : V.empty('No listings yet', 'No listings yet — check back for their next drop.')}
     ${reviews.length ? `<h2>Reviews</h2>${reviews.map((v) => `<div class="panel">${stars(v.rating)} <strong>${esc(v.display_name.split(' ')[0])}</strong> <span class="muted small">${date(v.created_at)}</span>${v.body ? `<p style="margin:4px 0 0">${esc(v.body)}</p>` : ''}</div>`).join('')}` : ''}`;
   page(req, res, { title: s.store_name || s.handle, body });
 });
@@ -164,6 +165,7 @@ const authForm = (kind, next) => {
     <label for="e">Email</label><input id="e" name="email" type="email" autocomplete="email" required>
     <label for="p">Password ${reg ? '<span class="opt">(8+ characters)</span>' : ''}</label><input id="p" name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="${reg ? 8 : 1}">
     <input type="hidden" name="next" value="${esc(next)}">
+    ${reg ? `<label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="terms" required> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and have read the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/payments" target="_blank" rel="noopener">how payments and refunds work</a>.</span></label>` : ''}
     <button class="btn block" type="submit" style="margin-top:16px">${reg ? 'Sign up' : 'Log in'}</button></form>
   <p class="small muted" style="margin-top:14px">${reg ? 'Already have an account? <a href="/login">Log in</a>' : 'New here? <a href="/register">Create an account</a>'}${reg ? '' : '<br>Forgot your password? Password reset needs an email provider, which isn\'t configured — contact support.'}</p></div>`;
 };
@@ -178,9 +180,10 @@ r.post('/api/register', wrap(async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fields.email = 'Enter a valid email address.';
   if (name.length < 2) fields.display_name = 'Enter your name.';
   if (pw.length < 8 || pw.length > 200) fields.password = 'Use at least 8 characters.';
+  if (req.body.terms !== true) fields.terms = 'Please accept the Terms of Service and Privacy Policy to create an account.';
   if (!fields.email && q.get('SELECT 1 x FROM users WHERE email = ?', email)) fields.email = 'An account with this email already exists.';
   if (Object.keys(fields).length) throw new HttpError(422, 'Please fix the highlighted fields.', fields);
-  const u = q.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', email, auth.hashPassword(pw), name, now());
+  const u = q.run('INSERT INTO users(email, password_hash, display_name, created_at, terms_version, terms_accepted_at) VALUES(?,?,?,?,?,?)', email, auth.hashPassword(pw), name, now(), LEGAL.VERSION, now());
   auth.createSession(res, Number(u.lastInsertRowid));
   res.json({ ok: true, redirect: safeNext(req.body.next) });
 }));

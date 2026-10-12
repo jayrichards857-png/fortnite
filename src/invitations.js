@@ -12,6 +12,7 @@ const { HttpError, cleanLine, clean } = require('./util');
 const { hashPassword } = require('./auth');
 const { audit } = require('./audit');
 const { sha } = require('./accountTokens');
+const LEGAL = require('./legal');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SELLER_COUNTRIES = () => config.naCountries;
@@ -91,12 +92,14 @@ function accept(raw, body, currentUser) {
       if (pw.length < 8 || pw.length > 200) fields.password = 'Use at least 8 characters.';
       if (Object.keys(fields).length) throw new HttpError(422, 'Please fix the highlighted fields.', fields);
     }
+    if (!user || !LEGAL.accepted(user)) { if (body.terms !== true) throw new HttpError(422, 'Please fix the highlighted fields.', { terms: 'Please accept the Terms of Service and Privacy Policy to continue.' }); }
     const store = inv.kind === 'seller' ? validateStore(body) : null;
     try {
       if (!user) {
         const r = q.run('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', inv.email, hashPassword(String(body.password)), cleanLine(body.display_name, 80), now());
         user = q.get('SELECT * FROM users WHERE id = ?', r.lastInsertRowid);
       }
+      if (!LEGAL.accepted(user)) { LEGAL.recordAcceptance(user.id); }       // explicit tick on this very form; never inferred
       if (store) q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', store.store, store.handle, store.country, store.region, store.city, store.bio, user.id);
     } catch (e) { mapCap(e); }
     const mark = q.run('UPDATE invitations SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?', now(), user.id, inv.id, now());

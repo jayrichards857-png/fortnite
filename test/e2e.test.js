@@ -25,7 +25,7 @@ test('empty marketplace: pages render honest empty states, no fake data', async 
 
 test('auth: register validation, login, wrong password, logout, no plaintext passwords', async () => {
   const c = new H.Client();
-  let r = await c.post('/api/register', { email: 'bad', display_name: '', password: 'short' });
+  let r = await c.post('/api/register', { email: 'bad', display_name: '', terms: true, password: 'short' });
   assert.equal(r.status, 422); assert.ok(r.json.fields.email && r.json.fields.password);
   const u = await H.newUser('Auth');
   const row = q.get('SELECT * FROM users WHERE email = ?', u.email);

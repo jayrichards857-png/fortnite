@@ -23,7 +23,7 @@ const step = (m) => console.log('•', m);
   try {
     const sctx = await browser.newContext(), s = await sctx.newPage();
     const errors = []; s.on('pageerror', (e) => errors.push(e.message));
-    await s.goto(B + '/register'); await s.fill('#n', 'Riley Seller'); await s.fill('#e', 'riley@example.test'); await s.fill('#p', 'a-long-password-1');
+    await s.goto(B + '/register'); await s.fill('#n', 'Riley Seller'); await s.fill('#e', 'riley@example.test'); await s.fill('#p', 'a-long-password-1'); await s.check('input[name=terms]');
     await Promise.all([s.waitForURL(B + '/'), s.click('button[type=submit]')]); step('seller registered');
     await s.goto(B + '/sell'); await s.fill('#sn', 'Riley Resale'); await s.fill('#sh', 'riley'); await s.fill('#sr', 'OR'); await s.fill('#sy', 'Portland'); await s.check('input[name=agree]');
     await Promise.all([s.waitForURL(B + '/dashboard'), s.click('button[type=submit]')]); step('seller onboarded → dashboard');
@@ -47,7 +47,7 @@ const step = (m) => console.log('•', m);
     await b.goto(B + '/shop?q=chore&max=10'); assert.match(await b.textContent('main'), /No matching items/); step('price filter excludes it');
     await b.goto(B + '/shop?q=chore&category=outerwear&condition=good&min=50&max=70'); await Promise.all([b.waitForURL(/\/listing\//), b.click('.card .title')]);
     await b.click('[data-cart-add]:has-text("Add to cart")'); await b.waitForURL(/\/login/); step('anonymous add-to-cart redirects to login');
-    await b.goto(B + '/register'); await b.fill('#n', 'Jordan Buyer'); await b.fill('#e', 'jordan@example.test'); await b.fill('#p', 'a-long-password-2');
+    await b.goto(B + '/register'); await b.fill('#n', 'Jordan Buyer'); await b.fill('#e', 'jordan@example.test'); await b.fill('#p', 'a-long-password-2'); await b.check('input[name=terms]');
     await Promise.all([b.waitForURL(B + '/'), b.click('button[type=submit]')]);
     await b.goto(B + '/shop?q=chore'); await Promise.all([b.waitForURL(/\/listing\//), b.click('.card .title')]);
     await Promise.all([b.waitForURL(B + '/cart'), b.click('[data-cart-add][data-buy]')]);

@@ -17,7 +17,7 @@ async function approvedSeller(adm, key) {
   const email = `${key}-${Date.now()}@example.test`;
   const inv = await adm.post('/api/admin/invitations', { kind: 'seller', email }); assert.equal(inv.status, 200, inv.text);
   const c = new H.Client(); c.email = email; c.handle = `${key}${Date.now() % 100000}`;
-  const r = await c.post('/api/invitations/accept', { token: tokenOf(inv.json.link), display_name: `Seller ${key}`, password: 'a-long-password-1', store_name: `Store ${key}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true });
+  const r = await c.post('/api/invitations/accept', { token: tokenOf(inv.json.link), display_name: `Seller ${key}`, password: 'a-long-password-1', store_name: `Store ${key}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true });
   assert.equal(r.status, 200, r.text);
   q.run("UPDATE users SET email_verified_at = strftime('%s','now') WHERE email = ?", email);
   return c;
@@ -44,22 +44,22 @@ test('the Sell link shows Coming Soon to visitors, buyers and even admins; no on
   }
   assert.match((await adm.get('/sell')).text, /href="\/admin\/invitations"/, 'admins are pointed at invitations');
   // server enforcement: hiding the button is not the control
-  assert.equal((await anon.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky1', country: 'US', region: 'NY', city: 'B', agree: true })).status, 401);
-  for (const who of [buyer, adm]) assert.equal((await who.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky2', country: 'US', region: 'NY', city: 'B', agree: true })).status, 403);
+  assert.equal((await anon.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky1', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 401);
+  for (const who of [buyer, adm]) assert.equal((await who.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky2', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403);
   assert.equal(q.get('SELECT is_seller s FROM users WHERE email = ?', buyer.email).s, 0);
   assert.equal(q.get('SELECT is_seller s FROM users WHERE email = ?', adm.email).s, 0);
 });
 
 test('buyer registration and login work; sign-up can never grant seller or admin privileges', async () => {
   const c = new H.Client(), email = `buyer-${Date.now()}@example.test`;
-  const reg = await c.post('/api/register', { email, display_name: 'Buyer One', password: 'a-long-password-1', is_seller: 1, is_admin: 1, role: 'admin', handle: 'x', store_name: 'x' });
+  const reg = await c.post('/api/register', { email, display_name: 'Buyer One', terms: true, password: 'a-long-password-1', is_seller: 1, is_admin: 1, role: 'admin', handle: 'x', store_name: 'x' });
   assert.equal(reg.status, 200, reg.text);
   assert.deepEqual({ ...q.get('SELECT is_seller, is_admin, handle FROM users WHERE email = ?', email) }, { is_seller: 0, is_admin: 0, handle: null });
   const login = new H.Client();
   assert.equal((await login.post('/api/login', { email, password: 'wrong-password-1' })).status, 401);
   assert.equal((await login.post('/api/login', { email, password: 'a-long-password-1' })).status, 200);
   assert.equal((await login.get('/orders')).status, 200);
-  assert.equal((await new H.Client().post('/api/register', { email, display_name: 'Dup', password: 'a-long-password-1' })).status, 422, 'duplicate email');
+  assert.equal((await new H.Client().post('/api/register', { email, display_name: 'Dup', terms: true, password: 'a-long-password-1' })).status, 422, 'duplicate email');
 });
 
 test('buyers cannot publish listings or reach seller-only pages and endpoints', async () => {
@@ -87,7 +87,7 @@ test('seller cap counts sellers only: buyers never use a slot; the 4th seller is
   assert.equal((await adm.post('/api/admin/invitations', { kind: 'seller', email: 'fourth@example.test' })).status, 409, 'the 4th seller invitation is refused');
   assert.throws(() => q.run("INSERT INTO users(email, password_hash, display_name, is_seller, handle, created_at) VALUES('x4@x.test','x','X',1,'x4',1)"), /seller cap reached/);
   assert.equal((await adm.post('/api/admin/invitations', { kind: 'buyer', email: 'buyer-invite@example.test' })).status, 200, 'buyer invitations are unaffected');
-  assert.equal((await new H.Client().post('/api/register', { email: `after-cap-${Date.now()}@example.test`, display_name: 'Late Buyer', password: 'a-long-password-1' })).status, 200, 'buyer sign-up still works at the cap');
+  assert.equal((await new H.Client().post('/api/register', { email: `after-cap-${Date.now()}@example.test`, display_name: 'Late Buyer', terms: true, password: 'a-long-password-1' })).status, 200, 'buyer sign-up still works at the cap');
 });
 
 test('approved sellers keep seller access after logging in again', async () => {

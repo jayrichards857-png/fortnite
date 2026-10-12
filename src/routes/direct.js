@@ -30,7 +30,7 @@ r.all(['/cart', '/checkout', '/api/cart', '/api/cart/:id', '/api/checkout', '/pa
 const HOW_IT_WORKS = `<div class="panel notice"><h3>How payment works</h3><ul class="plain">
   <li><strong>You pay the seller directly</strong> through the seller's own checkout (Stripe). PairPlug does not collect, hold or protect your payment.</li>
   <li>The seller confirms your payment on PairPlug, then ships. Until they confirm, the order shows as <em>awaiting payment confirmation</em>.</li>
-  <li><strong>Refunds, chargebacks and payment problems are handled by the seller and their payment provider</strong>, not by PairPlug. Message the seller first.</li></ul></div>`;
+  <li><strong>Refunds, chargebacks and payment problems are handled by the seller and their payment provider</strong>, not by PairPlug. Message the seller first.</li></ul><p class="small" style="margin:8px 0 0">Details: <a href="/payments">Payments, Refunds &amp; Disputes</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></p></div>`;
 
 // ---------- Buyer: review terms + address, then reserve ----------
 r.get('/buy/:id(\\d+)', auth.requireUser, (req, res) => {

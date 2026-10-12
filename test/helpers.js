@@ -49,14 +49,14 @@ let n = 0;
 async function newUser(name = 'User') {
   const c = new Client(); n++;
   c.email = `u${n}-${Date.now()}@example.test`;
-  const r = await c.post('/api/register', { email: c.email, display_name: `${name} ${n}`, password: 'correct-horse-9' });
+  const r = await c.post('/api/register', { email: c.email, display_name: `${name} ${n}`, terms: true, password: 'correct-horse-9' });
   if (r.status !== 200) throw new Error('register failed ' + r.text);
   return c;
 }
 async function newSeller(name = 'Seller', plan) {
   const c = await newUser(name);
   c.handle = `h${n}${Date.now() % 100000}`;
-  const r = await c.post('/api/sell/onboard', { store_name: `${name} store ${n}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true });
+  const r = await c.post('/api/sell/onboard', { store_name: `${name} store ${n}`, handle: c.handle, country: 'US', region: 'NY', city: 'Brooklyn', agree: true, terms: true });
   if (r.status !== 200) throw new Error('onboard failed ' + r.text);
   require('../src/db').q.run('UPDATE users SET email_verified_at = strftime(\'%s\',\'now\') WHERE handle = ?', c.handle);   // test sellers are pre-verified unless a test says otherwise
   if (plan) require('../src/db').q.run('UPDATE users SET plan = ? WHERE handle = ?', plan, c.handle);

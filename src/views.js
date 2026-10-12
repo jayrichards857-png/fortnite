@@ -84,7 +84,8 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
 <a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
 <footer class="site-footer"><div class="wrap"><span>PairPlug · North American secondhand marketplace</span>
-<span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a></span></div></footer>
+<span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a></span>
+<nav class="legal-links" aria-label="Legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/payments">Payments &amp; refunds</a> · <a href="/rules">Seller rules</a></nav></div></footer>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/app.js" defer></script>${scripts}</body></html>`;
 }

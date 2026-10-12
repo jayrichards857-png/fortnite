@@ -583,6 +583,13 @@ UPDATE listings SET drop_notified_at = published_at WHERE published_at IS NOT NU
 ALTER TABLE notifications ADD COLUMN image TEXT;
 CREATE INDEX idx_listings_seller_active ON listings(seller_id, status, published_at DESC);
 `,
+// 11: recorded acceptance of the legal pages. Additive and nullable. Existing users are deliberately LEFT NULL: nobody is marked as having accepted terms they never saw.
+//   users.terms_version      the version of the policy set (src/legal.js VERSION) the user explicitly accepted
+//   users.terms_accepted_at  when they accepted it
+`
+ALTER TABLE users ADD COLUMN terms_version TEXT;
+ALTER TABLE users ADD COLUMN terms_accepted_at INTEGER;
+`,
 ];
 
 function migrate() {

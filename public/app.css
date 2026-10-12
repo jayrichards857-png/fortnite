@@ -158,3 +158,9 @@ fieldset{border:0;padding:0;margin:12px 0 0}legend{font-size:13px;font-weight:60
 .tabs{display:flex;gap:6px;margin:8px 0 12px;border-bottom:1px solid var(--line)}.tabs a{padding:8px 14px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}.tabs a[aria-current=page]{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
 .notif{display:flex;gap:12px;align-items:center}.notif-img .thumb,.notif-img img{width:56px;height:56px;object-fit:cover;border-radius:8px;display:block}
 @media(prefers-reduced-motion:reduce){.scard{transition:none}}
+
+/* legal pages + footer */
+.legal{max-width:760px;margin:20px auto}.legal h2{margin:26px 0 6px;font-size:19px}.legal ul,.legal ol{padding-left:22px}.legal li{margin:5px 0}.legal .lead{font-size:17px}.legal code{background:#f1efe9;padding:1px 5px;border-radius:4px}
+.legal .tablewrap{overflow-x:auto}.legal table td,.legal table th{vertical-align:top}
+.legal-links{flex-basis:100%}.legal-links a,.site-footer a{display:inline-block;padding:4px 2px}
+a.scard{text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:6px}a.scard:hover{border-color:var(--ink,#111)}

@@ -101,18 +101,18 @@ test('production process: DB, sessions and uploaded photos survive a restart; co
     { const ck = await loginAdmin(base); assert.equal((await pf(base + '/dev/emails', { headers: { cookie: ck } })).status, 404); }
     // public sign-up is closed: the page says Coming soon, the API refuses, no account appears
     assert.match(await (await pf(base + '/register')).text(), /Coming soon/);
-    const closed = await pf(base + '/api/register', { method: 'POST', headers: J, body: JSON.stringify({ email: 'walkin@example.test', display_name: 'Walk In', password: 'a-long-password-1' }) });
+    const closed = await pf(base + '/api/register', { method: 'POST', headers: J, body: JSON.stringify({ email: 'walkin@example.test', display_name: 'Walk In', terms: true, password: 'a-long-password-1' }) });
     assert.equal(closed.status, 403);
     // the admin invites a buyer; accepting the invitation is the only way in
     const adminCookie = await loginAdmin(base);
     const invitePath = await inviteBuyer(base, adminCookie, 'persist@example.test');
-    const acc = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: invitePath.split('/').pop(), display_name: 'Persist', password: 'a-long-password-1' }) });
+    const acc = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: invitePath.split('/').pop(), display_name: 'Persist', terms: true, password: 'a-long-password-1' }) });
     assert.equal(acc.status, 200);
     const sc = acc.headers.get('set-cookie'); assert.match(sc, /HttpOnly/i); assert.match(sc, /Secure/i); assert.match(sc, /SameSite=Lax/i); assert.match(sc, /Path=\//);
     assert.equal(acc.headers.get('strict-transport-security'), 'max-age=31536000');
     const cookie = sc.split(';')[0];
     // buyers cannot become sellers: invite-only onboarding
-    const onboard = await pf(base + '/api/sell/onboard', { method: 'POST', headers: { ...J, cookie }, body: JSON.stringify({ store_name: 'S', handle: 'sneaky', country: 'US', region: 'NY', city: 'B', agree: true }) });
+    const onboard = await pf(base + '/api/sell/onboard', { method: 'POST', headers: { ...J, cookie }, body: JSON.stringify({ store_name: 'S', handle: 'sneaky', country: 'US', region: 'NY', city: 'B', agree: true, terms: true }) });
     assert.equal(onboard.status, 403);
     assert.match(await (await pf(base + '/sell', { headers: { cookie } })).text(), /Coming soon/i);
     // upload a photo
@@ -164,7 +164,7 @@ test('create-admin: creates a working admin, promotes an existing user, rejects 
     assert.equal((await pf(base + '/api/admin/settings', { method: 'PUT', headers: { ...hdr, cookie }, body: '{}' })).status, 422, 'admin is authorised (validation, not 403)');
     // a normal user (created through an invitation) is not an admin
     const path2 = await inviteBuyer(base, cookie, 'normal@example.test');
-    const u = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: path2.split('/').pop(), display_name: 'Normal', password: 'a-long-password-1' }) });
+    const u = await pf(base + '/api/invitations/accept', { method: 'POST', headers: J, body: JSON.stringify({ token: path2.split('/').pop(), display_name: 'Normal', terms: true, password: 'a-long-password-1' }) });
     assert.equal((await pf(base + '/admin', { headers: { cookie: u.headers.get('set-cookie').split(';')[0] } })).status, 403);
   } finally { await stopProc(p); }
   // recovery: reset sets a new operator-chosen password for the existing administrator (full coverage in test/admin.test.js)

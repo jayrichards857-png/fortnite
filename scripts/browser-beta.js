@@ -32,10 +32,10 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
   try {
     const s = await mk(), b = await mk();
     // ---- seller: account, store, checkout settings
-    await s.pg.goto(B + '/register'); await s.pg.fill('#n', 'Riley Reseller'); await s.pg.fill('#e', 'riley@example.test'); await s.pg.fill('#p', 'a-long-password-1');
+    await s.pg.goto(B + '/register'); await s.pg.fill('#n', 'Riley Reseller'); await s.pg.fill('#e', 'riley@example.test'); await s.pg.fill('#p', 'a-long-password-1'); await s.pg.check('input[name=terms]');
     await Promise.all([s.pg.waitForURL(B + '/'), s.pg.click('button[type=submit]')]);
     await s.pg.goto(B + '/sell'); assert.match(await s.pg.textContent('main'), /no PairPlug fees/i); assert.doesNotMatch(await s.pg.textContent('main'), /escrow/i);
-    await s.pg.fill('#sn', 'Riley Resale'); await s.pg.fill('#sh', 'riley'); await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); await s.pg.check('input[name=agree]');
+    await s.pg.fill('#sn', 'Riley Resale'); await s.pg.fill('#sh', 'riley'); await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); if (await s.pg.$('input[name=terms]')) await s.pg.check('input[name=terms]'); await s.pg.check('input[name=agree]');
     await Promise.all([s.pg.waitForURL(B + '/dashboard'), s.pg.click('button[type=submit]')]); step('seller onboarded (no fees/escrow language)');
     require('./verify-email-helper')(path.join(tmp, 'b.db'));
     await s.pg.goto(B + '/dashboard/settings');
@@ -59,7 +59,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     assert.match(lp, /\$55\.00/); assert.match(lp, /\$7\.00 flat fee, paid by the buyer/); assert.match(lp, /Buy now/); assert.doesNotMatch(lp, /escrow|Add to cart/i);
     step('listing shows item $48 + shipping $7 = total $55 and "Buy now"'); await shot(b.pg, 'beta-02-listing.png');
     await b.pg.click('a:has-text("Buy now")'); await b.pg.waitForURL(/\/login/);
-    await b.pg.goto(B + '/register?next=/buy/' + listingId); await b.pg.fill('#n', 'Jordan Buyer'); await b.pg.fill('#e', 'jordan@example.test'); await b.pg.fill('#p', 'a-long-password-2');
+    await b.pg.goto(B + '/register?next=/buy/' + listingId); await b.pg.fill('#n', 'Jordan Buyer'); await b.pg.fill('#e', 'jordan@example.test'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]');
     await b.pg.click('button[type=submit]'); await b.pg.waitForURL((u) => u.pathname.startsWith('/buy/')); step('anonymous buyer is sent to sign up, then back to the purchase page');
     assert.match(await b.pg.textContent('main'), /does not collect, hold or protect/); assert.match(await b.pg.textContent('main'), /Refunds, chargebacks and payment problems are handled by the seller/);
     await b.pg.fill('#a_name', 'Jordan Buyer'); await b.pg.fill('#a_line1', '1 Test Way'); await b.pg.fill('#a_city', 'Seattle'); await b.pg.fill('#a_region', 'WA'); await b.pg.fill('#a_postal', '98101');

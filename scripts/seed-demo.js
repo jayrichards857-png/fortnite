@@ -23,7 +23,7 @@ const PW = 'demo-password-1';
 (async () => {
   await H.start();
   const mkSeller = async (store, handle, country, region, city, bio) => {
-    const c = await H.newUser(store); await c.post('/api/sell/onboard', { store_name: store, handle, country, region, city, bio, agree: true }); c.handle = handle; return c;
+    const c = await H.newUser(store); await c.post('/api/sell/onboard', { store_name: store, handle, country, region, city, bio, agree: true, terms: true }); c.handle = handle; return c;
   };
   const sellers = [
     await mkSeller('Northfield Vintage', 'northfield', 'US', 'NY', 'Brooklyn', 'Curated secondhand outerwear and denim. Ships within 2 business days.'),

@@ -85,7 +85,7 @@ test('local email verification: recorded email preview works in development, sti
   const adm = await H.newUser('Adm'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', adm.email);
   const inv = await adm.post('/api/admin/invitations', { kind: 'seller', email: `devseller-${Date.now()}@example.test` });
   const s = new H.Client(); const email = q.get('SELECT email FROM invitations ORDER BY id DESC LIMIT 1').email;
-  assert.equal((await s.post('/api/invitations/accept', { token: inv.json.link.split('/').pop(), display_name: 'Dev Seller', password: 'a-long-password-1', store_name: 'Dev Store', handle: 'devstore', country: 'US', region: 'NY', city: 'B', agree: true })).status, 200);
+  assert.equal((await s.post('/api/invitations/accept', { token: inv.json.link.split('/').pop(), display_name: 'Dev Seller', password: 'a-long-password-1', store_name: 'Dev Store', handle: 'devstore', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 200);
   assert.equal(q.get('SELECT email_verified_at v FROM users WHERE email = ?', email).v, null);
   // an unverified seller cannot publish
   const file = await H.upload(s);

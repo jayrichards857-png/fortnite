@@ -13,16 +13,17 @@ const termsOf = (s) => clean(s || '', 100).toLowerCase().split(/\s+/).filter(Boo
 const L = (t) => `%${likeEsc(t)}%`;
 
 // ------------------------------------------------------------------ seller lists
-/** Sellers with at least one available listing, most recently listed first. Transparent ranking: latest available listing, then number of available listings. */
+/** Every public seller profile (approved seller, not banned), including sellers who have not listed anything yet. Transparent ranking: sellers with available items first
+ *  (latest listing, then number of items), then newer profiles. The count is a plain COUNT over users; the per-row subqueries run only for the page being shown. */
 function discoverSellers({ page = 1, per = 12 } = {}) {
   page = Math.max(1, parseInt(page, 10) || 1);
-  const base = `FROM (SELECT u.id, u.handle, u.store_name, u.bio, sf.headline, sf.about, sf.avatar, (SELECT MAX(published_at) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') latest,
-    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n FROM users u ${SF} WHERE ${PUBLIC}) WHERE n > 0`;
-  const total = q.get(`SELECT COUNT(*) c ${base}`).c;
-  const items = q.all(`SELECT * ${base} ORDER BY latest DESC, n DESC, id LIMIT ? OFFSET ?`, per, (page - 1) * per);
+  const total = q.get(`SELECT COUNT(*) c FROM users u WHERE ${PUBLIC}`).c;
+  const items = q.all(`SELECT u.id, u.handle, u.store_name, u.bio, sf.headline, sf.about, sf.avatar, u.created_at,
+    (SELECT MAX(published_at) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') latest,
+    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n FROM users u ${SF} WHERE ${PUBLIC} ORDER BY latest IS NULL, latest DESC, n DESC, u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`, per, (page - 1) * per);
   return { items, total, page, per, pages: Math.max(1, Math.ceil(total / per)) };
 }
-/** Sellers relevant to a query. Every term must match the seller's name/handle/bio/published storefront text OR one of their available listings (title, brand, category, description). */
+/** Sellers relevant to a query. Every term must match the seller's name/handle/bio/published storefront text OR one of their available listings (title, brand, category, description). Sellers with no listings are found by profile text alone. */
 function searchSellers(qstr, { page = 1, per = 12 } = {}) {
   const terms = termsOf(qstr); if (!terms.length) return discoverSellers({ page, per });
   page = Math.max(1, parseInt(page, 10) || 1);
@@ -38,7 +39,7 @@ function searchSellers(qstr, { page = 1, per = 12 } = {}) {
   const from = `FROM users u ${SF} WHERE ${PUBLIC} AND ${where}`;
   const total = q.get(`SELECT COUNT(*) c ${from}`, ...wp).c;
   const items = q.all(`SELECT u.id, u.handle, u.store_name, u.bio, sf.headline, sf.about, sf.avatar, ${score} AS score, (SELECT MAX(published_at) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') latest,
-    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n ${from} ORDER BY score DESC, latest DESC, u.id LIMIT ? OFFSET ?`, ...sp, ...mp, ...wp, per, (page - 1) * per);
+    (SELECT COUNT(*) FROM listings l WHERE l.seller_id = u.id AND l.status = 'active') n ${from} ORDER BY score DESC, latest IS NULL, latest DESC, u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`, ...sp, ...mp, ...wp, per, (page - 1) * per);
   return { items, total, page, per, pages: Math.max(1, Math.ceil(total / per)) };
 }
 /** Attach each seller's newest available listings (one query for the whole page). */
@@ -138,7 +139,7 @@ function sellerCard(s, { following = new Set(), user = null } = {}) {
   const avatar = s.avatar ? `<img class="scard-av" src="/uploads/${esc(s.avatar)}" alt="" loading="lazy">` : `<div class="scard-av scard-av-fb" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`;
   return `<article class="scard"><a class="scard-head" href="/s/${esc(s.handle)}">${avatar}<span><strong>${esc(name)}</strong><span class="muted small">@${esc(s.handle)}</span></span></a>
     ${bio ? `<p class="scard-bio">${esc(bio)}</p>` : ''}
-    ${(s.previews || []).length ? `<div class="scard-prev">${s.previews.map((l) => `<a href="/listing/${l.id}" title="${esc(l.title)}">${V.img(l.image, 'thumb', l.title)}</a>`).join('')}</div>` : '<p class="muted small">No items available right now.</p>'}
+    ${(s.previews || []).length ? `<div class="scard-prev">${s.previews.map((l) => `<a href="/listing/${l.id}" title="${esc(l.title)}">${V.img(l.image, 'thumb', l.title)}</a>`).join('')}</div>` : '<p class="muted small scard-empty">No listings yet — check back for their next drop.</p>'}
     <div class="scard-foot">${user && user.id === s.id ? '<span class="muted small">Your store</span>' : heartBtn(s.handle, following.has(s.id))}<a class="small" href="/s/${esc(s.handle)}">View storefront →</a></div></article>`;
 }
 

@@ -75,16 +75,16 @@ test('search logging is privacy-conscious: normalised, noise and personal data e
   q.run("INSERT INTO search_log(term, created_at) VALUES('ancient query', ?)", now() - 40 * 86400); assert.ok(D.purgeSearchLog() >= 1); assert.equal(q.get("SELECT COUNT(*) n FROM search_log WHERE term = 'ancient query'").n, 0);
 });
 
-test('homepage Discover Sellers and View all sellers use real, public stores with available items only', async () => {
+test('homepage Discover Sellers and View all sellers list real, public stores (stores without listings included, drafts never shown)', async () => {
   q.run("UPDATE users SET banned = 0"); const anon = new H.Client();
   const withItems = await shop('Home Seller One', 'homeone', ['Home jacket A', 'Home jacket B', 'Home jacket C', 'Home jacket D']), empty = await shop('Empty Store', 'emptystore', []), drafty = await shop('Draft Only', 'draftonly', ['Draft thing']);
   q.run("UPDATE listings SET status = 'draft' WHERE seller_id = (SELECT id FROM users WHERE handle = 'draftonly')");
-  const home = await get(anon, '/'); assert.match(home, /Discover Sellers/); assert.match(home, /View all sellers/); assert.match(home, /@homeone/); assert.doesNotMatch(home, /@emptystore/); assert.doesNotMatch(home, /@draftonly/); assert.doesNotMatch(home, /Draft thing/);
+  const home = await get(anon, '/'); assert.match(home, /Discover Sellers/); assert.match(home, /View all sellers/); assert.match(home, /@homeone/); assert.match(home, /@emptystore/, 'a public store with no listings is discoverable'); assert.match(home, /@draftonly/); assert.doesNotMatch(home, /Draft thing/, 'draft titles never leak'); assert.ok(home.indexOf('@homeone') < home.indexOf('@emptystore'), 'stores with items rank first');
   assert.equal((home.match(/href="\/listing\/\d+" title="Home jacket/g) || []).length, 3, 'a preview of up to 3 newest available items'); assert.match(home, /data-follow="homeone"/); assert.match(home, /Discover secondhand finds/);
   // pagination on /sellers (12 per page)
   for (let i = 0; i < 12; i++) await shop(`Pager Shop ${i}`, `pager${i}`, [`Pager item ${i}`]);
   const p1 = await get(anon, '/sellers'), p2 = await get(anon, '/sellers?page=2'); const n1 = (p1.match(/class="scard"/g) || []).length, n2 = (p2.match(/class="scard"/g) || []).length;
-  assert.equal(n1, 12); assert.ok(n2 >= 1); assert.match(p1, /Page 1 of/); assert.match(p2, /Page 2 of/); assert.doesNotMatch(p1 + p2, /@emptystore|@draftonly/);
+  assert.equal(n1, 12); assert.ok(n2 >= 1); assert.match(p1, /Page 1 of/); assert.match(p2, /Page 2 of/); assert.match(p1 + p2, /@emptystore/); assert.match(p1 + p2, /No listings yet — check back for their next drop/); assert.doesNotMatch(p1 + p2, /Draft thing/); assert.equal(D.discoverSellers().total, q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1 AND banned = 0').n);
   void withItems; void empty; void drafty;
 });
 
@@ -148,4 +148,33 @@ test('existing behaviour is untouched: checkout, orders, shipping and seller pri
   assert.equal((await seller.post(`/api/seller/orders/${o}/confirm-payment`)).status, 200); assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: `9400${Date.now()}` })).status, 200);
   const stranger = await H.newSeller('Snoop'); assert.equal((await stranger.get(`/dashboard/orders/${o}`)).status, 404); assert.doesNotMatch(await get(stranger, '/dashboard/orders'), /Checkout item/);
   assert.doesNotMatch(await get(new H.Client(), '/shop?q=checkout&tab=sellers'), /1 Main St|Austin/, 'search never exposes buyer or recipient data');
+});
+
+test('sellers with zero listings: discoverable, searchable, followable, polished empty storefront, notified exactly once on their first listing', async () => {
+  q.run('UPDATE users SET banned = 0'); const anon = new H.Client();
+  const fresh = await shop('Brand New Vintage', 'freshvintage', [], { bio: 'Curated 90s workwear and denim' }), other = await shop('Workwear Depot', 'workweardepot', ['Carhartt workwear jacket']);
+  q.run('UPDATE users SET banned = 1 WHERE handle = ?', fresh.handle); const fakeBan = await shop('Banned Workwear', 'bannedwork', [], { bio: 'workwear' }); q.run('UPDATE users SET banned = 1 WHERE handle = ?', 'bannedwork'); q.run('UPDATE users SET banned = 0 WHERE handle = ?', fresh.handle); void fakeBan;
+  // discovery list + homepage + directory
+  const list = D.discoverSellers({ per: 100 }).items.map((x) => x.handle); assert.ok(list.includes('freshvintage')); assert.ok(!list.includes('bannedwork')); assert.ok(list.indexOf('workweardepot') < list.indexOf('freshvintage'), 'a store with items outranks one without');
+  const at = D.discoverSellers({ per: 1000 }).items.findIndex((x) => x.handle === 'freshvintage'); assert.match(await get(anon, `/sellers?page=${Math.floor(at / 12) + 1}`), /@freshvintage/, 'listed on its page of the public directory');
+  // search: profile text finds it with no inventory; product relevance still ranks the store whose listing matches first
+  const hit = await get(anon, '/shop?q=denim&tab=sellers'); assert.match(hit, /Brand New Vintage/); assert.match(hit, /No listings yet — check back for their next drop/); assert.doesNotMatch(hit, /Banned Workwear/);
+  const both = D.searchSellers('workwear').items.map((x) => x.handle); assert.deepEqual(both.slice(0, 2), ['workweardepot', 'freshvintage'], 'matching inventory ranks above a bio-only match'); assert.ok(!both.includes('bannedwork'));
+  assert.match(await get(anon, '/shop?q=workwear'), /Carhartt workwear jacket/, 'product results are unchanged');
+  // public storefront: empty state, follow button, no private data
+  const page = await get(anon, '/s/freshvintage'); assert.match(page, /No listings yet — check back for their next drop/); assert.match(page, /data-follow="freshvintage"/); assert.doesNotMatch(page, new RegExp(fresh.email.replace(/[.+]/g, '\\$&')));
+  assert.equal((await anon.get('/s/bannedwork')).status, 404);
+  // following an empty profile persists; first listing notifies each eligible follower exactly once
+  const fan = await H.newUser('EmptyFan'), banned = await H.newUser('BannedEmptyFan');
+  for (const c of [fan, banned]) assert.equal((await c.post('/api/sellers/freshvintage/follow')).status, 200);
+  assert.equal((await fan.get('/following')).text.includes('@freshvintage'), true); q.run('UPDATE users SET banned = 1 WHERE email = ?', banned.email);
+  const body = { title: 'First ever drop', description: 'Heavyweight denim jacket', category: 'tops', price: '80.00', condition: 'good', size: 'M', brand: 'Levis', status: 'active', payment_url: LINK, shipping: '5.00' };
+  void body; const id = await H.makeListing(fresh, { payment_url: LINK, title: 'First ever drop' });
+  assert.equal(notifs(fan.email, 'New from%').length, 1); assert.equal(notifs(banned.email).length, 0); assert.equal(notifs(fresh.email, 'New from%').length, 0, 'never the seller');
+  assert.equal(D.announceDrop(id), 0, 'a retry does not notify again'); await fresh.post(`/api/seller/listings/${id}/pause`).catch(() => {}); await fresh.post(`/api/seller/listings/${id}/resume`).catch(() => {});
+  assert.equal(notifs(fan.email, 'New from%').length, 1, 'pause/resume does not repeat it'); assert.equal(q.get('SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?', `drop:${id}`).n, 1);
+  // a second listing is a separate drop, still once per follower
+  await H.makeListing(fresh, { payment_url: LINK, title: 'Second drop' }); assert.equal(notifs(fan.email, 'New from%').length, 2);
+  // and the storefront now lists the item instead of the empty state
+  assert.doesNotMatch(await get(anon, '/s/freshvintage'), /No listings yet/);
 });

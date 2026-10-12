@@ -52,7 +52,7 @@ r.get('/s/:handle', (req, res) => {
     ${featured.length ? `<h2>Featured</h2><div class="grid store-grid l-${esc(st.layout)}">${featured.map((l) => V.card(l, { favs })).join('')}</div>` : ''}
     <div class="sechead"><h2>${featured.length ? 'All items' : 'Available'} (${result.total + featured.length})</h2></div>
     ${result.items.length || featured.length ? (result.items.length ? `<div class="grid store-grid l-${esc(st.layout)}">${result.items.map((l) => V.card(l, { favs })).join('')}</div>${V.pager(result.page, result.pages, req.query.preview ? { preview: 1 } : {})}` : '')
-      : V.empty('Nothing listed right now', 'This seller has no available items at the moment. You can still contact them.')}
+      : V.empty('No listings yet', 'No listings yet — check back for their next drop. Follow this store to be notified when they publish.')}
     ${reviews.length ? `<h2>Reviews</h2>${reviews.map((v) => `<div class="panel store-card">${stars(v.rating)} <strong>${esc(v.display_name.split(' ')[0])}</strong> <span class="muted small">${date(v.created_at)}</span>${v.body ? `<p style="margin:4px 0 0">${esc(v.body)}</p>` : ''}</div>`).join('')}` : ''}
   </div>`;
   res.send(V.layout({ user: req.user, path: '/s', title: name, body, description: (st.headline || st.about || s.bio || '').slice(0, 150), head: `<link rel="stylesheet" href="/storefront.css?v=${cssEtag}">` }));
