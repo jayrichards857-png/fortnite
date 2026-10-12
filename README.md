@@ -1,6 +1,6 @@
 # PairPlug
 
-PairPlug — The Clothing Marketplace: clothing, streetwear, sneakers and accessories (new and pre-owned) from independent sellers in North America (US, Canada, Mexico). Node 22 + Express + SQLite (built-in `node:sqlite`),
+PairPlug — The Clothing Marketplace: clothing, streetwear, sneakers and accessories (new and pre-owned) from independent sellers in North America (US, Canada, Mexico). Node 22 + Express + PostgreSQL (`pg` driver, connection pool, no ORM),
 server-rendered pages with a little vanilla JS. Runtime dependencies: `express`, `ws`.
 
 ## Private-beta payment model (read first)
@@ -37,21 +37,23 @@ Operating guide: [docs/BETA_RUNBOOK.md](docs/BETA_RUNBOOK.md) · Deployment & ho
 ## Run it locally
 ```bash
 npm install
+export DATABASE_URL=postgres://user:pass@127.0.0.1:5432/pairplug   # an empty PostgreSQL 16 database you own
 npm start                       # http://localhost:3000 — direct-checkout beta mode, empty database, nothing seeded
 npm run admin:setup -- --email you@example.com   # prints a one-time temporary password (see “Administrator login” above)
 ```
 Local development behaves like the beta: buyer sign-up is open, selling is invitation-only. Developers who need self-service seller onboarding for experiments can set `SELLER_ONBOARDING=open` (refused in production; the test suites use it).
 **Email in local development:** no provider is configured, so messages are only recorded. Open **`/dev/emails`** while logged in to read the verification link addressed to *you* (admins see all). It is not a bypass — you still open the link and press *Confirm email*. That page does not exist in production or once a real provider is configured.
-Needs Node ≥ 22.13 (prints an “experimental SQLite” warning — expected). The database and `data/uploads` are created and migrated automatically (migrations are additive).
+Needs Node ≥ 22.13 and PostgreSQL 16. Migrations run automatically at start-up (additive, recorded in `schema_migrations`); `data/uploads` is created on first use. Moving an existing SQLite database across: [docs/POSTGRES_MIGRATION.md](docs/POSTGRES_MIGRATION.md).
 For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplug.env.example` (HTTPS `PUBLIC_URL`, `SIGNUPS=closed`, `SELLER_ONBOARDING=invite`, `PUBLIC_RELEASE_DATE`).
 
 | Command | Purpose |
 |---|---|
-| `npm test` | 251 unit/HTTP/WebSocket/real-process tests (each file on a throwaway DB): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
+| `npm test` | 293 unit/HTTP/WebSocket/real-process tests, each file on its own throwaway PostgreSQL database (`eval "$(scripts/pg-test.sh env)"` after `scripts/pg-test.sh start` gives you a disposable local server): cap & races, invitations, accounts, storefronts, cases/refunds, migrations, backup/restore, production guards |
 | `npm run check` | Syntax-checks every JS file (no build step; no typechecker/linter in this project) |
-| `npm run test:browser` | Five real-Chromium journeys (incl. `browser-shipping.js`, the label panel against a fake Shippo) on empty temp DBs: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile). Stripe is never contacted (redirect captured). |
+| `npm run test:browser` | Seven real-Chromium journeys, the last being **`browser-mobile.js`** (phone-width interactions at 320/375/390/430 px plus a layout gate on core pages; Chromium emulation, not real iOS Safari). The others run on empty throwaway databases: legacy platform checkout, chat, the direct-checkout journey, and **`browser-final.js`** (closed sign-ups → invitations → cap → verification via outbox → storefront → contact-first listing → checkout → refund → case → mobile), shipping labels against a fake Shippo, and reviews/moderation. Stripe is never contacted (redirect captured). |
 | `npm run backup` / `npm run restore -- <snapshot> [--force]` | Consistent DB snapshot + photos (owner-only perms) / integrity- and version-checked restore that keeps a `.pre-restore` copy |
 | `npm run sandbox:shipping` | Dev-only isolated **shipping sandbox** with TEST orders for the Shippo test-mode workflow (`-- --manual-only` previews the exact beta seller page with Shippo off, `-- --fake-shippo` for no Shippo token, `-- --reset` to rebuild); see [docs/SHIPPING.md](docs/SHIPPING.md) |
+| `npm run audit:mobile` | Mobile layout audit of ~94 pages × 6 widths (320–1280 px, `--viewports`, `--only`, `--shots`, `--mode platform`): overflow, touch targets <44 px, iOS-zoom inputs, unnamed controls, images without dimensions, contrast, controls missing on phones, crushed text. Report in `artifacts/mobile/` (git-ignored) |
 | `npm run inventory:sellers` | Read-only report of seller accounts vs. the cap |
 | `node scripts/dump-schema.js` | Regenerates `docs/schema.sql` from the migrations |
 | `npm run seed:demo` / `npm run screenshots` | **Isolated fixture DB** for the older (platform-mode) screenshots. Never touches the live DB |
@@ -76,7 +78,7 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 | Refunds | PairPlug moves no money. The seller *reports* a refund; the order becomes `refunded` only when the **buyer confirms** or an **admin independently verifies**. |
 | Hosting | **Not deployed.** Google Cloud plan documented in DEPLOYMENT.md (nothing provisioned; no cloud resources were created). |
 | Backups | Local snapshots (owner-only) + a tested restore script. Off-site copy is **recommended but not configured**. |
-| Scale | One process / SQLite; chat live-push is in-memory (single process). Fine for a private beta. |
+| Scale | One process on a PostgreSQL connection pool; chat live-push is in-memory (single process). Fine for a private beta. |
 
 ## Messaging (buyer ↔ seller chat)
 `/messages`. WebSocket by default, automatic long-polling fallback; the status pill names the transport actually in use. Messages persist before acknowledgement; idempotency keys + a UNIQUE constraint prevent duplicates; membership is enforced server-side; typing indicators are ephemeral and single-process.

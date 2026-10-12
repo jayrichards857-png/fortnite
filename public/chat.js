@@ -267,7 +267,7 @@
     ex.textContent = !c ? '' : c.role === 'seller' ? (wh >= 0 ? `Awaiting your reply · ${wh < 1 ? 'less than an hour' : wh + 'h'} ago. Buyers expect a reply within 48 hours.` : 'Buyers expect a reply within 48 hours (an expectation, not a guarantee).') : 'Sellers are expected to reply within 48 hours. That is an expectation, not a guarantee.';
     const lb = $('#chat-listing'); lb.textContent = '';
     if (c && c.listing) { const a = el('a', 'listing-ctx'); a.href = '/listing/' + c.listing.id;
-      if (c.listing.image) { const i = el('img'); i.src = '/uploads/' + c.listing.image; i.alt = ''; a.append(i); }
+      if (c.listing.image) { const i = el('img'); i.src = '/uploads/' + c.listing.image; i.alt = ''; i.width = 40; i.height = 50; a.append(i); }
       const t = el('div'); t.append(el('strong', null, c.listing.title), el('div', 'muted small', money(c.listing.priceCents) + (c.listing.status !== 'active' ? ' · ' + c.listing.status : ''))); a.append(t); lb.append(a); }
     if (!c) { box.textContent = ''; return; }
     const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120, firstPaint = !box.dataset.painted; box.dataset.painted = c.id;

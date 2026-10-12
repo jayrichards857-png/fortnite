@@ -89,3 +89,26 @@
   // Auto-submit sort select on shop page
   $$('[data-autosubmit]').forEach((el) => el.addEventListener('change', () => el.form.submit()));
 })();
+
+// ---- responsive behaviour (progressive enhancement; the pages work without it)
+(() => {
+  'use strict';
+  // dropdown menus: one at a time; close on outside tap, Escape, or when a link inside is used
+  const menus = () => [...document.querySelectorAll('details.dd[open]')];
+  document.addEventListener('click', (e) => { for (const d of menus()) if (!d.contains(e.target)) d.removeAttribute('open'); });
+  document.addEventListener('toggle', (e) => { const t = e.target; if (t.matches && t.matches('details.dd') && t.open) for (const d of menus()) if (d !== t) d.removeAttribute('open'); }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') for (const d of menus()) { d.removeAttribute('open'); const s = d.querySelector('summary'); if (s) s.focus(); } });
+  // shop filters: a collapsed drawer on phones, always open on larger screens
+  const mq = window.matchMedia('(max-width: 860px)');
+  const drawers = () => [...document.querySelectorAll('[data-filter-drawer]')];
+  const syncDrawers = (init) => { for (const d of drawers()) { if (!mq.matches) d.setAttribute('open', ''); else if (init) d.removeAttribute('open'); } };
+  syncDrawers(true); (mq.addEventListener ? mq.addEventListener('change', () => syncDrawers(false)) : mq.addListener(() => syncDrawers(false)));
+  // wide tables: label every cell from its column heading so CSS can stack rows as cards on phones
+  for (const t of document.querySelectorAll('table')) {
+    const heads = [...t.querySelectorAll('thead th')]; if (heads.length < 3 || t.querySelector('[colspan],[rowspan]')) continue;
+    const rows = [...t.querySelectorAll('tbody tr')]; if (!rows.length || rows.some((r) => r.children.length !== heads.length)) continue;
+    const labels = heads.map((h) => h.textContent.trim());
+    for (const r of rows) [...r.children].forEach((td, i) => { td.setAttribute('data-label', labels[i]); const w = document.createElement('div'); w.className = 'cell'; while (td.firstChild) w.appendChild(td.firstChild); td.appendChild(w); });
+    t.classList.add('stack');
+  }
+})();

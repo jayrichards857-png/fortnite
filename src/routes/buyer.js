@@ -56,14 +56,14 @@ r.get('/shop', async (req, res) => {
   const label = { category: (v) => (config.categories.find((c) => c[0] === v) || [])[1] || v, condition: (v) => config.conditions[v] || v, min: (v) => `Min $${v}`, max: (v) => `Max $${v}`, q: (v) => `"${v}"` };
   const tags = Object.entries(params).filter(([k]) => k !== 'sort').map(([k, v]) => `<a class="tag" href="${without(k)}" aria-label="Remove filter ${esc(k)}">${esc((label[k] || ((x) => x))(v))}</a>`).join('');
   const radio = (name, items, cur) => items.map(([v, l]) => `<label><input type="radio" name="${name}" value="${esc(v)}"${cur === v ? ' checked' : ''}> ${esc(l)}</label>`).join('');
-  const filters = `<aside class="filters" aria-label="Filters"><form id="ff" method="get">
+  const filters = `<details class="filter-drawer" open data-filter-drawer><summary class="btn ghost filter-toggle">Filters</summary><aside class="filters" aria-label="Filters"><form id="ff" method="get">
     ${f.q ? `<input type="hidden" name="q" value="${esc(f.q)}">` : ''}<input type="hidden" name="sort" value="${esc(f.sort || '')}">
     <details open><summary>Category</summary><div class="opts"><label><input type="radio" name="category" value=""${!f.category ? ' checked' : ''}> All</label>${radio('category', config.categories.map(([s, n]) => [s, n]), f.category)}</div></details>
     <details${f.brand ? ' open' : ''}><summary>Brand</summary><div class="opts scroll">${fx.brands.length ? radio('brand', [['', 'Any'], ...fx.brands.map((b) => [b, b])], f.brand || '') : '<span class="muted small">No brands yet</span>'}</div></details>
     <details${f.size ? ' open' : ''}><summary>Size</summary><div class="opts scroll">${fx.sizes.length ? radio('size', [['', 'Any'], ...fx.sizes.map((b) => [b, b])], f.size || '') : '<span class="muted small">No sizes yet</span>'}</div></details>
     <details open><summary>Condition</summary><div class="opts">${radio('condition', [['', 'Any'], ...Object.entries(config.conditions)], f.condition || '')}</div></details>
     <details open><summary>Price</summary><div class="row pair" style="margin-top:6px"><div><label class="sr" for="pmin">Min price</label><input id="pmin" name="min" inputmode="decimal" placeholder="Min $" value="${esc(f.min || '')}"></div><div><label class="sr" for="pmax">Max price</label><input id="pmax" name="max" inputmode="decimal" placeholder="Max $" value="${esc(f.max || '')}"></div></div></details>
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn small">Apply</button><a class="btn small ghost" href="/shop">Reset</a></div></form></aside>`;
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn small">Apply</button><a class="btn small ghost" href="/shop">Reset</a></div></form></aside></details>`;
   const tab = f.tab === 'sellers' ? 'sellers' : 'products';
   const spage = tab === 'sellers' ? f.page : 1;
   let sellerRes = { items: [], total: 0, page: 1, pages: 1 };
@@ -123,8 +123,8 @@ r.get('/listing/:id(\\d+)', async (req, res) => {
   const inCart = req.user && await q.get('SELECT 1 x FROM cart_items WHERE user_id=? AND listing_id=?', req.user.id, l.id);
   const ext = X.isExternal();
   const body = `<div class="product">
-  <div class="gallery"><div class="main">${l.images.length ? `<img id="gmain" src="/uploads/${esc(l.images[0])}" alt="${esc(l.title)}">` : '<div class="noimg" style="height:100%"></div>'}</div>
-  ${l.images.length > 1 ? `<div class="thumbs">${l.images.map((f, i) => `<button type="button" data-thumb="/uploads/${esc(f)}" aria-current="${i === 0}" aria-label="Photo ${i + 1}"><img src="/uploads/${esc(f)}" alt=""></button>`).join('')}</div>` : ''}</div>
+  <div class="gallery"><div class="main">${l.images.length ? `<img id="gmain" src="/uploads/${esc(l.images[0])}" alt="${esc(l.title)}" width="640" height="800" fetchpriority="high" decoding="async">` : '<div class="noimg" style="height:100%"></div>'}</div>
+  ${l.images.length > 1 ? `<div class="thumbs">${l.images.map((f, i) => `<button type="button" data-thumb="/uploads/${esc(f)}" aria-current="${i === 0}" aria-label="Photo ${i + 1}"><img src="/uploads/${esc(f)}" alt="" width="68" height="84" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''}</div>
   <div><h1>${esc(l.title)}</h1><div class="pprice">${money(l.price_cents)} <span class="muted small">${esc(l.currency || 'USD')}</span></div>
     <div>${avail ? '<span class="pill s-active">Available</span>' : `${V.statusPill(l.status)} <span class="muted small">${esc(status)}</span>`}</div>
     <dl class="facts">${l.brand ? `<dt>Brand</dt><dd>${esc(l.brand)}</dd>` : ''}${l.size ? `<dt>Size</dt><dd>${esc(l.size)}</dd>` : ''}${l.condition ? `<dt>Condition</dt><dd>${esc(config.conditions[l.condition])}</dd>` : ''}

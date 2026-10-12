@@ -137,7 +137,7 @@ async function relatedDiscoveries(qstr) {
 const heartBtn = (handle, on, cls = '') => `<button type="button" class="follow${on ? ' on' : ''} ${cls}" data-follow="${esc(handle)}" aria-pressed="${on ? 'true' : 'false'}" aria-label="${on ? 'Unfollow' : 'Follow'} @${esc(handle)}">${V.icon('heart', 'follow-ico')}<span class="follow-label">${on ? 'Following' : 'Follow'}</span></button>`;
 async function sellerCard(s, { following = new Set(), user = null } = {}) {
   const name = s.store_name || s.handle, bio = String(s.headline || s.about || s.bio || '').trim().slice(0, 140);
-  const avatar = s.avatar ? `<img class="scard-av" src="/uploads/${esc(s.avatar)}" alt="" loading="lazy">` : `<div class="scard-av scard-av-fb" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`;
+  const avatar = s.avatar ? `<img class="scard-av" src="/uploads/${esc(s.avatar)}" alt="" width="48" height="48" loading="lazy" decoding="async">` : `<div class="scard-av scard-av-fb" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`;
   return `<article class="scard"><a class="scard-head" href="/s/${esc(s.handle)}">${avatar}<span><strong>${esc(name)}</strong><span class="muted small">@${esc(s.handle)}</span></span></a>
     ${bio ? `<p class="scard-bio">${esc(bio)}</p>` : ''}${await RV.line(s.id) ? `<p class="scard-rep small muted">${await RV.line(s.id)}</p>` : ''}
     ${(s.previews || []).length ? `<div class="scard-prev">${s.previews.map((l) => `<a href="/listing/${l.id}" title="${esc(l.title)}">${V.img(l.image, 'thumb', l.title)}</a>`).join('')}</div>` : '<p class="muted small scard-empty">No listings yet — check back for their next drop.</p>'}

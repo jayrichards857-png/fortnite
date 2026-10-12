@@ -102,7 +102,7 @@ r.get('/dashboard/inventory', S, async (req, res) => {
   ${rows.map((l) => `<tr><td><input type="checkbox" class="sel" value="${l.id}" aria-label="Select ${esc(l.title)}"${['sold', 'reserved'].includes(l.status) ? ' disabled' : ''}></td><td>${V.img(l.image, 'thumb', l.title)}</td>
     <td><a href="/dashboard/listings/${l.id}/edit">${esc(l.title)}</a><div class="muted small">${esc([l.brand, l.size].filter(Boolean).join(' · '))}</div></td><td>${esc(l.sku || '—')}</td>
     <td class="num">${money(l.price_cents)}</td><td class="num">${l.cost_cents == null ? '—' : money(l.cost_cents)}</td><td>${V.statusPill(l.status)}</td><td>${sale[l.status]}</td><td>${date(l.created_at)}</td>
-    <td style="white-space:nowrap"><a class="btn ghost small" href="/dashboard/listings/${l.id}/edit">Edit</a> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/duplicate" data-redirect="/dashboard/listings/{id}/edit">Duplicate</button>
+    <td class="row-actions nowrap"><a class="btn ghost small" href="/dashboard/listings/${l.id}/edit">Edit</a> <button class="btn ghost small" data-post="/api/seller/listings/${l.id}/duplicate" data-redirect="/dashboard/listings/{id}/edit">Duplicate</button>
       ${l.status === 'active' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/pause">Pause</button> <a class="btn ghost small" href="/dashboard/listings/${l.id}/record-sale">Record sale</a>` : ''}
       ${l.status === 'sold' && !recorded.has(l.id) ? `<a class="btn small" href="/dashboard/listings/${l.id}/record-sale">Record sale</a>` : ''}
       ${l.status === 'archived' ? `<button class="btn ghost small" data-post="/api/seller/listings/${l.id}/resume">Resume</button>` : ''}

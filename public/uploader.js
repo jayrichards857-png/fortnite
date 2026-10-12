@@ -8,7 +8,7 @@
     const sync = () => { hidden.value = JSON.stringify(files); add.style.display = files.length >= max ? 'none' : ''; };
     const render = (f) => {
       const el = document.createElement('div'); el.className = 'up-item'; el.dataset.file = f;
-      el.innerHTML = `<img src="/uploads/${f}" alt="Uploaded photo"><button type="button" aria-label="Remove photo">×</button>`;
+      el.innerHTML = `<img src="/uploads/${f}" alt="Uploaded photo" width="96" height="120"><button type="button" aria-label="Remove photo">×</button>`;
       el.querySelector('button').onclick = () => { files.splice(files.indexOf(f), 1); el.remove(); sync(); };
       box.insertBefore(el, add);
     };

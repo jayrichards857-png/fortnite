@@ -25,7 +25,8 @@ const gmailHref = (subject = SUBJECT) => `https://mail.google.com/mail/?view=cm&
 const contactPageLink = (text = 'Contact') => `<a href="/contact">${esc(text)}</a>`;
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
-const img = (file, cls = '', alt = '') => (file ? `<img class="${cls}" src="/uploads/${esc(file)}" alt="${esc(alt)}" loading="lazy">` : `<div class="${cls} noimg" aria-label="No photo"></div>`);
+const IMG_DIMS = { thumb: [44, 55], 'avatar-img': [92, 92], 'banner-img': [1200, 300], 'logo-img': [180, 44] };      // intrinsic size hints (reserve space before the photo loads); CSS still controls the rendered size
+const img = (file, cls = '', alt = '') => { const [w, h] = IMG_DIMS[String(cls).split(' ')[0]] || [400, 500]; return file ? `<img class="${cls}" src="/uploads/${esc(file)}" alt="${esc(alt)}" width="${w}" height="${h}" loading="lazy" decoding="async">` : `<div class="${cls} noimg" role="img" aria-label="No photo"></div>`; };
 
 /** "Selling available <date>" — the date comes from PUBLIC_RELEASE_DATE; without one we say "very soon" rather than invent a date. */
 function releaseText() {
@@ -61,20 +62,23 @@ function header(user, path, counts, wide) {
       <button aria-label="Search">${icon('search')}</button></form>
     <div class="actions">
       ${user ? `<a class="iconlink" href="/messages" aria-label="Messages">${icon('chat')}<b class="badge" id="hdr-msg-badge"${counts.messages ? '' : ' hidden'}>${counts.messages || ''}</b></a>
-      <a class="iconlink" href="/favorites" aria-label="Favorites">${icon('heart')}</a>
+      <a class="iconlink hide-m" href="/favorites" aria-label="Favorites">${icon('heart')}</a>
       <a class="iconlink" href="/notifications" aria-label="Notifications">${icon('bell')}${counts.notifications ? `<b class="badge">${counts.notifications}</b>` : ''}</a>
-      <details class="dd right"><summary class="iconlink" aria-label="Account">${icon('user')}</summary><div class="dd-menu">
+      <details class="dd right hide-m"><summary class="iconlink" aria-label="Account">${icon('user')}</summary><div class="dd-menu">
         <span class="dd-title">${esc(user.display_name)}</span>
         <a href="/account">Account</a>${user.is_seller ? '<a href="/dashboard">Seller dashboard</a>' : ''}${user.is_admin ? '<a href="/admin">Admin</a>' : ''}
         <a href="/messages">Messages</a><a href="/following">Following</a><a href="/orders">My orders</a><button type="button" data-logout>Log out</button></div></details>`
-      : `<a class="btn small ghost" href="/login">Log in</a>${config.signups === 'open' ? '<a class="btn small" href="/register">Sign up</a>' : '<a class="btn small ghost soon-pill" href="/register">Coming soon</a>'}`}
+      : `<a class="btn small ghost hide-m" href="/login">Log in</a>${config.signups === 'open' ? '<a class="btn small" href="/register">Sign up</a>' : '<a class="btn small ghost soon-pill hide-m" href="/register">Coming soon</a>'}`}
       ${config.checkoutMode === 'platform' ? `<a class="iconlink" href="/cart" aria-label="Cart">${icon('cart')}${counts.cart ? `<b class="badge">${counts.cart}</b>` : ''}</a>` : ''}
       <details class="dd right mobile-only"><summary class="iconlink" aria-label="Menu">${icon('menu')}</summary><div class="dd-menu">
-        <a href="/">Home</a><a href="/shop">Shop</a><a href="/contact">Contact</a>${user && user.is_seller ? '<a href="/dashboard">Sell</a>' : '<a href="/sell">Sell</a>'}${user ? '<a href="/orders">Orders</a>' : ''}
+        <a href="/">Home</a><a href="/shop">Shop</a><a href="/sellers">Sellers</a><a href="/contact">Contact</a>${user && user.is_seller ? '<a href="/dashboard">Sell</a>' : '<a href="/sell">Sell</a>'}${user ? '<a href="/orders">My orders</a>' : ''}
+        ${user ? `<span class="dd-title">${esc(user.display_name)}</span><a href="/account">Account</a><a href="/favorites">Favorites</a><a href="/following">Following</a>${user.is_seller ? '<a href="/dashboard">Seller dashboard</a>' : ''}${user.is_admin ? '<a href="/admin">Admin</a>' : ''}<button type="button" data-logout>Log out</button>` : `<a href="/login">Log in</a>${config.signups === 'open' ? '<a href="/register">Sign up</a>' : ''}`}
         <span class="dd-title">Categories</span>${cats}</div></details>
     </div>
   </div>
-</header>`;
+</header>
+<form class="msearch mobile-only" action="/shop" role="search"><label class="sr" for="hq-m">Search</label>
+  <input id="hq-m" name="q" type="search" placeholder="Search brand, item, size…" autocomplete="off" enterkeyhint="search"><button aria-label="Search">${icon('search')}</button></form>`;
 }
 
 async function layout({ title, body, user, path = '/', description = '', wide = false, scripts = '', head = '' }) {
@@ -86,7 +90,7 @@ async function layout({ title, body, user, path = '/', description = '', wide = 
   const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey && config.checkoutMode === 'platform'
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
   const testData = config.sandbox ? '<div class="banner warn-banner" role="status"><strong>SHIPPING SANDBOX — TEST DATA ONLY.</strong> Nothing here is a real customer, payment or order. Labels are Shippo test labels and are not valid postage.</div>' : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"><meta name="theme-color" content="#faf9f6"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%231f4d36%27/%3E%3Ctext x=%2716%27 y=%2722.5%27 font-family=%27Arial,sans-serif%27 font-size=%2719%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EP%3C/text%3E%3C/svg%3E">
 <title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'PairPlug — The Clothing Marketplace. Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.')}">
 <link rel="stylesheet" href="/app.css">${head}</head><body>
 <a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.selling_restricted_at ? `<div class="banner warn-banner" role="alert"><strong>Selling is paused on your account</strong>${user.selling_restricted_until ? ` until ${new Date(user.selling_restricted_until * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ' while PairPlug reviews a report'}. You can still log in, reply to PairPlug and handle existing orders. <a href="/dashboard/appeal">Appeal this decision</a> · <a href="/support">Help &amp; reporting</a></div>` : ''}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}

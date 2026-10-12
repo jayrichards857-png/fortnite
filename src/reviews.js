@@ -165,7 +165,7 @@ async function panel(o) {
   if (!COMPLETE.includes(o.status)) return '';
   const cur = await forOrder(o.id);
   const form = (url, method, c) => `<form data-api="${url}" data-method="${method}" data-reload>
-      <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="thumbsUp"${c && c.thumbs_up ? ' checked' : ''}> ${THUMB} <strong>Thumbs-up</strong> — I had a good experience with this seller</label>
+      <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="thumbsUp"${c && c.thumbs_up ? ' checked' : ''}> <span>${THUMB} <strong>Thumbs-up</strong> — I had a good experience with this seller</span></label>
       <label for="rv${o.id}" style="margin-top:10px">Your review <span class="opt">(optional, up to ${MAX_BODY} characters)</span></label><textarea id="rv${o.id}" name="body" maxlength="${MAX_BODY}" placeholder="How was the item, the communication and the shipping?">${esc(c && c.body || '')}</textarea>
       <button class="btn" type="submit" style="margin-top:10px">${c ? 'Save changes' : 'Post review'}</button></form>`;
   if (!cur || cur.status === 'removed') return `<div class="panel" id="review"><h3>Leave a review</h3><p class="small muted">Shown on the seller's store as an order-linked review with your first name. PairPlug does not verify external payments. You can edit or remove it later.</p>${form(`/api/orders/${o.id}/review`, 'POST', null)}</div>`;

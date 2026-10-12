@@ -37,7 +37,8 @@ r.get('/s/:handle', async (req, res) => {
   const reviews = await q.all('SELECT r.*, u.display_name FROM reviews r JOIN users u ON u.id = r.buyer_id WHERE r.seller_id = ? ORDER BY r.created_at DESC LIMIT 5', s.id);
   const favs = new Set(req.user ? (await q.all('SELECT listing_id FROM favorites WHERE user_id = ?', req.user.id)).map((f) => f.listing_id) : []);
   const name = s.store_name || s.handle, place = [s.city, s.region, s.country].filter(Boolean).join(', ');
-  const img = (f, cls, alt) => (f ? `<img class="${cls}" src="/uploads/${esc(f)}" alt="${esc(alt)}">` : '');
+  const DIMS = { 'avatar-img': [92, 92], 'banner-img': [1200, 300], 'logo-img': [180, 44] };
+  const img = (f, cls, alt) => (f ? `<img class="${cls}" src="/uploads/${esc(f)}" alt="${esc(alt)}" width="${(DIMS[cls] || [400, 400])[0]}" height="${(DIMS[cls] || [400, 400])[1]}" decoding="async">` : '');
   const links = (st.links || []).map((l) => `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow ugc">${esc(l.kind)} ↗</a>`).join('');
   const body = `${isDraft ? '<div class="form-err" style="margin-bottom:12px"><strong>Preview.</strong> Only you can see these unpublished changes. <a href="/dashboard/storefront">Back to the editor</a></div>' : ''}
   <div class="store theme-${esc(st.theme)} acc-${esc(st.accent)}">
@@ -45,7 +46,7 @@ r.get('/s/:handle', async (req, res) => {
     <div class="store-head"><div class="store-id">${st.avatar ? img(st.avatar, 'avatar-img', `${name} profile picture`) : `<div class="avatar" aria-hidden="true">${esc(name[0].toUpperCase())}</div>`}
       <div class="store-title">${st.logo ? img(st.logo, 'logo-img', `${name} logo`) : ''}<h1>${esc(name)}</h1>${st.headline ? `<p class="headline">${esc(st.headline)}</p>` : ''}
         <div class="meta">@${esc(s.handle)}${st.showLocation && place ? ` · ${esc(place)}` : ''} ${isLocalShip(s.country) && st.showLocation ? '<span class="badge-local">Local ship</span>' : ''}</div>
-        <div class="meta">${await RV.line(s.id) || 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div>
+        <div class="meta">${await RV.line(s.id) || 'No reviews yet'} · ${sold} completed order${sold === 1 ? '' : 's'}</div></div></div>
       <div class="store-actions">${owner ? '<a class="btn" href="/dashboard/storefront">Customize</a>' : `${D.heartBtn(s.handle, req.user ? (await D.followedSet(req.user)).has(s.id) : false, 'btn ghost')}<button class="btn" data-chat-seller="${esc(s.handle)}">Contact seller</button><a class="btn ghost small" href="/support?seller=${esc(s.handle)}">Report</a>`}</div></div>
     ${links ? `<div class="chips" aria-label="Seller links">${links}</div>` : ''}
     ${st.announcement ? `<div class="store-announce" role="note">${esc(st.announcement)}</div>` : ''}
@@ -85,7 +86,7 @@ r.get('/dashboard/storefront', S, async (req, res) => {
     <h3 style="margin-top:20px">Featured items <span class="opt">(up to ${SF.LIMITS.featured}, shown first)</span></h3>
     ${mine.length ? `<div class="picks col">${mine.map((l) => `<label class="opt-pick"><input type="checkbox" name="featured" value="${l.id}"${(w.featured || []).includes(l.id) ? ' checked' : ''}> <span>${esc(l.title)}</span></label>`).join('')}</div>` : '<p class="muted small">You have no items for sale yet. Publish a listing first.</p>'}
     <h3 style="margin-top:20px">Links <span class="opt">(optional, up to ${SF.LIMITS.links})</span></h3>
-    ${links.map((l, i) => `<div class="row"><div><label class="sr" for="lk${i}">Link type ${i + 1}</label><select id="lk${i}" data-link-kind="${i}"><option value="">Link type…</option>${Object.keys(SF.LINK_KINDS).map((k) => `<option value="${k}"${l.kind === k ? ' selected' : ''}>${k}</option>`).join('')}</select></div><div style="grid-column:span 2"><label class="sr" for="lu${i}">Link URL ${i + 1}</label><input id="lu${i}" data-link-url="${i}" inputmode="url" placeholder="https://…" value="${esc(l.url)}"></div></div>`).join('')}
+    ${links.map((l, i) => `<div class="row link-row"><div><label class="sr" for="lk${i}">Link type ${i + 1}</label><select id="lk${i}" data-link-kind="${i}"><option value="">Link type…</option>${Object.keys(SF.LINK_KINDS).map((k) => `<option value="${k}"${l.kind === k ? ' selected' : ''}>${k}</option>`).join('')}</select></div><div class="link-url"><label class="sr" for="lu${i}">Link URL ${i + 1}</label><input id="lu${i}" data-link-url="${i}" inputmode="url" placeholder="https://…" value="${esc(l.url)}"></div></div>`).join('')}
     <p class="hint">Only https links to these sites are accepted. Your email address is never shown.</p>
     <label style="font-weight:400;display:flex;gap:8px;margin-top:14px"><input type="checkbox" name="showLocation"${w.showLocation ? ' checked' : ''}> Show my city, region and “Local ship” badge</label>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px"><button type="button" class="btn ghost" id="sf-save">Save draft</button><a class="btn ghost" id="sf-preview" href="/s/${esc(u.handle)}?preview=1" target="_blank" rel="noopener">Preview draft ↗</a>
