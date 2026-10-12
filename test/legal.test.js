@@ -37,16 +37,16 @@ test('the policies say what is true: direct payments, no custody, seller-handled
   assert.match(all['/privacy'], /no self-service download or delete/i); assert.match(all['/privacy'], /do not strip|do not use advertising|not strip/i); assert.match(all['/privacy'], /pp_session/);
   assert.match(all['/privacy'], /Search terms/); assert.match(all['/privacy'], /at least 3 searches/); assert.match(all['/privacy'], /30 days/);
   // nothing fabricated: no address/entity unless configured, no regulatory or certification claims, no "guarantee/escrow/protection" promises PairPlug doesn't make
-  assert.match(all['/terms'], /registered business name and mailing address have not been published yet/i);
+  assert.match(all['/terms'], /registered business name and mailing address have not been published yet/i); assert.match(all['/terms'], /pairplugservice@gmail\.com/);
   assert.doesNotMatch(joined, /\b(GDPR|CCPA|PIPEDA|SOC ?2|PCI|ISO ?27001|HIPAA)\b[^.]{0,40}(compliant|certified|compliance)/i); assert.doesNotMatch(joined, /we are (fully )?compliant|certified|bank-level|military-grade|100% secure/i);
   assert.doesNotMatch(joined, /buyer protection (program|guarantee)|money-back guarantee|PairPlug (will refund|holds your)/i);
-  assert.doesNotMatch(joined, /@[a-z0-9-]+\.(com|net|org|io)\b/i, 'no email address is invented'); assert.doesNotMatch(joined, /\b\d{2,5} [A-Z][a-z]+ (Street|St|Ave|Avenue|Road|Rd)\b/);
+  assert.doesNotMatch(joined.replaceAll('pairplugservice@gmail.com', ''), /@[a-z0-9-]+\.(com|net|org|io)\b/i, 'no email address other than the official one appears'); assert.doesNotMatch(joined, /\b\d{2,5} [A-Z][a-z]+ (Street|St|Ave|Avenue|Road|Rd)\b/);
 });
 
-test('contact details appear only when the operator configured them', async () => {
+test('contact details: the official email by default; an explicit override is honoured; entity/address only when configured', async () => {
   const config = require('../src/config'), keep = { ...config }; const anon = new H.Client();
   config.supportEmail = 'help@pairplug.example'; config.legalEntity = 'Example Goods LLC'; config.legalAddress = '1 Example Way, Austin, TX';
-  try { const t = await get(anon, '/terms'), p = await get(anon, '/privacy'); assert.match(t, /Example Goods LLC/); assert.match(t, /1 Example Way/); assert.match(p, /mailto:help@pairplug\.example/); assert.doesNotMatch(t, /have not been published yet/); }
+  try { const t = await get(anon, '/terms'), p = await get(anon, '/privacy'); assert.match(t, /Example Goods LLC/); assert.match(t, /1 Example Way/); assert.match(p, /mailto:help@pairplug\.example/); assert.doesNotMatch(p, /mailto:pairplugservice@gmail\.com/); assert.doesNotMatch(t, /have not been published yet/); }
   finally { config.supportEmail = keep.supportEmail; config.legalEntity = keep.legalEntity; config.legalAddress = keep.legalAddress; }
   assert.doesNotMatch(await get(anon, '/terms'), /Example Goods/);
 });

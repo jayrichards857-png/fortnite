@@ -41,7 +41,7 @@ sudo npm ci --omit=dev
 sudo chown -R pairplug:pairplug /opt/pairplug /var/lib/pairplug /var/backups/pairplug
 # 3. Config (no secrets in beta mode)
 sudo cp deploy/pairplug.env.example /etc/pairplug.env && sudo chown root:pairplug /etc/pairplug.env && sudo chmod 640 /etc/pairplug.env
-sudo nano /etc/pairplug.env   # set PUBLIC_URL, PUBLIC_RELEASE_DATE (confirm the real date), SUPPORT_EMAIL. No trailing '# comments' after values (the app refuses to start if it sees one)
+sudo nano /etc/pairplug.env   # set PUBLIC_URL, PUBLIC_RELEASE_DATE (confirm the real date). SUPPORT_EMAIL is optional: unset means the official pairplugservice@gmail.com. No trailing '# comments' after values (the app refuses to start if it sees one)
 # 4. Service, proxy, backups
 sudo cp deploy/pairplug.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now pairplug
 sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo nano /etc/caddy/Caddyfile && sudo systemctl reload caddy      # set your hostname

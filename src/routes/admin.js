@@ -11,10 +11,12 @@ const { transition } = require('../orderMachine');
 const { audit } = require('../audit');
 const invitations = require('../invitations');
 
+const M = require('../moderation');
 const r = express.Router();
 const A = [auth.requireAdmin];
-const nav = (p) => `<nav class="subnav">${[['/admin', 'Overview'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/responses', 'Response times'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']].map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
-const page = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, path: '/admin', ...opts, body: nav(req.path) + opts.body }));
+const STAFF_NAV = [['/moderation', 'Moderation'], ['/moderation/users', 'Find users'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/moderation/log', 'Action log']];
+const nav = (p, staffOnly) => `<nav class="subnav">${(staffOnly ? STAFF_NAV : [['/admin', 'Overview'], ['/moderation', 'Moderation'], ['/admin/moderators', 'Moderators'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/responses', 'Response times'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']]).map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+const page = (req, res, opts) => res.send(V.layout({ user: req.user, wide: true, path: '/admin', ...opts, body: nav(req.path, !(req.user && req.user.is_admin)) + opts.body }));
 const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ''}</div>`;
 
 r.get('/admin', A, (req, res) => {
@@ -113,20 +115,11 @@ r.post('/api/admin/users/:id(\\d+)/seller-invite', A, (req, res) => {
   const out = invitations.create(req.user, { kind: 'seller', email: u.email, note: 'Created from Users page' });
   res.set('Cache-Control', 'no-store').json({ ok: true, link: out.link, expiresAt: out.expiresAt });
 });
+// Kept for back-compat with the Users table; now a thin wrapper over the moderation service (reason required, logged in moderation_actions + audit).
 r.post('/api/admin/users/:id(\\d+)/ban', A, (req, res) => {
-  const id = Number(req.params.id); if (id === req.user.id) throw new HttpError(400, "You can't ban yourself.");
-  const banned = req.body.banned ? 1 : 0;
-  audit(req.user, banned ? 'user_suspended' : 'user_reactivated', { type: 'user', id });
-  tx(() => {
-    q.run('UPDATE users SET banned = ? WHERE id = ?', banned, id);
-    if (banned) {
-      q.run('DELETE FROM sessions WHERE user_id = ?', id);
-      // Take the user's unsold listings off the marketplace; items in a live checkout stay reserved so orders can complete.
-      q.run("UPDATE listings SET status = 'archived' WHERE seller_id = ? AND status = 'active'", id);
-      require('../fraud').warnPendingBuyers(id, 'the account was suspended');
-    }
-  });
-  res.json({ ok: true });
+  auth.rateLimit(`mod:${req.user.id}`, 200, 3600);
+  const out = req.body.banned ? M.ban(req.user, req.params.id, req.body.reason, req.body.caseId) : M.unban(req.user, req.params.id, req.body.reason, req.body.caseId);
+  res.json({ ok: true, ...(out || {}) });
 });
 r.post('/api/admin/users/:id(\\d+)/plan', A, (req, res) => {
   if (!['standard', 'pro'].includes(req.body.plan)) throw new HttpError(422, 'Invalid plan');

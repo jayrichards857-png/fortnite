@@ -42,7 +42,8 @@ app.use((req, res, next) => {
   return res.redirect('/account');
 });
 
-app.use(require('./routes/legal').router);   // terms, privacy, payments/refunds/disputes, seller rules (public)
+app.use(require('./routes/legal').router);
+app.use(require('./routes/moderation').router);   // moderator setup links, /moderation, moderator management (admin)   // terms, privacy, payments/refunds/disputes, seller rules (public)
 app.use(require('./routes/account').router);  // closed sign-ups, invitations, verification, account settings
 app.use(require('./routes/store').router);   // storefronts + editor (takes over /s/:handle)
 app.use(require('./routes/shipping').router);  // seller shipping labels (test mode)
@@ -109,6 +110,7 @@ if (require.main === module) {
     const problems = assertProductionConfig();
     if (problems.length) { console.error('Refusing to start:\n - ' + problems.join('\n - ')); process.exit(1); }
   }
+  if (config.supportEmailOverridden) console.warn(`NOTE: SUPPORT_EMAIL is set to ${config.supportEmail}, which overrides the official PairPlug address (${config.officialSupportEmail}). Make sure that is intended.`);
   const server = createServer();
   server.listen(config.port, config.host, () => {
     startJobs();

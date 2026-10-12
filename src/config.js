@@ -17,6 +17,8 @@ const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
 if (onboardingRaw && !['open', 'invite'].includes(onboardingRaw)) envProblems.push('SELLER_ONBOARDING must be exactly "open" or "invite"');
 const signupsRaw = val('SIGNUPS').toLowerCase();
 if (signupsRaw && !['open', 'closed'].includes(signupsRaw)) envProblems.push('SIGNUPS must be exactly "open" or "closed"');
+const OFFICIAL_SUPPORT_EMAIL = 'pairplugservice@gmail.com';
+const SUPPORT_EMAIL_OK = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(val('SUPPORT_EMAIL') || '');
 const releaseRaw = val('PUBLIC_RELEASE_DATE');
 if (releaseRaw && !(/^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) && !Number.isNaN(Date.parse(releaseRaw + 'T00:00:00Z')))) envProblems.push('PUBLIC_RELEASE_DATE must be a valid YYYY-MM-DD date');
 const emailProviderRaw = val('EMAIL_PROVIDER').toLowerCase();
@@ -64,7 +66,11 @@ module.exports = {
   legalEntity: val('LEGAL_ENTITY').slice(0, 120), legalAddress: val('LEGAL_ADDRESS').slice(0, 240),
   releaseDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) ? releaseRaw : '',
   inviteTtlHours: 168,
-  supportEmail: /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(val('SUPPORT_EMAIL') || '') ? val('SUPPORT_EMAIL') : '',
+  // Official contact address for reports, appeals and support. SUPPORT_EMAIL may override it; an override is flagged at startup. It is a mailto: link only:
+  // email does not create cases or tickets, and no response time is promised.
+  supportEmail: SUPPORT_EMAIL_OK ? val('SUPPORT_EMAIL') : OFFICIAL_SUPPORT_EMAIL,
+  supportEmailOverridden: SUPPORT_EMAIL_OK && val('SUPPORT_EMAIL').toLowerCase() !== OFFICIAL_SUPPORT_EMAIL,
+  officialSupportEmail: OFFICIAL_SUPPORT_EMAIL,
   // Transactional email. 'none' (default): messages are recorded in the outbox but NOT sent. 'resend': sent via the Resend HTTP API (unverified live).
   email: { provider: emailProviderRaw === 'resend' ? 'resend' : 'none', apiKey: env.EMAIL_API_KEY || '', from: val('EMAIL_FROM') },
   sellerAllowedEmails: [],   // retired: seller access is now by admin-issued invitation (see src/invitations.js)

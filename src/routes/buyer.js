@@ -167,7 +167,7 @@ const authForm = (kind, next) => {
     <input type="hidden" name="next" value="${esc(next)}">
     ${reg ? `<label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="terms" required> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and have read the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/payments" target="_blank" rel="noopener">how payments and refunds work</a>.</span></label>` : ''}
     <button class="btn block" type="submit" style="margin-top:16px">${reg ? 'Sign up' : 'Log in'}</button></form>
-  <p class="small muted" style="margin-top:14px">${reg ? 'Already have an account? <a href="/login">Log in</a>' : 'New here? <a href="/register">Create an account</a>'}${reg ? '' : '<br>Forgot your password? Password reset needs an email provider, which isn\'t configured — contact support.'}</p></div>`;
+  <p class="small muted" style="margin-top:14px">${reg ? 'Already have an account? <a href="/login">Log in</a>' : 'New here? <a href="/register">Create an account</a>'}${reg ? '' : '<br>Forgot your password? Password reset needs an email provider, which isn\'t configured — email ${V.contactLink()}.'}${reg ? `<br>Questions? Email ${V.contactLink()}.` : ''}</p></div>`;
 };
 const safeNext = (n) => (typeof n === 'string' && /^\/(?!\/)[\w\-./?=&%]*$/.test(n) ? n : '/');
 r.get('/login', (req, res) => (req.user ? res.redirect('/') : page(req, res, { title: 'Log in', body: authForm('login', safeNext(req.query.next)) })));
@@ -194,7 +194,7 @@ r.post('/api/login', wrap(async (req, res) => {
   // Always run a hash comparison so response time doesn't reveal whether the email exists.
   const ok = u ? auth.verifyPassword(String(req.body.password || ''), u.password_hash) : (auth.verifyPassword('x', auth.DUMMY_HASH), false);
   if (!u || !ok) throw new HttpError(401, 'Incorrect email or password.');
-  if (u.banned) throw new HttpError(403, 'This account has been suspended.');
+  if (u.banned) throw new HttpError(403, `This account has been suspended. To ask about it or appeal, email ${config.supportEmail}.`);
   auth.createSession(res, u.id);
   res.json({ ok: true });
 }));

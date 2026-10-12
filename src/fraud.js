@@ -31,26 +31,6 @@ function warnPendingBuyers(sellerId, why) {
   return n;
 }
 
-function restrictSelling(admin, caseRow, reason) {
-  const why = clean(reason, 500); if (why.length < 5) throw new HttpError(422, 'Please fix the highlighted fields.', { reason: 'Write at least 5 characters.' });
-  const s = caseRow.subject_user_id && q.get('SELECT id, is_admin, is_seller, selling_restricted_at r FROM users WHERE id = ?', caseRow.subject_user_id);
-  if (!s || s.is_admin) throw new HttpError(409, 'This case has no seller who can be restricted.');
-  if (s.r) throw new HttpError(409, 'Selling is already restricted for this seller.');
-  q.run('UPDATE users SET selling_restricted_at = ?, selling_restricted_reason = ?, selling_restricted_case = ? WHERE id = ?', now(), why, caseRow.id, s.id);
-  const paused = q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE seller_id = ? AND status IN ('active','draft')", now(), s.id).changes;
-  const warned = warnPendingBuyers(s.id, 'selling is paused');
-  notify(s.id, `restrict:${caseRow.id}:${now()}`, 'Selling is paused on your account', 'PairPlug is reviewing a report. Your listings are paused and you cannot publish or take new orders for now. You can still log in, handle existing orders and reply to PairPlug.', '/support');
-  audit(admin, 'seller_restricted', { type: 'user', id: s.id, detail: { case: caseRow.id, listingsPaused: paused, buyersWarned: warned } });
-  return { paused, warned };
-}
-function liftRestriction(admin, caseRow, note) {
-  const s = caseRow.subject_user_id && q.get('SELECT id, selling_restricted_at r FROM users WHERE id = ?', caseRow.subject_user_id);
-  if (!s || !s.r) throw new HttpError(409, 'Selling is not restricted for this seller.');
-  q.run('UPDATE users SET selling_restricted_at = NULL, selling_restricted_reason = NULL, selling_restricted_case = NULL WHERE id = ?', s.id);
-  notify(s.id, `unrestrict:${caseRow.id}:${now()}`, 'Selling is available again', 'PairPlug lifted the restriction. Your paused listings stay paused until you publish them again.', '/dashboard/inventory');
-  audit(admin, 'seller_restriction_lifted', { type: 'user', id: s.id, detail: { case: caseRow.id, note: clean(note, 300) || null } });
-}
-
 // ------------------------------------------------------------------ risk summary (operator only)
 /** Facts about reports against a seller. Counts only: how many different people reported, how many cases, order outcomes. Nothing is scored or auto-actioned. */
 function sellerRisk(sellerId) {
@@ -140,4 +120,4 @@ function markSubmitted(admin, id, { channel, reference, note }) {
 }
 const packetsFor = (caseId) => q.all('SELECT id, provider, provider_host, status, prepared_at, submitted_at, channel, reference FROM processor_reports WHERE case_id = ? ORDER BY id DESC', caseId);
 
-module.exports = { CATEGORIES, category, sellerHeld, restrictSelling, liftRestriction, warnPendingBuyers, sellerRisk, repeatReported, providersFor, providerOf, PROVIDER_NAME, preparePacket, markSubmitted, packetsFor };
+module.exports = { CATEGORIES, category, sellerHeld, warnPendingBuyers, sellerRisk, repeatReported, providersFor, providerOf, PROVIDER_NAME, preparePacket, markSubmitted, packetsFor };

@@ -105,9 +105,9 @@ test('admin actions: pause listing / suspend seller are audited and scoped to th
   assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'pause_listing', listingId: foreign })).status, 404);
   assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'pause_listing', listingId: live })).status, 200);
   assert.equal(q.get('SELECT status FROM listings WHERE id = ?', live).status, 'archived');
-  assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'suspend_seller' })).status, 200);
+  assert.equal((await adm.post(`/api/admin/cases/${c}/action`, { action: 'suspend_seller', reason: 'Confirmed scam activity' })).status, 200);
   assert.equal(q.get('SELECT banned FROM users WHERE handle = ?', seller.handle).banned, 1);
-  assert.ok(audits('listing_paused_for_case').length && audits('user_suspended').length);
+  assert.ok(audits('listing_paused_for_case').length && audits('moderation_ban').length);
   assert.equal((await adm.get('/admin/orders')).status, 200);
   const page = (await adm.get('/admin/orders')).text; assert.ok(!page.includes(H.address.line1), 'no addresses in the admin order overview');
   assert.equal((await adm.get('/admin/responses')).status, 200);

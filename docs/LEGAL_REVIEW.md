@@ -4,7 +4,7 @@ The pages live in `src/legal.js` (`/terms`, `/privacy`, `/payments`, `/rules`, i
 
 ## Business details still missing (owner input)
 * Legal entity name and mailing address → set `LEGAL_ENTITY` / `LEGAL_ADDRESS` (shown only when set).
-* A public support/privacy email → set `SUPPORT_EMAIL`. Until then the pages point to the in-app Help & reporting forms.
+* Support/privacy email: the official address `pairplugservice@gmail.com` is the built-in default (`SUPPORT_EMAIL` can override it; an override is logged at startup). Confirm you own and monitor that inbox. It is a mailto link only: no ticketing, no auto-created cases, no response time promised.
 * Governing law, venue, and any dispute-resolution/arbitration terms: deliberately left out ("not set for this beta").
 * Response times for support, privacy requests and reports: none promised.
 * Retention schedule for accounts, messages, orders, notifications and the audit log: none exists yet (the policy says so).

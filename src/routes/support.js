@@ -15,6 +15,8 @@ const { page: adminPage, stat } = require('./admin');
 
 const r = express.Router();
 const A = [auth.requireAdmin];
+const S = [auth.requireStaff];
+const M = require('../moderation');
 const U = [auth.requireUser];
 const when = (t) => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') : '—');
 const label = (s) => esc(String(s).replace(/_/g, ' '));
@@ -81,7 +83,7 @@ const eventLine = (e, admin) => {
 
 r.get('/support', (req, res) => {
   const mine = req.user ? cases.mine(req.user) : [];
-  const contact = config.supportEmail ? `<p>You can also email <a href="mailto:${esc(config.supportEmail)}">${esc(config.supportEmail)}</a>.</p>` : '<p class="muted small">No support email address is configured yet. Use the report forms here.</p>';
+  const contact = `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, concerns about a buyer or seller, account issues and appeals, safety concerns and general questions.</p><p class="small muted">Email is read by the operator. It does not create a case automatically and there is no guaranteed response time; to attach photos and screenshots to a tracked case, use the report forms on this page.</p>`;
   const body = `<h1>Help &amp; reporting</h1><div class="two"><section>
     <div class="panel"><h3>How problems are handled</h3><ul class="plain"><li><strong>Message the seller first.</strong> Most problems are solved in a conversation. Sellers are expected to reply within <strong>48 hours</strong>. That is an expectation, not a guarantee.</li>
       <li>Buyers pay sellers directly through the seller's own payment link. <strong>PairPlug does not hold, move, freeze or refund money</strong> and cannot reverse a payment. Refunds are issued by the seller in their own payment provider; <strong>your payment provider or card issuer handles chargebacks and payment disputes</strong>, so contact them yourself if you were charged and did not get what you paid for.</li>
@@ -127,13 +129,13 @@ r.post('/api/seller/orders/:id(\\d+)/refunded', auth.requireSeller, (req, res) =
 });
 
 // ------------------------------------------------------------------ admin
-r.get('/admin/cases', A, (req, res) => {
+r.get('/admin/cases', S, (req, res) => {
   const st = req.query.status === 'closed' ? 'closed' : 'open';
   const rows = q.all(`SELECT c.*, rp.display_name reporter, sj.display_name subject FROM cases c JOIN users rp ON rp.id = c.reporter_id LEFT JOIN users sj ON sj.id = c.subject_user_id
     WHERE c.status ${st === 'open' ? "IN ('open','awaiting_seller','under_review')" : "NOT IN ('open','awaiting_seller','under_review')"} ORDER BY c.updated_at DESC LIMIT 200`);
   adminPage(req, res, { title: 'Cases', body: `<h1>Cases</h1><p><a href="/admin/cases">Open</a> · <a href="/admin/cases?status=closed">Closed</a></p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Case</th><th>Kind</th><th>Status</th><th>Reporter</th><th>About</th><th>Updated</th></tr></thead><tbody>${rows.map((c) => `<tr><td><a href="/admin/cases/${c.id}">#${c.id}</a></td><td>${label(c.kind)}</td><td>${V.statusPill(c.status)}</td><td>${esc(c.reporter)}</td><td>${esc(c.subject || '')}${c.order_id ? ` · order #${c.order_id}` : ''}</td><td>${when(c.updated_at)}</td></tr>`).join('')}</tbody></table></div>` : V.empty('No cases', '', ['/admin', 'Back'])}` });
 });
-r.get('/admin/cases/:id(\\d+)', A, (req, res) => {
+r.get('/admin/cases/:id(\\d+)', S, (req, res) => {
   const v = cases.view(req.user, req.params.id), c = v.case, open = cases.OPEN.includes(c.status);
   const o = c.order_id && q.get('SELECT id, status, total_cents, seller_id, buyer_id FROM orders WHERE id = ?', c.order_id);
   const listings = c.subject_user_id ? q.all("SELECT id, title, status FROM listings WHERE seller_id = ? AND status IN ('active','draft') ORDER BY id DESC LIMIT 50", c.subject_user_id) : [];
@@ -146,10 +148,10 @@ r.get('/admin/cases/:id(\\d+)', A, (req, res) => {
       <p class="small muted" style="margin:0 0 8px">Restricting or suspending affects the seller's PairPlug account only. It does not freeze, hold or reverse anything in their Stripe/PayPal account.</p>
       ${risk.user.selling_restricted_at ? `<form data-api="/api/admin/cases/${c.id}/action" data-reload><input type="hidden" name="action" value="lift_restriction"><input name="reason" maxlength="300" placeholder="Why (optional)" aria-label="Reason to lift"><button class="btn ghost small" type="submit">Lift restriction</button></form>`
         : `<form data-api="/api/admin/cases/${c.id}/action" data-reload><input type="hidden" name="action" value="restrict_selling"><label for="rs">Restrict selling while this is investigated</label><input id="rs" name="reason" maxlength="500" required placeholder="Reason (kept internal)"><p class="small muted">Pauses their listings, blocks publishing and new orders, hides the store, warns buyers with unpaid orders, and stops sending buyers to their payment link.</p><button class="btn danger small" type="submit">Restrict selling</button></form>`}</div>
-    <div class="panel"><h3>Payment-provider report</h3><p class="small muted">PairPlug has no integration with Stripe or PayPal: this prepares a factual packet for <strong>you</strong> to send through the provider's own fraud/abuse channel, and records that you did. PairPlug cannot see the provider's response or make it act.</p>
+    ${req.user.is_admin ? `<div class="panel"><h3>Payment-provider report</h3><p class="small muted">PairPlug has no integration with Stripe or PayPal: this prepares a factual packet for <strong>you</strong> to send through the provider's own fraud/abuse channel, and records that you did. PairPlug cannot see the provider's response or make it act.</p>
       ${packets.length ? `<ul class="plain">${packets.map((p) => `<li>#${p.id} · ${esc(F.PROVIDER_NAME[p.provider])} · ${p.status === 'submitted' ? `submitted ${when(p.submitted_at)} via ${esc(p.channel)}${p.reference ? ` (ref ${esc(p.reference)})` : ''}` : `prepared ${when(p.prepared_at)}, not yet submitted`} · <a href="/admin/processor-packets/${p.id}">Download packet</a>
         ${p.status === 'prepared' ? `<form data-api="/api/admin/processor-packets/${p.id}/submitted" data-reload style="margin-top:6px"><input name="channel" maxlength="120" placeholder="How you submitted it (e.g. provider's fraud report form)" required aria-label="Channel"><input name="reference" maxlength="120" placeholder="Provider's reference (optional)" aria-label="Reference"><button class="btn small" type="submit">I submitted this</button></form>` : ''}</li>`).join('')}</ul>` : '<p class="small">No packets yet.</p>'}
-      ${(provs.length ? provs : [{ provider: 'other', host: '' }]).map((p) => `<button class="btn ghost small" data-post="/api/admin/cases/${c.id}/processor-packet" data-body='${JSON.stringify({ provider: p.provider, host: p.host })}'>Prepare ${esc(F.PROVIDER_NAME[p.provider])} packet${p.host ? ` (${esc(p.host)})` : ''}</button>`).join(' ')}</div>` : '';
+      ${(provs.length ? provs : [{ provider: 'other', host: '' }]).map((p) => `<button class="btn ghost small" data-post="/api/admin/cases/${c.id}/processor-packet" data-body='${JSON.stringify({ provider: p.provider, host: p.host })}'>Prepare ${esc(F.PROVIDER_NAME[p.provider])} packet${p.host ? ` (${esc(p.host)})` : ''}</button>`).join(' ')}</div>` : ''}` : '';
   adminPage(req, res, { title: `Case #${c.id}`, body: `<h1>Case #${c.id} ${V.statusPill(c.status)}</h1><p class="muted small">${label(c.kind)}${c.category ? ` · reporter says: ${esc(F.CATEGORIES[c.category])}` : ''} · opened ${when(c.created_at)}${o ? ` · order #${o.id} (${label(o.status)}, ${money(o.total_cents)})` : ''}</p>
     <div class="two"><section><div class="panel"><h3>Timeline</h3><ul class="timeline">${v.events.map((e) => eventLine(e, true)).join('')}</ul></div>
       ${c.conversation_id ? `<div class="panel"><h3>Reported conversation</h3><p class="small muted">Opening it is recorded in the audit log.</p><button class="btn ghost" id="vc">View reported conversation</button><div id="conv"></div></div>` : ''}
@@ -158,16 +160,17 @@ r.get('/admin/cases/:id(\\d+)', A, (req, res) => {
       <form class="panel" data-api="/api/admin/cases/${c.id}/reply" data-reload><h3>Reply to the parties</h3><textarea name="body" maxlength="2000" required aria-label="Reply"></textarea><button class="btn small" type="submit">Send reply</button></form>
       <form class="panel" data-api="/api/admin/cases/${c.id}/status" data-reload><h3>Status</h3><select name="status" aria-label="Status">${cases.OPEN.map((s) => `<option value="${s}"${c.status === s ? ' selected' : ''}>${label(s)}</option>`).join('')}</select><button class="btn ghost small" type="submit">Update</button></form>
       <form class="panel" data-api="/api/admin/cases/${c.id}/action" data-reload><h3>Actions</h3>${listings.length ? `<input type="hidden" name="action" value="pause_listing"><label for="al">Pause a listing</label><select id="al" name="listingId">${listings.map((l) => `<option value="${l.id}">#${l.id} ${esc(l.title)}</option>`).join('')}</select><button class="btn ghost small" type="submit">Pause listing</button>` : '<p class="small muted">No active listings to pause.</p>'}</form>
-      ${c.subject_user_id ? `<div class="panel"><button class="btn danger small" type="button" data-post="/api/admin/cases/${c.id}/action" data-body='{"action":"suspend_seller"}' data-confirm="Suspend this seller and archive their active listings?">Suspend seller</button></div>` : ''}
+      ${c.subject_user_id && risk && !risk.user.banned ? `<form class="panel" data-api="/api/admin/cases/${c.id}/action" data-reload><input type="hidden" name="action" value="suspend_seller"><h3>Ban from PairPlug</h3><label for="bn">Reason (recorded, staff-only)</label><input id="bn" name="reason" maxlength="1000" required>
+        <label style="font-weight:400;display:flex;gap:8px;margin-top:8px"><input type="checkbox" name="confirm" required> I confirm: end their sessions, pause their listings and block this account. Orders and evidence are kept.</label><p class="small muted">A ban affects PairPlug only; it does not disable their external payment links.</p><button class="btn danger small" type="submit">Ban account</button></form>` : ''}
       <form class="panel" data-api="/api/admin/cases/${c.id}/decide" data-reload><h3>Decide and close</h3><select name="outcome" aria-label="Outcome"><option value="resolved">Resolved</option><option value="dismissed">Dismissed</option></select><textarea name="resolution" maxlength="2000" required aria-label="Decision"></textarea><button class="btn small" type="submit">Close case</button></form>` : ''}
-      ${rr && ['requested', 'seller_reported_refunded', 'buyer_disputes_refund'].includes(rr.status) ? `<form class="panel" data-api="/api/admin/refunds/${rr.id}/resolve" data-reload><h3>Refund request (${label(rr.status)})</h3><p class="small muted">Mark verified only if you independently confirmed the refund (for example, the seller's provider receipt). Otherwise close without a refund.</p><select name="outcome" aria-label="Outcome"><option value="verified">Verified: refund happened</option><option value="closed">Close without refund</option></select><textarea name="note" maxlength="1000" required aria-label="Note"></textarea><button class="btn small" type="submit">Record outcome</button></form>` : ''}</aside></div>
+      ${req.user.is_admin && rr && ['requested', 'seller_reported_refunded', 'buyer_disputes_refund'].includes(rr.status) ? `<form class="panel" data-api="/api/admin/refunds/${rr.id}/resolve" data-reload><h3>Refund request (${label(rr.status)})</h3><p class="small muted">Mark verified only if you independently confirmed the refund (for example, the seller's provider receipt). Otherwise close without a refund.</p><select name="outcome" aria-label="Outcome"><option value="verified">Verified: refund happened</option><option value="closed">Close without refund</option></select><textarea name="note" maxlength="1000" required aria-label="Note"></textarea><button class="btn small" type="submit">Record outcome</button></form>` : ''}</aside></div>
     ${c.conversation_id ? `<script>document.getElementById('vc').addEventListener('click',async()=>{try{const r=await pp.api('POST','/api/admin/cases/${c.id}/conversation',{});const d=document.getElementById('conv');d.textContent='';for(const m of r.messages){const p=document.createElement('p');p.style.margin='4px 0';const s=document.createElement('strong');s.textContent=m.display_name+': ';p.append(s,document.createTextNode(m.body||''));d.append(p)}}catch(e){alert(e.message)}})</script>` : ''}` });
 });
-r.post('/api/admin/cases/:id(\\d+)/note', A, (req, res) => { cases.adminNote(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/reply', A, (req, res) => { cases.adminMessage(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/status', A, (req, res) => { cases.adminSetStatus(req.user, req.params.id, req.body.status); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/decide', A, (req, res) => { cases.adminDecide(req.user, req.params.id, { outcome: req.body.outcome, resolution: req.body.resolution }); res.json({ ok: true }); });
-r.post('/api/admin/cases/:id(\\d+)/action', A, (req, res) => { cases.adminAction(req.user, req.params.id, { action: req.body.action, listingId: req.body.listingId, reason: req.body.reason }); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/note', S, (req, res) => { cases.adminNote(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/reply', S, (req, res) => { cases.adminMessage(req.user, req.params.id, req.body.body); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/status', S, (req, res) => { cases.adminSetStatus(req.user, req.params.id, req.body.status); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/decide', S, (req, res) => { cases.adminDecide(req.user, req.params.id, { outcome: req.body.outcome, resolution: req.body.resolution }); res.json({ ok: true }); });
+r.post('/api/admin/cases/:id(\\d+)/action', S, (req, res) => { cases.adminAction(req.user, req.params.id, { action: req.body.action, listingId: req.body.listingId, reason: req.body.reason }); res.json({ ok: true }); });
 r.post('/api/admin/cases/:id(\\d+)/processor-packet', A, (req, res) => {
   const c = q.get('SELECT * FROM cases WHERE id = ?', Number(req.params.id)); if (!c) throw new HttpError(404, 'Case not found');
   res.json({ ok: true, id: F.preparePacket(req.user, c, String(req.body.provider || ''), String(req.body.host || '').slice(0, 100)) });
@@ -178,11 +181,11 @@ r.get('/admin/processor-packets/:id(\\d+)', A, (req, res) => {
   audit(req.user, 'processor_packet_downloaded', { type: 'case', id: p.case_id, detail: { packet: p.id } });
   res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="pairplug-case-${p.case_id}-${p.provider}-packet.txt"`, 'Cache-Control': 'no-store' }).send(p.packet);
 });
-r.get('/admin/risk', A, (req, res) => {
+r.get('/admin/risk', S, (req, res) => {
   const rows = F.repeatReported();
   adminPage(req, res, { title: 'Reported sellers', body: `<h1>Sellers reported by more than one buyer</h1><p class="small muted">Counts of reports by different buyers, not findings. Open the newest case to review evidence and act.</p>${rows.length ? `<div class="tablewrap"><table><thead><tr><th>Seller</th><th class="num">Different reporters</th><th class="num">Cases</th><th class="num">Open</th><th>State</th><th>Latest</th><th></th></tr></thead><tbody>${rows.map((s) => `<tr><td>${esc(s.store_name || s.handle)} <span class="muted small">@${esc(s.handle)}</span></td><td class="num">${s.reporters}</td><td class="num">${s.cases}</td><td class="num">${s.open}</td><td>${s.banned ? 'suspended' : s.selling_restricted_at ? 'selling restricted' : '—'}</td><td>${when(s.latest)}</td><td><a href="/admin/cases">Cases</a></td></tr>`).join('')}</tbody></table></div>` : V.empty('No repeat reports', 'No seller has been reported by two or more different buyers.')}` });
 });
-r.post('/api/admin/cases/:id(\\d+)/conversation', A, (req, res) => res.set('Cache-Control', 'no-store').json({ ok: true, messages: cases.adminConversation(req.user, req.params.id).map((m) => ({ display_name: m.display_name, body: m.body, created_at: m.created_at })) }));
+r.post('/api/admin/cases/:id(\\d+)/conversation', S, (req, res) => res.set('Cache-Control', 'no-store').json({ ok: true, messages: cases.adminConversation(req.user, req.params.id).map((m) => ({ display_name: m.display_name, body: m.body, created_at: m.created_at })) }));
 r.post('/api/admin/refunds/:id(\\d+)/resolve', A, (req, res) => { cases.adminResolveRefund(req.user, req.params.id, { outcome: req.body.outcome, note: req.body.note }); res.json({ ok: true }); });
 
 /** Orders overview: no addresses, no payment links, no message content. */

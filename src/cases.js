@@ -15,6 +15,7 @@ const { notify } = require('./notify');
 const { audit } = require('./audit');
 const { memberConversation } = require('./chat/service');
 const F = require('./fraud');
+const M = require('./moderation');
 
 /** An order a buyer has actually engaged with (opened the seller's payment link, said they paid, or the seller confirmed). Reports are allowed on these even before the seller confirms payment. */
 const engaged = (o) => Boolean(o.payment_confirmed_at || o.buyer_claimed_paid_at || o.pay_clicked_at);
@@ -86,7 +87,7 @@ function reportMessage(user, { conversationId, messageId, reason }) {
 // ------------------------------------------------------------------ reading
 /** Cases a user may see: reporter always; the reported seller only for order issues (so they can respond). Admins see everything. */
 function accessFor(user, c) {
-  if (user.is_admin) return 'admin';
+  if (user.is_admin || user.is_moderator) return 'admin';
   if (c.reporter_id === user.id) return 'reporter';
   if (c.kind === 'order_issue' && c.subject_user_id === user.id) return 'subject';
   return null;
@@ -95,7 +96,7 @@ function view(user, id) {
   const c = q.get('SELECT * FROM cases WHERE id = ?', Number(id));
   const access = c && accessFor(user, c);
   if (!access) throw new HttpError(404, 'Case not found');                     // 404, not 403: don't confirm it exists
-  const events = q.all(`SELECT e.*, u.display_name FROM case_events e JOIN users u ON u.id = e.actor_id WHERE e.case_id = ? ${user.is_admin ? '' : 'AND e.internal = 0'} ORDER BY e.id`, c.id);
+  const events = q.all(`SELECT e.*, u.display_name FROM case_events e JOIN users u ON u.id = e.actor_id WHERE e.case_id = ? ${user.is_admin || user.is_moderator ? '' : 'AND e.internal = 0'} ORDER BY e.id`, c.id);
   return { case: c, access, events };
 }
 function mine(user) {
@@ -150,24 +151,21 @@ function adminDecide(admin, id, { outcome, resolution }) {
 }
 /** Consequential admin actions, recorded on the case (internal) and in the audit log. */
 function adminAction(admin, id, { action, listingId, reason }) {
+  // ban / restrict / lift go through the moderation service (reason required, permission policy, append-only moderation log); each runs its own transaction
+  if (['restrict_selling', 'lift_restriction', 'suspend_seller'].includes(action)) {
+    const c = q.get('SELECT * FROM cases WHERE id = ?', Number(id)); if (!c) throw new HttpError(404, 'Case not found');
+    if (!c.subject_user_id) throw new HttpError(409, 'This case has no user to act on.');
+    if (action === 'restrict_selling') return M.restrictSelling(admin, c.subject_user_id, reason, c.id);
+    if (action === 'lift_restriction') return M.liftRestriction(admin, c.subject_user_id, reason, c.id);
+    return M.ban(admin, c.subject_user_id, reason, c.id);
+  }
   return tx(() => {
     const c = q.get('SELECT * FROM cases WHERE id = ?', Number(id)); if (!c) throw new HttpError(404, 'Case not found');
-    if (action === 'restrict_selling') {
-      const r = F.restrictSelling(admin, c, reason);
-      addEvent(c.id, admin, 'admin', 'action', `Selling restricted (${r.paused} listing(s) paused, ${r.warned} buyer(s) with unpaid orders warned). Reason: ${clean(reason, 500)}`, { internal: 1 });
-    } else if (action === 'lift_restriction') {
-      F.liftRestriction(admin, c, reason); addEvent(c.id, admin, 'admin', 'action', 'Selling restriction lifted', { internal: 1 });
-    } else if (action === 'pause_listing') {
+    if (action === 'pause_listing') {
       const l = q.get('SELECT id, seller_id FROM listings WHERE id = ?', Number(listingId));
       if (!l || (c.subject_user_id && l.seller_id !== c.subject_user_id)) throw new HttpError(404, 'Listing not found for this case');
       q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE id = ? AND status IN ('active','draft')", now(), l.id);
       addEvent(c.id, admin, 'admin', 'action', `Listing #${l.id} paused`, { internal: 1 }); audit(admin, 'listing_paused_for_case', { type: 'listing', id: l.id, detail: { case: c.id } });
-    } else if (action === 'suspend_seller') {
-      if (!c.subject_user_id) throw new HttpError(409, 'This case has no seller to suspend.');
-      q.run('UPDATE users SET banned = 1 WHERE id = ? AND is_admin = 0', c.subject_user_id); q.run('DELETE FROM sessions WHERE user_id = ?', c.subject_user_id);
-      q.run("UPDATE listings SET status = 'archived' WHERE seller_id = ? AND status = 'active'", c.subject_user_id);
-      const warned = F.warnPendingBuyers(c.subject_user_id, 'the account was suspended');
-      addEvent(c.id, admin, 'admin', 'action', `Seller suspended (${warned} buyer(s) with unpaid orders warned)`, { internal: 1 }); audit(admin, 'user_suspended', { type: 'user', id: c.subject_user_id, detail: { case: c.id } });
     } else throw new HttpError(422, 'Unknown action');
   });
 }

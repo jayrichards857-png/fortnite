@@ -100,20 +100,20 @@ test('restricting selling is a PairPlug-side measure: blocks publishing, new ord
   // the money state is untouched by any of this
   const o = order(orderId); assert.equal(o.status, 'pending_payment'); assert.equal(o.payment_confirmed_by, null);
   // internal record + audit
-  assert.ok(q.get("SELECT 1 x FROM case_events WHERE case_id = ? AND internal = 1 AND body LIKE 'Selling restricted%'", cid)); assert.ok(q.get("SELECT 1 x FROM audit_log WHERE action = 'seller_restricted'"));
+  assert.ok(q.get("SELECT 1 x FROM case_events WHERE case_id = ? AND internal = 1 AND body LIKE 'restrict selling%'", cid)); assert.ok(q.get("SELECT 1 x FROM audit_log WHERE action = 'moderation_restrict_selling'"));
   const view = await get(adm, `/admin/cases/${cid}`); assert.match(view, /does not freeze, hold or reverse anything in their Stripe\/PayPal account/); assert.match(view, /selling restricted since/);
   // lift: allowed again, listings stay paused until the seller republishes
   assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'lift_restriction', reason: 'cleared' })).status, 200);
-  assert.equal(q.get('SELECT selling_restricted_at r FROM users WHERE handle = ?', seller.handle).r, null); assert.ok(q.get("SELECT 1 x FROM audit_log WHERE action = 'seller_restriction_lifted'"));
+  assert.equal(q.get('SELECT selling_restricted_at r FROM users WHERE handle = ?', seller.handle).r, null); assert.ok(q.get("SELECT 1 x FROM audit_log WHERE action = 'moderation_lift_restriction'"));
   assert.equal(q.get('SELECT status FROM listings WHERE id = ?', spare).status, 'archived');
-  assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'lift_restriction' })).status, 409);
+  assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'lift_restriction', reason: 'not restricted anyway' })).status, 409);
   assert.equal((await seller.post('/api/seller/listings', await body())).status, 200, 'after the restriction is lifted the seller can publish again');
 });
 
 test('suspension also warns buyers with unpaid orders and keeps the payment state honest', async () => {
   const { seller, buyer, orderId } = await scene('Susp'), adm = await admin();
   const cid = (await buyer.post('/api/cases/seller', { handle: seller.handle, reason: 'This seller is running a scam.' })).json.id;
-  assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'suspend_seller' })).status, 200);
+  assert.equal((await adm.post(`/api/admin/cases/${cid}/action`, { action: 'suspend_seller', reason: 'Running a scam, banned pending review' })).status, 200);
   assert.equal(q.get('SELECT banned FROM users WHERE handle = ?', seller.handle).banned, 1); assert.equal(notifs(buyer.email, 'Please do not pay%').length, 1);
   assert.equal(order(orderId).status, 'pending_payment'); assert.equal((await buyer.get(`/orders/${orderId}/pay`)).status === 302, false);
 });

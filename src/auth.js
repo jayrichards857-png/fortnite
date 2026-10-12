@@ -79,6 +79,12 @@ const requireSeller = (req, res, next) => {
   if (!req.user.is_seller) return denied(req, res, 403, 'Seller account required', '/sell');
   next();
 };
+/** Administrators and moderators. Individual routes still check the narrower role when an operation is admin-only. */
+const requireStaff = (req, res, next) => {
+  if (!req.user) return denied(req, res, 401, 'Please log in', `/login?next=${encodeURIComponent(req.originalUrl)}`);
+  if (!(req.user.is_admin || req.user.is_moderator)) return denied(req, res, 403, 'Moderator access required');
+  next();
+};
 const requireAdmin = (req, res, next) => {
   if (!req.user) return denied(req, res, 401, 'Please log in', `/login?next=${encodeURIComponent(req.originalUrl)}`);
   if (!req.user.is_admin) return denied(req, res, 403, 'Administrator access required');
@@ -105,4 +111,4 @@ function rateLimit(key, max, windowSec) {
   arr.push(t); hits.set(key, arr);
 }
 
-module.exports = { destroyOtherSessions, userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, csrfGuard, rateLimit };
+module.exports = { destroyOtherSessions, userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, requireStaff, csrfGuard, rateLimit };

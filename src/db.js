@@ -620,6 +620,58 @@ CREATE TRIGGER processor_reports_no_delete BEFORE DELETE ON processor_reports BE
 CREATE TRIGGER processor_reports_frozen BEFORE UPDATE ON processor_reports WHEN OLD.status = 'submitted' OR NEW.case_id <> OLD.case_id OR NEW.packet <> OLD.packet OR NEW.provider <> OLD.provider OR NEW.prepared_at <> OLD.prepared_at
   BEGIN SELECT RAISE(ABORT, 'a submitted processor report cannot be changed'); END;
 `,
+// 13: moderators (a role between ordinary users and administrators), exactly five slots, individual single-use setup links, and an append-only moderation log.
+//   users.is_moderator            0/1; capped by triggers (settings.moderator_cap = 5), counted together with live setup links so concurrent setups cannot exceed it
+//   users.banned_at/by/reason     who banned the account and why (staff-only; history lives in moderation_actions); NULL for older bans
+//   moderator_invites             only SHA-256(token) is stored; single use, expiring, bound to one email; identity columns immutable; never deleted
+//   moderation_actions            append-only: actor, target, action, reason, optional case, time
+`
+ALTER TABLE users ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0 CHECK (is_moderator IN (0,1));
+ALTER TABLE users ADD COLUMN banned_at INTEGER;
+ALTER TABLE users ADD COLUMN banned_by INTEGER;
+ALTER TABLE users ADD COLUMN banned_reason TEXT;
+INSERT OR IGNORE INTO settings(key, value) VALUES ('moderator_cap', '5');
+CREATE TRIGGER moderators_cap_insert BEFORE INSERT ON users
+  WHEN NEW.is_moderator = 1 AND (SELECT COUNT(*) FROM users WHERE is_moderator = 1) >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'moderator_cap'), 5)
+  BEGIN SELECT RAISE(ABORT, 'moderator cap reached'); END;
+CREATE TRIGGER moderators_cap_update BEFORE UPDATE OF is_moderator ON users
+  WHEN NEW.is_moderator = 1 AND OLD.is_moderator = 0 AND (SELECT COUNT(*) FROM users WHERE is_moderator = 1) >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'moderator_cap'), 5)
+  BEGIN SELECT RAISE(ABORT, 'moderator cap reached'); END;
+CREATE TABLE moderator_invites (
+  id INTEGER PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL COLLATE NOCASE,
+  note TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_via TEXT NOT NULL DEFAULT 'admin',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  used_by INTEGER REFERENCES users(id),
+  revoked_at INTEGER
+);
+CREATE INDEX idx_moderator_invites_email ON moderator_invites(email);
+CREATE TRIGGER moderator_invites_cap BEFORE INSERT ON moderator_invites
+  WHEN (SELECT COUNT(*) FROM users WHERE is_moderator = 1)
+     + (SELECT COUNT(*) FROM moderator_invites WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > CAST(strftime('%s','now') AS INTEGER))
+     >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'moderator_cap'), 5)
+  BEGIN SELECT RAISE(ABORT, 'moderator slots exhausted'); END;
+CREATE TRIGGER moderator_invites_identity_immutable BEFORE UPDATE OF token_hash, email, created_by, created_at ON moderator_invites BEGIN SELECT RAISE(ABORT, 'setup link identity is immutable'); END;
+CREATE TRIGGER moderator_invites_no_delete BEFORE DELETE ON moderator_invites BEGIN SELECT RAISE(ABORT, 'setup links are never deleted'); END;
+CREATE TABLE moderation_actions (
+  id INTEGER PRIMARY KEY,
+  actor_id INTEGER NOT NULL REFERENCES users(id),
+  actor_role TEXT NOT NULL CHECK (actor_role IN ('moderator','admin')),
+  target_id INTEGER NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL CHECK (action IN ('ban','unban','restrict_selling','lift_restriction')),
+  reason TEXT NOT NULL CHECK (length(reason) >= 5),
+  case_id INTEGER REFERENCES cases(id),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_moderation_target ON moderation_actions(target_id, id DESC);
+CREATE TRIGGER moderation_actions_no_update BEFORE UPDATE ON moderation_actions BEGIN SELECT RAISE(ABORT, 'moderation log is append-only'); END;
+CREATE TRIGGER moderation_actions_no_delete BEFORE DELETE ON moderation_actions BEGIN SELECT RAISE(ABORT, 'moderation log is append-only'); END;
+`,
 ];
 
 function migrate() {

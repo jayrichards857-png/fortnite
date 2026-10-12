@@ -65,6 +65,7 @@ r.get('/invite/:token', (req, res) => {
         <label for="sb">About <span class="opt">(optional)</span></label><textarea id="sb" name="bio" maxlength="500"></textarea>
         <label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="agree" required> <span>I only list items I own, will ship what I sell, and will reply to buyers within 48 hours, and I have read the <a href="/rules" target="_blank" rel="noopener">Prohibited Items &amp; Seller Rules</a>.</span></label>` : ''}
       ${termsBox}
+      <p class="small muted">Questions about this invitation? Email ${V.contactLink()}.</p>
       <button class="btn block" style="margin-top:14px" type="submit">${seller ? 'Create store' : 'Create account'}</button></form></div>`;
   page(req, res, { title: 'Invitation', body });
 });

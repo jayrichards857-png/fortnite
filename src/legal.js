@@ -16,8 +16,9 @@ const link = (key, text) => { const p = PAGES.find((x) => x.key === key); return
 
 /** How to reach PairPlug. Only values the operator has configured are shown; nothing is invented. */
 function contactBlock() {
-  const mail = config.supportEmail ? `Email <a href="mailto:${esc(config.supportEmail)}">${esc(config.supportEmail)}</a>. ` : '';
-  return `<p>${mail}You can also use the <a href="/support">Help &amp; reporting page</a> (log in to send a report or open a case). ${config.supportEmail ? '' : 'A public support email address has not been set up yet, so the reporting forms are the way to reach us. '}Privacy requests can be sent the same way: say "privacy request" and what you need.</p>`;
+  const V = require('./views');
+  return `<p><strong>Email ${V.contactLink()}</strong> for scam and fraud reports, buyer and seller concerns, account issues and appeals, marketplace safety, privacy requests and general questions. You can also use the <a href="/support">Help &amp; reporting page</a> (log in to send an in-app report with photos, which creates a tracked case).</p>
+<p class="small muted">Emails are read by the operator. They do not create a case or ticket automatically, and there is no guaranteed response time. For a scam report, the in-app report form is the way to attach evidence to your order. Say "privacy request" in the subject for privacy-related help.</p>`;
 }
 function operatorBlock() {
   const name = config.legalEntity, addr = config.legalAddress;
@@ -70,14 +71,14 @@ S.privacy = () => `
 ${operatorBlock()}
 <h2>1. What we collect</h2>
 <div class="tablewrap"><table><thead><tr><th>Information</th><th>When</th><th>Who can see it</th></tr></thead><tbody>
-<tr><td><strong>Account:</strong> name, email, password (stored only as a salted hash), sign-up date, which terms version you accepted and when</td><td>Sign-up or invitation</td><td>You. Admins can see name, email and role. Your name appears to people you message and to sellers on orders; your first name only appears on reviews you write.</td></tr>
+<tr><td><strong>Account:</strong> name, email, password (stored only as a salted hash), sign-up date, which terms version you accepted and when</td><td>Sign-up or invitation</td><td>You. Administrators can see name, email and role. Moderators (a small team with individual accounts) can see name, handle, role, join date and a <em>masked</em> email (only the first letter and the domain are shown), plus listings and any reports about the account. Your name appears to people you message and to sellers on orders; your first name only appears on reviews you write.</td></tr>
 <tr><td><strong>Seller profile:</strong> store name, store URL (handle), bio, ship-from country/region/city, storefront text, images, links</td><td>Seller setup / storefront editor</td><td>Public: store name, handle, bio, storefront text and images, links, and your city/region/"Local ship" badge only if you chose to show it. Never your email.</td></tr>
 <tr><td><strong>Listings:</strong> title, description, photos, price, size, brand, condition, shipping charge, your seller checkout link, optional cost and notes</td><td>When a seller lists</td><td>Public once published. Drafts, cost and internal notes are visible only to the seller.</td></tr>
 <tr><td><strong>Messages:</strong> text of messages between a buyer and a seller</td><td>When you message</td><td>The two people in the conversation. PairPlug staff can read a conversation <em>only</em> when one of you reports it, and each view is logged.</td></tr>
 <tr><td><strong>Orders and shipping:</strong> items, prices, status, payment-confirmation notes, delivery name and address, carrier and tracking number</td><td>When a buyer starts a direct purchase</td><td>The buyer and the seller of that order. The seller sees the delivery address after they confirm payment. Not shown in public profiles, search, analytics or admin summaries.</td></tr>
 <tr><td><strong>Recorded sales:</strong> sales a seller records themselves (including optional recipient address and buyer email they typed in)</td><td>When a seller records one</td><td>That seller only. The seller is responsible for having a reason to hold that person's details.</td></tr>
 <tr><td><strong>Follows, favorites, notifications:</strong> which sellers you follow, items you saved, in-app notifications</td><td>When you use them</td><td>You. We do not show how many followers a seller has, and nobody sees who you follow. A seller's follower list is not shown to them. We use follows to send you in-app "new from…" notices; no email is sent for those.</td></tr>
-<tr><td><strong>Reports and cases:</strong> reasons, category, evidence photos, replies, decisions, internal notes, any account restriction and any report PairPlug sent to a payment provider</td><td>When you report or open a case, or when we act on one</td><td>You, the other party to an <em>order</em> case (not to a general seller report), and PairPlug staff. Internal notes and restriction reasons are staff-only. A seller you report is not told who reported them, though an order case necessarily involves the buyer.</td></tr>
+<tr><td><strong>Reports and cases:</strong> reasons, category, evidence photos, replies, decisions, internal notes, any account restriction and any report PairPlug sent to a payment provider</td><td>When you report or open a case, or when we act on one</td><td>You, the other party to an <em>order</em> case (not to a general seller report), and PairPlug staff (administrators and moderators). Internal notes and restriction reasons are staff-only. A seller you report is not told who reported them, though an order case necessarily involves the buyer.</td></tr>
 <tr><td><strong>Search terms:</strong> only the words searched, with the time</td><td>When someone searches on /shop</td><td>Staff with database access. Not linked to your account or IP address (see section 3).</td></tr>
 <tr><td><strong>Sessions and security:</strong> a login cookie (random token, stored hashed), an audit log of important account/admin actions</td><td>When you log in or something sensitive happens</td><td>Staff.</td></tr>
 </tbody></table></div>
@@ -191,6 +192,7 @@ ${S[key]()}</article>` };
 }
 function index() {
   return { title: 'Legal & policies', description: 'PairPlug terms, privacy, payments and seller rules.', body: `<article class="legal"><h1>Legal &amp; policies</h1><p class="muted small">Version ${esc(VERSION)} · Last updated ${esc(UPDATED)}</p>
+<p>Questions, scam reports and appeals: email ${require('./views').contactLink()}.</p>
 <div class="sgrid">${PAGES.map((p) => `<a class="scard" href="${p.path}"><strong>${esc(p.title)}</strong><span class="muted small">${esc(p.blurb)}</span></a>`).join('')}</div></article>` };
 }
 const accepted = (u) => Boolean(u && u.terms_version === VERSION && u.terms_accepted_at);

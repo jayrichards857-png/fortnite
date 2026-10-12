@@ -14,7 +14,7 @@
 Sellers are *expected* to reply to buyer messages within **48 hours**. This is shown to buyers and sellers as an expectation, **not a guarantee**. Conversations whose last message is from a buyer and older than 48h appear on **Admin → Response times** (seller and elapsed time only, no message text). Use it to check in with a seller. Nothing is penalised automatically.
 
 ## Onboarding the first seller (step by step)
-1. Confirm `PUBLIC_RELEASE_DATE` and `SUPPORT_EMAIL` in `/etc/pairplug.env`, restart. Create your admin account: `node scripts/create-admin.js setup --email you@example.com` (prints a one-time temporary password; you must change it at first login; lost it? `reset`).
+1. Confirm `PUBLIC_RELEASE_DATE` in `/etc/pairplug.env` (leave `SUPPORT_EMAIL` unset to use the official `pairplugservice@gmail.com`; if it is set it overrides the default and the server logs a notice), restart. Create your admin account: `node scripts/create-admin.js setup --email you@example.com` (prints a one-time temporary password; you must change it at first login; lost it? `reset`).
 2. **Admin → Invitations**: role *Seller*, their email → copy the link **once** (only a hash is stored) and send it to them yourself. It is single-use, bound to that email, expires in 7 days, and reserves one of the 3 seller slots.
 3. The seller opens the link, picks a password, store name, handle, and agrees to the terms → logged in.
 4. **Email verification.** *Configure real email delivery first* (DEPLOYMENT.md / `deploy/pairplug.env.example`: Resend account, verified domain, `EMAIL_PROVIDER`, `EMAIL_FROM`, `EMAIL_API_KEY`) and test one real send — it has never been verified live. Without a provider nothing is sent (locally you can read recorded messages at `/dev/emails`). Open **Admin → Email outbox**, copy the seller's verification link and give it to them (the page is audited). They open it and press *Confirm email*. Sellers who are not verified can't publish or receive new orders.
@@ -49,3 +49,12 @@ Buyers who use **Buy now** get a normal PairPlug order (confirm payment, then sh
 * **Orders**: overview of direct orders (no addresses). **Response times**, **Audit**, **Email outbox**.
 * If more than 3 seller accounts ever exist (e.g. a restored older database), nothing is deleted; the admin sees a warning and new seller onboarding stays blocked. `npm run inventory:sellers` prints the situation (read-only).
 * Legacy dispute/withdrawal/fee pages remain for historical PairPlug-processed orders only.
+
+## Moderators (five slots)
+Moderators are dedicated accounts with their own passwords and personal, single-use setup links. Capacity is **five in total** (active moderators + unused links); the database refuses a sixth.
+1. Make sure you have an administrator (`node scripts/create-admin.js setup`) and `PUBLIC_URL` is the real https address.
+2. For each person (a **new** email address, not an existing account), either run on the server `node scripts/moderator.js invite --email person@example.com`, or log in as the administrator and open **Admin → Moderators → Create setup link**.
+3. Copy the link it prints/shows **once** and send it to that person privately yourself (PairPlug does not email it; only a hash is stored). It expires in 72 hours and works once.
+4. They open it, choose their name and a 12+ character password, accept the terms, and land on `/moderation`. Check `node scripts/moderator.js status` to see slots.
+5. Lost or leaked link: `node scripts/moderator.js revoke --id <n>` (or Revoke on the Moderators page), then create a new one. To remove a moderator, use Deactivate (frees the slot, ends their sessions).
+Moderators can ban/unban/restrict with a reason, and work cases; only administrators can create/deactivate moderators, change roles, send provider packets, resolve refunds, or lift bans an administrator placed.

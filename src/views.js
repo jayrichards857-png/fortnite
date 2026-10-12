@@ -15,6 +15,8 @@ const ICONS = {
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   truck: '<path d="M2 6h11v10H2zM13 10h4l4 3v3h-8"/><circle cx="7" cy="17" r="1.500"/><circle cx="17" cy="17" r="1.500"/>',
 };
+/** The official contact address as a mailto: link. One place, used by every page. */
+const contactLink = (text) => `<a href="mailto:${esc(config.supportEmail)}">${esc(text || config.supportEmail)}</a>`;
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
 const img = (file, cls = '', alt = '') => (file ? `<img class="${cls}" src="/uploads/${esc(file)}" alt="${esc(alt)}" loading="lazy">` : `<div class="${cls} noimg" aria-label="No photo"></div>`);
@@ -84,7 +86,7 @@ function layout({ title, body, user, path = '/', description = '', wide = false,
 <a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.selling_restricted_at ? '<div class="banner warn-banner" role="alert"><strong>Selling is paused on your account</strong> while PairPlug reviews a report. You can still log in, reply to PairPlug and handle existing orders. <a href="/support">Help &amp; reporting</a></div>' : ''}${user && user.is_seller && !user.email_verified_at ? '<div class="banner warn-banner">Verify your email to publish listings and receive orders. <a href="/account">Verify now</a></div>' : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
 <footer class="site-footer"><div class="wrap"><span>PairPlug · North American secondhand marketplace</span>
-<span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a></span>
+<span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a> · ${contactLink('Contact')}</span>
 <nav class="legal-links" aria-label="Legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/payments">Payments &amp; refunds</a> · <a href="/rules">Seller rules</a></nav></div></footer>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/app.js" defer></script>${scripts}</body></html>`;
@@ -126,4 +128,4 @@ function dashNav(path) {
     <a class="btn small push" href="/dashboard/listings/new">${icon('plus')} New listing</a></nav>`;
 }
 
-module.exports = { releaseText, comingSoon, layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };
+module.exports = { contactLink, releaseText, comingSoon, layout, card, grid, empty, icon, img, orderPill, statusPill, pager, dashNav, money, esc, date };

@@ -310,7 +310,7 @@ test('admin: ban removes sessions & listings; fee changes apply to new orders on
   const admin = await H.newUser('Admin'); q.run('UPDATE users SET is_admin = 1 WHERE email = ?', admin.email);
   const s = await H.newSeller('Banned'); const id = await H.makeListing(s);
   const uid = q.get('SELECT id FROM users WHERE handle = ?', s.handle).id;
-  assert.equal((await admin.post(`/api/admin/users/${uid}/ban`, { banned: true })).status, 200);
+  assert.equal((await admin.post(`/api/admin/users/${uid}/ban`, { banned: true, reason: 'Abuse reported by several users' })).status, 200);
   assert.equal(q.get('SELECT status FROM listings WHERE id = ?', id).status, 'archived');
   assert.equal((await s.get('/dashboard')).status, 302, 'banned session is dead');
   assert.equal((await new H.Client().post('/api/login', { email: s.email, password: 'correct-horse-9' })).status, 403);
