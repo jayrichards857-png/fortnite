@@ -20,7 +20,23 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const fail = (m) => { console.error(m); process.exit(1); };
 const admins = async () => await q.all('SELECT id, email, display_name, must_change_password, created_at FROM users WHERE is_admin = 1 ORDER BY id');
 const temp = () => crypto.randomBytes(15).toString('base64url');            // 20 chars, ~120 bits
-const base = `http://localhost:${config.port}`;
+const base = process.env.PUBLIC_URL || `http://localhost:${config.port}`;
+
+// ---- target safety. This tool changes WHO CAN LOG IN, so it must be certain which database it is talking to.
+// Local databases behave as before. A REMOTE database (anything not on this machine, e.g. Neon): the target host is printed; every command that
+// writes needs PAIRPLUG_DB_LABEL and --confirm-host <that host>; and the schema is only VERIFIED, never created or migrated (use `npm run migrate`).
+let dbUrl = null; try { dbUrl = new URL(config.db.url); } catch { /* reported below */ }
+const REMOTE = Boolean(dbUrl) && !/^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(dbUrl.hostname);
+const WRITES = ['setup', 'reset', 'promote'];
+if (!dbUrl) fail('DATABASE_URL is not set (or not a valid URL; value not shown). Point it at the database you mean to change.');
+console.log(`database: ${dbUrl.hostname}${dbUrl.pathname}  (${REMOTE ? 'REMOTE' : 'local'})${process.env.PAIRPLUG_DB_LABEL ? `  label=${process.env.PAIRPLUG_DB_LABEL}` : ''}`);
+if (REMOTE) {
+  config.db.autoMigrate = false;                                  // never create or alter a remote schema from here
+  if (WRITES.includes(cmd)) {
+    if (!process.env.PAIRPLUG_DB_LABEL) fail('Refusing: this is a remote database. Set PAIRPLUG_DB_LABEL (production or preview) to state which environment it is.');
+    if (opt('--confirm-host') !== dbUrl.hostname) fail(`Refusing: re-run with --confirm-host ${dbUrl.hostname}  (only after checking that host is the intended Neon branch; run \`status\` first).`);
+  }
+}
 
 function announce(addr, pw, generated) {
   console.log(`\nAdministrator account: ${addr}`);
