@@ -62,11 +62,25 @@ test('serverless safety: a web request never migrates; `npm run migrate` is a dr
     const env = { DATABASE_URL: db.url };
     const empty = parse(drive(env, [['/healthz'], ['/shop']])); assert.deepEqual(empty.map((r) => r.status), [503, 503], 'schema is behind this release: refuse to serve');
     assert.equal(await tables(), 0, 'a web request must not create or alter anything');
-    const status = spawnSync(process.execPath, ['scripts/migrate.js'], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, DATABASE_URL: db.url } });
-    assert.equal(status.status, 0, status.stderr); assert.match(status.stdout, /schema v0; this release: v\d+/); assert.match(status.stdout, /Dry run/); assert.equal(await tables(), 0, 'dry run changes nothing');
-    const apply = spawnSync(process.execPath, ['scripts/migrate.js', '--apply'], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, DATABASE_URL: db.url } });
+    const mig = (args, extra = {}, url = db.url) => spawnSync(process.execPath, ['scripts/migrate.js', ...args], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, DATABASE_URL_UNPOOLED: url, ...extra } });
+    const host = new URL(db.url).hostname, LABEL = { PAIRPLUG_DB_LABEL: 'preview' };
+    const status = mig([]);
+    assert.equal(status.status, 0, status.stderr); assert.match(status.stdout, new RegExp(`target: host=${host.replace(/\./g, '\\.')} database=`)); assert.match(status.stdout, /schema version: v0 \(this release needs v\d+\)/);
+    assert.match(status.stdout, /Pending migrations, in order: 1, 2, 3/); assert.match(status.stdout, /DRY RUN: nothing was changed/); assert.equal(await tables(), 0, 'dry run changes nothing');
+    assert.doesNotMatch(status.stdout + status.stderr, /postgres(ql)?:\/\//, 'no connection string is ever printed');
+    // every guard refuses BEFORE anything is changed
+    for (const [why, r] of [['no label', mig(['--apply', '--confirm-host', host])], ['no host confirmation', mig(['--apply'], LABEL)], ['wrong host confirmation', mig(['--apply', '--confirm-host', 'some-other-host'], LABEL)],
+      ['pooled host', mig(['--apply', '--confirm-host', 'ep-x-pooler.example'], LABEL, 'postgres://u:p@ep-x-pooler.example/db')]]) {
+      assert.notEqual(r.status, 0, why); assert.match(r.stderr, /Refusing to apply/, why); assert.equal(await tables(), 0, `${why}: nothing changed`);
+    }
+    // a database that has tables but no migration history (wrong branch / foreign DB) is never touched
+    { const c = new Client({ connectionString: db.url }); await c.connect(); await c.query('CREATE TABLE foreign_thing (id int)'); await c.end(); }
+    const foreign = mig(['--apply', '--confirm-host', host], LABEL); assert.notEqual(foreign.status, 0); assert.match(foreign.stderr, /no migration history/); assert.equal(await tables(), 1, 'untouched');
+    { const c = new Client({ connectionString: db.url }); await c.connect(); await c.query('DROP TABLE foreign_thing'); await c.end(); }
+    const apply = mig(['--apply', '--confirm-host', host], LABEL);
     assert.equal(apply.status, 0, apply.stderr); assert.match(apply.stdout, /Applied\. Schema is now v\d+/);
-    const again = spawnSync(process.execPath, ['scripts/migrate.js', '--apply'], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, DATABASE_URL: db.url } }); assert.match(again.stdout, /Up to date/);
+    const after = mig([]); assert.match(after.stdout, /Up to date/); assert.match(after.stdout, /existing data \(row counts\): users=0/);
+    const again = mig(['--apply', '--confirm-host', host], LABEL); assert.match(again.stdout, /Up to date/);
     const out = parse(drive(env, [['/healthz'], ['/api/cron/tick'], ['/api/cron/tick', { Authorization: 'Bearer wrong' }], ['/api/cron/tick', { Authorization: 'Bearer ' + 'c'.repeat(40) }], ['/api/cron/tick', { Authorization: 'Bearer ' + 'c'.repeat(40) }, 'GET'], ['/dashboard'], ['/api/logout', {}, 'POST'], ['/']]));
     assert.equal(out[0].status, 200, JSON.stringify(out[0])); assert.equal(out[1].status, 401, 'no token'); assert.equal(out[2].status, 401, 'wrong token');
     const first = JSON.parse(out[3].body), second = JSON.parse(out[4].body);
@@ -84,4 +98,13 @@ test('vercel.json routes everything to the exported app and ships the migrations
   assert.deepEqual(v.crons.map((c) => c.path), ['/api/cron/tick'], 'scheduled jobs are wired to the authenticated endpoint');
   assert.match(v.functions['api/index.js'].includeFiles, /src\/migrations\/\*\*/);
   assert.ok(fs.existsSync(path.join(root, 'api', 'index.js')));
+});
+
+test('check:config reports missing settings by NAME only, flags mismatched Neon endpoints, and never prints a value', () => {
+  const run2 = (env, args = ['--as', 'production']) => spawnSync(process.execPath, ['scripts/check-config.js', ...args], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+  const bad = run2({}); assert.equal(bad.status, 1); assert.match(bad.stdout, /MISSING DATABASE_URL\b/); assert.match(bad.stdout, /durable image storage is required/); assert.equal(run2({}, []).status, 2, 'must say which environment');
+  const secret = 'SECRET-VALUE-' + 'q'.repeat(30);
+  const mism = run2({ DATABASE_URL: `postgres://u:${secret}@ep-aaa-pooler.example/db?sslmode=require`, DATABASE_URL_UNPOOLED: `postgres://u:${secret}@ep-bbb.example/db?sslmode=require`, PAIRPLUG_DB_LABEL: 'preview', CRON_SECRET: secret, S3_SECRET_ACCESS_KEY: secret });
+  assert.doesNotMatch(mism.stdout + mism.stderr, new RegExp(secret), 'no secret value is ever printed'); assert.match(mism.stdout, /DIFFERENT Neon endpoints/);
+  assert.match(mism.stdout, /PAIRPLUG_DB_LABEL must equal this deployment's environment \("production"\)/, 'a preview-labelled setup is rejected as production');
 });

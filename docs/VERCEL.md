@@ -46,12 +46,19 @@ Do **not** set: `PAYMENTS_MODE=sandbox`, `SHIPPO_API_KEY`, `RATE_LIMIT_SCALE`, `
 `vercel.json` already sets framework "Other", no build command, install `npm install`, output `public`.
 
 ## First deployment (in this order)
-1. Create the database(s) and bucket(s); add the variables above per environment.
-2. Migrate **before** the first deploy serves traffic, per environment, from a trusted machine:
-   `DATABASE_URL_UNPOOLED=… npm run migrate` (dry run: shows current vs. required version), then `… npm run migrate -- --apply`.
-   It is additive and serialised; it never seeds or deletes data. An existing database (e.g. imported with `scripts/sqlite-to-pg.js`) is brought forward the same way.
-3. Deploy. Check `GET /healthz` → `{"ok":true,"schema":18}`. If the site answers 503, read the deployment logs: they list exactly which setting is missing or wrong.
-4. Create the admin (`npm run admin:setup -- --email you@example.com`, run locally against that environment's DB), then invite your three sellers from the admin pages.
+1. Create the database(s) and bucket(s); add the variables above per environment (Neon: one **branch** per environment — Production branch for Production, a separate Preview branch for Preview).
+2. Check the settings you loaded (names only, no values): `npm run check:config -- --as production` (or `preview`). It also flags a pooled/direct mismatch.
+3. Migrate **before** the first deploy serves traffic, per environment, from a trusted machine, with the **direct** (non-`-pooler`) connection string of that Neon branch:
+   ```
+   read -rs DATABASE_URL_UNPOOLED; export DATABASE_URL_UNPOOLED     # paste the DIRECT string, press Enter (nothing is echoed)
+   export PAIRPLUG_DB_LABEL=production                              # or preview
+   npm run migrate                                                  # DRY RUN: prints host, database, table counts, schema version, pending list
+   npm run migrate -- --apply --confirm-host <host printed above>   # applies ALL pending migrations in order (v1..v18)
+   npm run migrate                                                  # must say "Up to date"
+   ```
+   The dry run changes nothing. `--apply` refuses unless the label is set, you retype the exact host you verified against the Neon branch page, the host is a direct connection, and the database is empty or already managed by this tool (a database with tables but no migration history is never touched). It never seeds data or touches existing rows beyond what the migration files do.
+4. Redeploy. Check `GET /healthz` → `{"ok":true,"schema":18}`. If the site answers 503, read the deployment logs: they list exactly which setting is missing or wrong.
+5. Create the admin (`npm run admin:setup -- --email you@example.com`, run locally against that environment's DB), then invite your three sellers from the admin pages.
 
 ## Scheduled jobs
 `GET /api/cron/tick` runs `sweep` (expired reservations, due escrow releases, ended suspensions) and `housekeeping` (hourly: orphaned uploads, search log, expired sessions, rate-limit rows). `?job=sweep` runs one. Overlapping or repeated calls are safe (database lease per job); a missing/wrong `CRON_SECRET` gets 401/503.
