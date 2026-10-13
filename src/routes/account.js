@@ -49,7 +49,7 @@ const storeFields = `<div class="row"><div><label for="sc">Ships from (country)<
   <div><label for="sr">State / province</label><input id="sr" name="region" required></div><div><label for="sy">City</label><input id="sy" name="city" required></div></div>`;
 r.get('/invite/:token', async (req, res) => {
   noStore(res);
-  auth.rateLimit(ipKey(req, 'invite-view'), 60, 3600);
+  await auth.rateLimit(ipKey(req, 'invite-view'), 60, 3600);
   const i = await inv.lookup(req.params.token);
   if (!i) return await page(req, res, { title: 'Invitation', body: V.empty('This invitation is invalid, expired or already used', 'Ask the PairPlug team for a new one.', ['/', 'Home']) });
   const existing = await q.get('SELECT id FROM users WHERE email = ?', i.email);
@@ -71,7 +71,7 @@ r.get('/invite/:token', async (req, res) => {
 });
 r.post('/api/invitations/accept', async (req, res) => {
   noStore(res);
-  auth.rateLimit(ipKey(req, 'invite-accept'), 20, 3600);
+  await auth.rateLimit(ipKey(req, 'invite-accept'), 20, 3600);
   const userId = await inv.accept(String(req.body.token || ''), req.body, req.user);
   if (!req.user) await auth.createSession(res, userId);
   const u = await q.get('SELECT * FROM users WHERE id = ?', userId);
@@ -89,7 +89,7 @@ r.get('/verify-email', async (req, res) => {
     <button class="btn block" id="vbtn" data-post="/api/email/verify" data-body='${esc(JSON.stringify({ token: t }))}' data-redirect="/account">Confirm email</button></div>` });
 });
 r.post('/api/email/verify', async (req, res) => {
-  auth.rateLimit(ipKey(req, 'verify'), 30, 3600);
+  await auth.rateLimit(ipKey(req, 'verify'), 30, 3600);
   await tokens.confirmVerification(String(req.body.token || '')); res.json({ ok: true });
 });
 r.post('/api/email/resend', auth.requireUser, async (req, res) => {
@@ -101,7 +101,7 @@ r.get('/confirm-email-change', async (req, res) => {
   noStore(res);
   await page(req, res, { title: 'Confirm new email', body: `<div class="narrow panel"><h1>Confirm your new email</h1><button class="btn block" data-post="/api/email/confirm-change" data-body='${esc(JSON.stringify({ token: String(req.query.token || '') }))}' data-redirect="/account">Confirm new email</button></div>` });
 });
-r.post('/api/email/confirm-change', async (req, res) => { auth.rateLimit(ipKey(req, 'verify'), 30, 3600); await tokens.confirmEmailChange(String(req.body.token || '')); res.json({ ok: true }); });
+r.post('/api/email/confirm-change', async (req, res) => { await auth.rateLimit(ipKey(req, 'verify'), 30, 3600); await tokens.confirmEmailChange(String(req.body.token || '')); res.json({ ok: true }); });
 
 // ---------- Local development only: read the emails that were RECORDED instead of sent ----------
 // Not a verification bypass: the link inside still has to be opened and confirmed, exactly like a real email. Falls through to 404 in production
@@ -134,7 +134,7 @@ r.get('/account', auth.requireUser, async (req, res) => {
 // Explicit, user-initiated acceptance of the current policy set (existing users are never marked automatically).
 r.post('/api/account/terms', auth.requireUser, async (req, res) => { await LEGAL.recordAcceptance(req.user.id); await audit(req.user, 'terms_accepted', { type: 'user', id: req.user.id, detail: { version: LEGAL.VERSION } }); res.json({ ok: true, message: 'Thanks. Your acceptance was recorded.' }); });
 r.post('/api/account/email', auth.requireUser, async (req, res) => {
-  auth.rateLimit(`acct-email:${req.user.id}`, 5, 3600);
+  await auth.rateLimit(`acct-email:${req.user.id}`, 5, 3600);
   const addr = cleanLine(req.body.email, 200).toLowerCase();
   if (!auth.verifyPassword(String(req.body.password || ''), req.user.password_hash)) throw new HttpError(403, 'Your current password is incorrect.');
   if (!EMAIL_RE.test(addr)) throw new HttpError(422, 'Please fix the highlighted fields.', { email: 'Enter a valid email address.' });
@@ -143,7 +143,7 @@ r.post('/api/account/email', auth.requireUser, async (req, res) => {
   res.json({ ok: true, message: email.isConfigured() ? 'Check your new inbox to confirm the change. Your current email stays active until you do.' : 'Email delivery is not configured on this server yet, so the confirmation could not be sent. Your email has not changed.' });
 });
 r.post('/api/account/password', auth.requireUser, async (req, res) => {
-  auth.rateLimit(`acct-pw:${req.user.id}`, 8, 3600);
+  await auth.rateLimit(`acct-pw:${req.user.id}`, 8, 3600);
   if (!auth.verifyPassword(String(req.body.current || ''), req.user.password_hash)) throw new HttpError(403, 'Your current password is incorrect.');
   const pw = String(req.body.next || '');
   if (pw.length < 8 || pw.length > 200) throw new HttpError(422, 'Please fix the highlighted fields.', { next: 'Use at least 8 characters.' });
@@ -161,9 +161,9 @@ r.get('/forgot-password', async (req, res) => {
 });
 r.post('/api/password/forgot', async (req, res) => {
   if (!email.isConfigured()) throw new HttpError(503, 'Password reset by email is not available yet. Contact PairPlug support.');
-  auth.rateLimit(ipKey(req, 'forgot'), 10, 3600);
+  await auth.rateLimit(ipKey(req, 'forgot'), 10, 3600);
   const addr = cleanLine(req.body.email, 200).toLowerCase();
-  if (addr) auth.rateLimit(`forgot-mail:${addr}`, 3, 3600);
+  if (addr) await auth.rateLimit(`forgot-mail:${addr}`, 3, 3600);
   const u = EMAIL_RE.test(addr) ? await q.get('SELECT * FROM users WHERE email = ? AND banned = 0', addr) : null;
   if (u) { try { await tokens.sendPasswordReset(u); } catch (e) { if (e.status !== 429) throw e; } }
   res.json({ ok: true, message: 'If that email has an account, a reset link is on its way.' });     // identical response whether or not the account exists
@@ -175,7 +175,7 @@ r.get('/reset-password', async (req, res) => {
 });
 r.post('/api/password/reset', async (req, res) => {
   if (!email.isConfigured()) throw new HttpError(503, 'Password reset by email is not available yet.');
-  auth.rateLimit(ipKey(req, 'reset'), 20, 3600);
+  await auth.rateLimit(ipKey(req, 'reset'), 20, 3600);
   const pw = String(req.body.password || '');
   if (pw.length < 8 || pw.length > 200) throw new HttpError(422, 'Please fix the highlighted fields.', { password: 'Use at least 8 characters.' });
   await tx(async () => {

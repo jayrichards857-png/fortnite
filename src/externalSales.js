@@ -62,7 +62,7 @@ function details(b = {}) {
 
 // ------------------------------------------------------------------ recording
 async function record(user, listingId, body = {}) {
-  rateLimit(`ext-sale:${user.id}`, 60, 3600);
+  await rateLimit(`ext-sale:${user.id}`, 60, 3600);
   const f = {};
   const origin = String(body.origin || ''); if (!ORIGINS[origin]) f.origin = 'Choose where this sale originated.';
   const fulfillment = String(body.fulfillment || ''); if (!['ship', 'pickup'].includes(fulfillment)) f.fulfillment = 'Choose shipping or local pickup.';
@@ -101,7 +101,7 @@ const recordedIds = async (ids) => (ids.length ? new Set((await q.all(`SELECT li
 // ------------------------------------------------------------------ corrections (all logged; nothing is silently overwritten)
 /** Fix the sale date / price / platform / reference / note / buyer email. The log keeps old -> new values. */
 async function correct(user, id, body = {}) {
-  rateLimit(`sale-edit:${user.id}`, 60, 3600);
+  await rateLimit(`sale-edit:${user.id}`, 60, 3600);
   const d = details(body);
   return await tx(async () => {
     const s = await mine(user, id); if (s.voided_at) throw new HttpError(409, 'This record was voided and can no longer be changed.');

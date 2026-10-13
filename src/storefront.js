@@ -63,7 +63,7 @@ async function validate(user, input = {}) {
   for (const k of Object.keys(imgRules)) {
     const f = input[k]; if (!f) continue;
     try {
-      await ownedUploads(user.id, [f]); const d = storedDimensions(f); const r = imgRules[k];
+      await ownedUploads(user.id, [f]); const d = await storedDimensions(f); const r = imgRules[k];
       if (!d) e[k] = 'That image could not be read.';
       else if (r.min && (d.w < r.min || d.h < r.min)) e[k] = `Use an image at least ${r.min}×${r.min}px.`;
       else if (r.minW && (d.w < r.minW || d.h < r.minH)) e[k] = `Use a banner at least ${r.minW}×${r.minH}px.`;

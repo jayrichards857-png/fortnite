@@ -179,7 +179,7 @@ r.get('/login', async (req, res) => (req.user ? res.redirect('/') : await page(r
 r.get('/register', async (req, res) => (req.user ? res.redirect('/') : await page(req, res, { title: 'Sign up', body: authForm('register', safeNext(req.query.next)) })));
 
 r.post('/api/register', wrap(async (req, res) => {
-  auth.rateLimit('reg:' + req.ip, 10, 600);
+  await auth.rateLimit('reg:' + req.ip, 10, 600);
   const email = cleanLine(req.body.email, 200).toLowerCase(), name = cleanLine(req.body.display_name, 80), pw = String(req.body.password || '');
   const fields = {};
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fields.email = 'Enter a valid email address.';
@@ -194,7 +194,7 @@ r.post('/api/register', wrap(async (req, res) => {
 }));
 r.post('/api/login', wrap(async (req, res) => {
   const email = cleanLine(req.body.email, 200).toLowerCase();
-  auth.rateLimit(`login:${req.ip}:${email}`, 8, 600);
+  await auth.rateLimit(`login:${req.ip}:${email}`, 8, 600);
   const u = await q.get('SELECT * FROM users WHERE email = ?', email);
   // Always run a hash comparison so response time doesn't reveal whether the email exists.
   const ok = u ? auth.verifyPassword(String(req.body.password || ''), u.password_hash) : (auth.verifyPassword('x', auth.DUMMY_HASH), false);
@@ -376,7 +376,7 @@ async function disputePanel(d, viewer) {
 
 r.post('/api/uploads', auth.requireUser, express.raw({ type: ['image/*'], limit: '6mb' }), async (req, res) => {
   if (!Buffer.isBuffer(req.body)) throw new HttpError(415, 'Send the image as the request body.');
-  auth.rateLimit('up:' + req.user.id, 60, 600);
+  await auth.rateLimit('up:' + req.user.id, 60, 600);
   res.json({ file: await saveUpload(req.user.id, req.body) });
 });
 

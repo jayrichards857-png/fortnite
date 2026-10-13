@@ -7,7 +7,10 @@ const { q, now } = require('./db');
 const { HttpError } = require('./util');
 
 // Images stay on the local filesystem in this release (PAIRPLUG_UPLOADS); the directory must be on persistent storage in production.
-fs.mkdirSync(config.uploadDir, { recursive: true });
+// Where the bytes go is decided in src/storage.js: local disk (default), S3-compatible object storage (required on Vercel), or nowhere.
+// Nothing is created on disk unless the local-disk driver is the one in use.
+const storage = require('./storage');
+if (storage.driver().kind === 'fs') fs.mkdirSync(config.uploadDir, { recursive: true });
 
 const MAX_SIDE = 8000, MAX_PIXELS = 40e6;
 
@@ -46,16 +49,19 @@ function dimensions(buf, ext = sniff(buf)) {
 }
 
 async function saveUpload(userId, buf) {
+  if (storage.driver().kind === 'none') throw new HttpError(503, 'Photo uploads are unavailable: this deployment has no durable image storage configured (set the S3_* variables, see docs/VERCEL.md).');
   if (!buf || !buf.length) throw new HttpError(400, 'Empty upload');
-  if (buf.length > config.limits.imageBytes) throw new HttpError(413, 'Image is larger than 5 MB');
+  if (buf.length > config.limits.imageBytes) throw new HttpError(413, `Image is larger than ${Math.round(config.limits.imageBytes / 1048576)} MB`);
   const ext = sniff(buf);
   if (!ext) throw new HttpError(415, 'Only JPEG, PNG or WebP images are allowed');
   const d = dimensions(buf, ext);
   if (!d || !(d.w > 0 && d.h > 0)) throw new HttpError(415, 'That image could not be read. Try exporting it again as JPEG or PNG.');
   if (d.w > MAX_SIDE || d.h > MAX_SIDE || d.w * d.h > MAX_PIXELS) throw new HttpError(413, `Image dimensions are too large (max ${MAX_SIDE}px per side).`);
   const file = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
-  fs.writeFileSync(path.join(config.uploadDir, file), buf);
-  await q.run('INSERT INTO uploads(file, user_id, created_at) VALUES(?,?,?)', file, userId, now());
+  try { await storage.driver().put(file, buf, storage.MIME[ext]); }
+  catch (e) { console.error('image storage failed:', e.message); throw new HttpError(503, 'Photo storage is temporarily unavailable. Please try again in a moment.'); }
+  try { await q.run('INSERT INTO uploads(file, user_id, created_at) VALUES(?,?,?)', file, userId, now()); }
+  catch (e) { await storage.driver().del(file).catch(() => {}); throw e; }     // never leave an object that no record knows about
   return file;
 }
 
@@ -70,9 +76,9 @@ async function ownedUploads(userId, files) {
   return out;
 }
 
-/** Dimensions of an already-stored upload (re-read from disk, so the caller can't lie about them). */
-function storedDimensions(file) {
-  try { return dimensions(fs.readFileSync(path.join(config.uploadDir, file))); } catch { return null; }
+/** Dimensions of an already-stored upload (re-read from storage, so the caller can't lie about them). */
+async function storedDimensions(file) {
+  try { const b = await storage.driver().get(file); return b ? dimensions(b) : null; } catch { return null; }
 }
 
 /** Is any record still pointing at this file? Order snapshots, evidence, listings and storefronts all count. */
@@ -88,7 +94,7 @@ async function isReferenced(file) {
 async function removeIfUnreferenced(file) {
   try {
     if (!/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(file) || await isReferenced(file)) return false;
-    fs.rmSync(path.join(config.uploadDir, file), { force: true });
+    await storage.driver().del(file);
     await q.run('DELETE FROM uploads WHERE file = ?', file);
     return true;
   } catch { return false; }

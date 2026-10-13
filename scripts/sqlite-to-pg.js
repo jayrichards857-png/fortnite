@@ -133,7 +133,7 @@ async function importSqlite({ source, target, uploadDir, replace = false, confir
     const pgTables = (await pg.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).rows.map((r) => r.tablename).filter((t) => !SKIP_TABLES.has(t));
     const liteTables = sqliteTables(src);
     // Tables introduced in PostgreSQL after the frozen SQLite schema (v16) have no SQLite counterpart: they are created empty by the migrations, never copied.
-    const PG_ONLY_TABLES = new Set(['review_photos']);   // migration 17: photo reviews
+    const PG_ONLY_TABLES = new Set(['review_photos', 'rate_limits', 'job_leases']);   // migrations 17-18: photo reviews, shared rate limits, job leases
     const missingInPg = liteTables.filter((t) => !pgTables.includes(t)), missingInLite = pgTables.filter((t) => !liteTables.includes(t) && !PG_ONLY_TABLES.has(t));
     check('same set of tables on both sides', !missingInPg.length && !missingInLite.length, `only in SQLite: [${missingInPg}] only in PostgreSQL: [${missingInLite}]`);
 

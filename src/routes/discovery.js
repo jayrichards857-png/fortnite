@@ -20,8 +20,8 @@ r.get('/following', auth.requireUser, async (req, res) => {
     ${list.length ? `<div class="sgrid">${(await Promise.all(list.map(async (s) => await D.sellerCard(s, { following: fol, user: req.user })))).join('')}</div>` : V.empty('You aren\'t following anyone yet', 'Tap the heart on a seller to follow them and see their new items here.', ['/sellers', 'Discover sellers'])}` });
 });
 const H = '/api/sellers/:handle([A-Za-z0-9_-]{1,40})/follow';
-r.post(H, auth.requireUser, async (req, res) => { auth.rateLimit(`follow:${req.user.id}`, 120, 3600); res.json({ ok: true, ...await D.follow(req.user, req.params.handle) }); });
-r.put(H, auth.requireUser, async (req, res) => { auth.rateLimit(`follow:${req.user.id}`, 120, 3600); res.json({ ok: true, ...await D.follow(req.user, req.params.handle) }); });
-r.delete(H, auth.requireUser, async (req, res) => { auth.rateLimit(`follow:${req.user.id}`, 120, 3600); res.json({ ok: true, ...await D.unfollow(req.user, req.params.handle) }); });
+r.post(H, auth.requireUser, async (req, res) => { await auth.rateLimit(`follow:${req.user.id}`, 120, 3600); res.json({ ok: true, ...await D.follow(req.user, req.params.handle) }); });
+r.put(H, auth.requireUser, async (req, res) => { await auth.rateLimit(`follow:${req.user.id}`, 120, 3600); res.json({ ok: true, ...await D.follow(req.user, req.params.handle) }); });
+r.delete(H, auth.requireUser, async (req, res) => { await auth.rateLimit(`follow:${req.user.id}`, 120, 3600); res.json({ ok: true, ...await D.unfollow(req.user, req.params.handle) }); });
 void esc;
 module.exports = { router: r };

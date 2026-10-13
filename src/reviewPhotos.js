@@ -15,7 +15,7 @@ const MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 /** Validate and store one uploaded image as a pending photo owned by the user. Returns its id. */
 async function upload(user, buf) {
-  rateLimit(`rphoto:${user.id}`, 30, 3600);
+  await rateLimit(`rphoto:${user.id}`, 30, 3600);
   if (!Buffer.isBuffer(buf) || !buf.length) throw new HttpError(400, 'Send the image as the request body.');
   if (buf.length > MAX_BYTES) throw new HttpError(413, 'Review photos can be at most 4 MB each.');
   const ext = sniff(buf);

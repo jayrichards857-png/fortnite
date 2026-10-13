@@ -18,13 +18,13 @@ const A = [auth.requireAdmin];
 const when = (t) => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') : '—');
 const label = (s) => esc(String(s).replace(/_/g, ' '));
 const noStore = (res) => res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
-const limit = (req) => auth.rateLimit(`mod:${req.user.id}`, 200, 3600);
+const limit = async (req) => await auth.rateLimit(`mod:${req.user.id}`, 200, 3600);
 const roleLabel = (u) => (u.is_admin ? 'administrator' : u.is_moderator ? 'moderator' : u.is_seller ? 'seller' : 'buyer');
 const stateBadges = (u) => `${u.banned ? '<span class="pill s-disputed">banned</span> ' : ''}${u.selling_restricted_at ? '<span class="pill s-pending_payment">selling restricted</span> ' : ''}`;
 
 // ------------------------------------------------------------------ setup link (public, individual, single-use)
 r.get('/moderator/setup/:token', async (req, res) => {
-  noStore(res); auth.rateLimit(`modsetup-view:${req.ip}`, 60, 3600);
+  noStore(res); await auth.rateLimit(`modsetup-view:${req.ip}`, 60, 3600);
   const inv = await M.lookup(req.params.token);
   const body = !inv ? V.empty('This setup link is invalid, expired or already used', 'Ask a PairPlug administrator for a new one.', ['/', 'Home'])
     : `<div class="narrow panel form-wide" style="max-width:520px"><h1>Set up your moderator account</h1>
@@ -37,7 +37,7 @@ r.get('/moderator/setup/:token', async (req, res) => {
   res.send(await V.layout({ user: req.user, title: 'Moderator setup', body }));
 });
 r.post('/api/moderator/setup', async (req, res) => {
-  noStore(res); auth.rateLimit(`modsetup:${req.ip}`, 20, 3600);
+  noStore(res); await auth.rateLimit(`modsetup:${req.ip}`, 20, 3600);
   const uid = await M.accept(String(req.body.token || ''), req.body);
   await auth.createSession(res, uid);
   res.json({ ok: true });
@@ -101,12 +101,12 @@ r.get('/moderation/users/:id(\\d+)', S, async (req, res) => {
     <aside><div class="panel"><h3>Reports &amp; cases</h3>${v.cases.length ? `<ul class="plain">${v.cases.map((c) => `<li><a href="/admin/cases/${c.id}">Case #${c.id}</a> · ${label(c.kind)} · ${label(c.status)} · they are the ${c.role}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}</div>
       <div class="panel"><h3>Moderation history</h3>${v.actions.length ? `<ul class="plain">${v.actions.map((a) => `<li>${when(a.created_at)} · <strong>${label(a.action)}</strong> by ${esc(a.actor)} (${a.actor_role}) — ${esc(a.reason)}${a.case_id ? ` · case #${a.case_id}` : ''}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}</div></aside></div>` });
 });
-const act = (fn) => async (req, res) => { limit(req); const o = await fn(req.user, req.params.id, req.body.reason, req.body.caseId); res.set('Cache-Control', 'no-store').json({ ok: true, ...(o || {}) }); };
+const act = (fn) => async (req, res) => { await limit(req); const o = await fn(req.user, req.params.id, req.body.reason, req.body.caseId); res.set('Cache-Control', 'no-store').json({ ok: true, ...(o || {}) }); };
 r.post('/api/moderation/users/:id(\\d+)/ban', S, act(M.ban));
 r.post('/api/moderation/users/:id(\\d+)/unban', S, act(M.unban));
 r.post('/api/moderation/users/:id(\\d+)/restrict', S, act(M.restrictSelling));
 r.post('/api/moderation/users/:id(\\d+)/lift', S, act(M.liftRestriction));
-r.post('/api/moderation/users/:id(\\d+)/suspend', S, async (req, res) => { limit(req); const o = await M.suspendSelling(req.user, req.params.id, { days: req.body.days, reason: req.body.reason, caseId: req.body.caseId, confirm: req.body.confirm }); res.set('Cache-Control', 'no-store').json({ ok: true, ...o }); });
+r.post('/api/moderation/users/:id(\\d+)/suspend', S, async (req, res) => { await limit(req); const o = await M.suspendSelling(req.user, req.params.id, { days: req.body.days, reason: req.body.reason, caseId: req.body.caseId, confirm: req.body.confirm }); res.set('Cache-Control', 'no-store').json({ ok: true, ...o }); });
 
 // ------------------------------------------------------------------ payment-link review (staff): mistakes, suspicious links, repeated violations, appeals
 r.get('/moderation/payment-links', S, async (req, res) => {
@@ -143,12 +143,12 @@ r.get('/admin/moderators', A, async (req, res) => {
     document.querySelectorAll('[data-deact]').forEach(b=>b.addEventListener('click',async()=>{var why=prompt('Reason for deactivating this moderator (recorded):');if(!why)return;try{await pp.api('POST','/api/admin/moderators/'+b.dataset.deact+'/deactivate',{reason:why});location.reload()}catch(x){alert(x.message)}}))</script>` });
 });
 r.post('/api/admin/moderators/invite', A, async (req, res) => {
-  auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600);
+  await auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600);
   const out = await M.invite(req.user, { email: req.body.email, note: req.body.note });
   res.set('Cache-Control', 'no-store').json({ ok: true, id: out.id, link: out.link, expiresAt: out.expiresAt });
 });
 r.post('/api/admin/moderators/invites/:id(\\d+)/revoke', A, async (req, res) => { await M.revokeInvite(req.user, req.params.id); res.json({ ok: true }); });
-r.post('/api/admin/moderators/:id(\\d+)/deactivate', A, async (req, res) => { auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600); await M.deactivate(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
+r.post('/api/admin/moderators/:id(\\d+)/deactivate', A, async (req, res) => { await auth.rateLimit(`modinvite:${req.user.id}`, 20, 3600); await M.deactivate(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
 
 // ------------------------------------------------------------------ administrator-only: Account Management (one place for seller / moderator / buyer invitations)
 const inviteStatus = (i) => (i.used_at ? 'used' : i.revoked_at ? 'revoked' : i.expires_at <= now() ? 'expired' : 'pending');
@@ -177,7 +177,7 @@ r.get('/admin/accounts', A, async (req, res) => {
       d.confirm=true;try{var r=await pp.api('POST','/api/admin/accounts/invite',d);o.innerHTML='<div class="panel notice strong" style="margin-top:12px"><strong>Copy this link now — it will not be shown again, and it is not emailed:</strong><p style="word-break:break-all;user-select:all"></p></div>';o.querySelector('p').textContent=r.link;f.reset()}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>` });
 });
 r.post('/api/admin/accounts/invite', A, async (req, res) => {
-  auth.rateLimit(`acctinvite:${req.user.id}`, 30, 3600);
+  await auth.rateLimit(`acctinvite:${req.user.id}`, 30, 3600);
   const b = req.body || {};
   if (b.confirm !== true) throw new HttpError(422, 'Please confirm before creating a setup link.');
   let out;

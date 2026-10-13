@@ -1,6 +1,7 @@
 'use strict';
 // All runtime configuration comes from environment variables (see .env.example / README).
 const path = require('node:path');
+const os = require('node:os');
 const env = process.env;
 const root = path.resolve(__dirname, '..');
 
@@ -12,6 +13,7 @@ const val = (k) => String(env[k] ?? '').trim();
 for (const k of ['SIGNUPS', 'SUPPORT_EMAIL', 'LEGAL_ENTITY', 'LEGAL_ADDRESS', 'PUBLIC_RELEASE_DATE', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'NODE_ENV', 'PORT', 'HOST', 'PUBLIC_URL', 'CHECKOUT_MODE', 'TRUST_PROXY', 'SELLER_ONBOARDING', 'SELLER_ALLOWED_EMAILS', 'PAYMENT_LINK_HOSTS', 'MAX_SUSPENSION_DAYS', 'SHIPPO_API_KEY', 'PAIRPLUG_DB', 'PAIRPLUG_UPLOADS', 'PAYMENTS_MODE', 'RATE_LIMIT_SCALE'])
   if (/\s#/.test(String(env[k] ?? ''))) envProblems.push(`${k} contains an inline "# comment"; env files don't support those — put comments on their own line`);
 if (val('SHIPPO_API_KEY') && !/^shippo_(test|live)_\S+$/.test(val('SHIPPO_API_KEY'))) envProblems.push('SHIPPO_API_KEY must start with shippo_test_ (live keys are refused in this release)');
+const onVercel = Boolean(env.VERCEL);
 const isProd = /^production\b/.test(val('NODE_ENV'));   // 'production # note' still counts as production (and is reported above)
 const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
 if (onboardingRaw && !['open', 'invite'].includes(onboardingRaw)) envProblems.push('SELLER_ONBOARDING must be exactly "open" or "invite"');
@@ -36,9 +38,14 @@ module.exports = {
   // PostgreSQL (the application database). DATABASE_URL is required; there is no file fallback any more.
   db: {
     url: val('DATABASE_URL'),
-    poolMax: Number(env.PGPOOL_MAX || 10),
+    // Serverless: each instance keeps only a few connections (use the provider's pooled connection string; see docs/VERCEL.md).
+    poolMax: Number(env.PGPOOL_MAX || (onVercel ? 3 : 10)),
+    // Direct (non-pooled) connection used ONLY by `npm run migrate`: session-level locks do not survive transaction poolers.
+    urlDirect: val('DATABASE_URL_UNPOOLED'),
+    // On Vercel the schema is never changed by a web request: run `npm run migrate` as a deliberate step; the app then only verifies the version.
+    autoMigrate: !onVercel || val('MIGRATE_ON_START') === '1',
     connectTimeoutMs: Number(env.PG_CONNECT_TIMEOUT_MS || 5000),
-    idleTimeoutMs: Number(env.PG_IDLE_TIMEOUT_MS || 30000),
+    idleTimeoutMs: Number(env.PG_IDLE_TIMEOUT_MS || (onVercel ? 10000 : 30000)),
     statementTimeoutMs: Number(env.PG_STATEMENT_TIMEOUT_MS || 20000),
     // DATABASE_SSL=1 turns on TLS with certificate verification (managed databases); DATABASE_SSL_CA=/path/ca.pem pins a CA.
     ssl: ['1', 'true', 'require'].includes(val('DATABASE_SSL').toLowerCase())
@@ -47,7 +54,19 @@ module.exports = {
   },
   // LEGACY: the old SQLite file. Only the one-off importer (scripts/sqlite-to-pg.js) reads it, never the running app.
   dbFile: env.PAIRPLUG_DB || path.join(root, 'data', 'pairplug.db'),
-  uploadDir: env.PAIRPLUG_UPLOADS || path.join(root, 'data', 'uploads'),
+  // Vercel's /var/task is read-only and its other storage is ephemeral per instance: product/avatar/banner uploads CANNOT be stored durably
+  // there. They are disabled (see images.saveUpload) until durable object storage is wired in; this path is then only a never-created placeholder
+  // so nothing tries to mkdir under /var/task. Customer review photos are unaffected: they live in PostgreSQL.
+  onVercel,
+  // Chat transport. A serverless function cannot hold a WebSocket or an in-memory subscription, so on Vercel the client polls the database-backed
+  // sync endpoint every pollMs (messages appear within a few seconds). Elsewhere: WebSocket with long-polling fallback, exactly as before.
+  chat: { pollMs: Number(env.CHAT_POLL_MS || (onVercel ? 3000 : 0)) },
+  cronSecret: val('CRON_SECRET'),                       // bearer token Vercel Cron (or any scheduler) must send to /api/cron/*
+  vercelEnv: val('VERCEL_ENV'),                         // 'production' | 'preview' | 'development' (set by Vercel)
+  // Object storage for uploaded images (S3-compatible, private bucket, server-side credentials). All five must be set to enable it.
+  storage: { s3: ['S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'].every((k) => val(k))
+    ? { endpoint: val('S3_ENDPOINT'), bucket: val('S3_BUCKET'), region: val('S3_REGION') || 'auto', accessKeyId: val('S3_ACCESS_KEY_ID'), secretAccessKey: val('S3_SECRET_ACCESS_KEY'), prefix: val('S3_KEY_PREFIX') } : null },
+  uploadDir: env.PAIRPLUG_UPLOADS || (onVercel ? path.join(os.tmpdir(), 'pairplug-uploads-disabled') : path.join(root, 'data', 'uploads')),
   publicUrl: env.PUBLIC_URL || `http://localhost:${env.PORT || 3000}`,
   // Platform defaults. Admins can override fees at runtime (settings table).
   defaults: {
@@ -102,6 +121,7 @@ module.exports = {
   // longer measures are the existing restrict/ban actions. Nothing is ever applied automatically.
   enforcement: { maxSuspensionDays: /^\d+$/.test(val('MAX_SUSPENSION_DAYS')) ? Math.min(30, Math.max(1, Number(val('MAX_SUSPENSION_DAYS')))) : 5 },
   carrierWebhookSecret: env.CARRIER_WEBHOOK_SECRET || '',
+  sharedRateLimit: onVercel || val('RATE_LIMIT_STORE').toLowerCase() === 'db',   // counters in PostgreSQL shared by all instances (see auth.rateLimit)
   rateLimitScale: Number(env.RATE_LIMIT_SCALE || 1), // tests raise this; production keeps 1
   naCountries: ['US', 'CA', 'MX'], // North America
   conditions: { new_with_tags: 'New with tags', like_new: 'Like new', good: 'Good', fair: 'Fair' },
@@ -111,5 +131,6 @@ module.exports = {
     ['bags', 'Bags'], ['other', 'Other'],
   ],
   carriers: ['USPS', 'UPS', 'FedEx', 'Canada Post', 'DHL', 'Other'],
-  limits: { imageBytes: 5 * 1024 * 1024, maxImages: 8, csvRows: 1000 },
+  limits: { imageBytes: (onVercel ? 4 : 5) * 1024 * 1024,   // Vercel rejects request bodies over 4.5 MB before our code runs
+     maxImages: 8, csvRows: 1000 },
 };

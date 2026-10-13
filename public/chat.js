@@ -97,14 +97,15 @@
         this.ctl = new AbortController();
         try {
           // First request returns immediately (wait=0) so "connected" is truthful right away; later ones are held open ≤20s.
-          const res = await fetch(`/api/chat/sync?after=${this.h.cursor()}&wait=${first ? 0 : 20}`, { credentials: 'same-origin', signal: this.ctl.signal, headers: { Accept: 'application/json' } });
+          const res = await fetch(`/api/chat/sync?after=${this.h.cursor()}&wait=${first || boot.pollMs ? 0 : 20}`, { credentials: 'same-origin', signal: this.ctl.signal, headers: { Accept: 'application/json' } });
           if (res.status === 401) return this.h.state('auth-error');
           if (!res.ok) throw new Error('bad status');
           const data = await res.json(); this.fails = 0; first = false;
           if (!this.up) { this.up = true; this.h.state('connected-polling'); }
           this.h.event({ t: 'sync', ...data });
           for (const ev of data.typing || []) this.h.event(ev);
-          if (!data.messages.length && !(data.typing || []).length) await sleep(250); // guard against a hot loop if the server answers instantly
+          if (boot.pollMs) await sleep(document.hidden ? boot.pollMs * 5 : boot.pollMs);   // short-polling host (serverless): ask again every few seconds, slower in a background tab
+          else if (!data.messages.length && !(data.typing || []).length) await sleep(250); // guard against a hot loop if the server answers instantly
         } catch (e) {
           if (this.stopped) return;
           this.up = false; this.fails++;
@@ -227,7 +228,7 @@
       box.dataset.state = S.conn; box.dataset.kind = kind; box.dataset.transport = S.transport ? S.transport.name : '';
       const span = box.querySelector('span'); span.textContent = '';
       if (S.conn === 'auth-error') { span.append('Signed out. ', Object.assign(el('a', null, 'Log in again'), { href: '/login?next=' + encodeURIComponent(location.pathname) })); }
-      else if (S.conn === 'connected-polling') span.textContent = S.forcedPolling ? 'Live · long-polling (WebSocket unavailable)' : 'Live · long-polling';
+      else if (S.conn === 'connected-polling') span.textContent = boot.pollMs ? `Live · refreshes every ${Math.round(boot.pollMs / 1000)}s` : S.forcedPolling ? 'Live · long-polling (WebSocket unavailable)' : 'Live · long-polling';
       else span.textContent = label;
     }
     $('#composer button').disabled = S.conn === 'auth-error';

@@ -116,3 +116,6 @@ Read the output: `IMPORTED/DRY RUN … N checks passed. Source untouched: true`,
 6. Photos are not in the database: leave the uploads directory where it is (or `rsync` it to the new host *before* the cutover and once more after, since new files may appear).
 
 **Rollback:** before the new release accepts any order, rolling back is trivial and lossless — stop the new app and start the old release on the untouched `data/pairplug.db`. After PostgreSQL has accepted new orders there is **no automatic PostgreSQL → SQLite path**; going back would mean exporting those new orders by hand. That is why step 5 verifies before opening the site, and why the SQLite file and snapshots are kept until you are satisfied (suggest: at least one full release cycle).
+
+## Vercel
+See **[docs/VERCEL.md](VERCEL.md)** (architecture mapping, required services, environment variables per environment, migration and cron setup, known limits) and `deploy/vercel.env.example`.

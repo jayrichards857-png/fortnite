@@ -30,7 +30,7 @@ r.get('/admin/invitations', A, async (req, res) => {
       o.innerHTML='<div class="panel notice strong" style="margin-top:12px"><strong>Copy this link now — it will not be shown again:</strong><p style="word-break:break-all;user-select:all"></p></div>';o.querySelector('p').textContent=r.link;f.reset()}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>` });
 });
 r.post('/api/admin/invitations', A, async (req, res) => {
-  auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
+  await auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
   const out = await invitations.create(req.user, { kind: req.body.kind, email: req.body.email, note: req.body.note });
   res.set('Cache-Control', 'no-store').json({ ok: true, link: out.link, expiresAt: out.expiresAt });
 });

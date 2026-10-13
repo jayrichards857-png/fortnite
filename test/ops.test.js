@@ -52,7 +52,7 @@ test('backup: consistent snapshot, manifest + verification, incremental photos, 
   assert.equal(a.integrity, 'ok'); assert.ok(a.photosCopied >= 1);
   assert.equal(a.manifest.schemaVersion, MIGRATIONS.length);
   assert.equal(a.manifest.tables.users, (await q.get('SELECT COUNT(*) n FROM users')).n); assert.equal(a.manifest.tables.listings, (await q.get('SELECT COUNT(*) n FROM listings')).n);
-  assert.equal(Object.keys(a.manifest.tables).length, 47, 'every table (46 app tables + schema_migrations) is counted'); assert.match(a.manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(Object.keys(a.manifest.tables).length, 49, 'every table (48 app tables + schema_migrations) is counted'); assert.match(a.manifest.sha256, /^[a-f0-9]{64}$/);
   assert.ok(!fs.readFileSync(a.database + '.json', 'utf8').includes('s3cr3tpw'), 'the manifest never contains the database password');
   const b = await backup({ dir, keep: 1, stamp: '2030-01-02-00-00-00' });
   assert.equal(b.photosCopied, 0, 'uploads are copied once');
@@ -127,7 +127,7 @@ test('backup files are owner-only; restore verifies the manifest and schema vers
   const fresh = testdb.createSync(), up = path.join(dir, 'restored', 'uploads');
   try {
     const r = await restore({ dump: a.database, databaseUrl: fresh.url, uploadDir: up, photosDir: path.join(dir, 'uploads'), supportedVersion: MIGRATIONS.length });
-    assert.equal(r.integrity, 'ok'); assert.equal(r.schemaVersion, MIGRATIONS.length); assert.ok(r.photosRestored >= 0); assert.equal(r.tables, 47);
+    assert.equal(r.integrity, 'ok'); assert.equal(r.schemaVersion, MIGRATIONS.length); assert.ok(r.photosRestored >= 0); assert.equal(r.tables, 49);
     const { Client } = require('pg'); const c = new Client({ connectionString: fresh.url }); await c.connect();
     try { assert.equal(Number((await c.query('SELECT COUNT(*) n FROM users')).rows[0].n), (await q.get('SELECT COUNT(*) n FROM users')).n);
       // the restored database keeps its guarantees: append-only tables, constraints and triggers came across

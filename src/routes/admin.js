@@ -91,7 +91,7 @@ r.get('/admin/users', A, async (req, res) => {
 });
 // Administrator role changes: re-authenticate with the acting admin's own password; never yourself; never the last administrator. Always audited.
 r.post('/api/admin/users/:id(\\d+)/admin', A, async (req, res) => {
-  auth.rateLimit(`admin-role:${req.user.id}`, 10, 3600);
+  await auth.rateLimit(`admin-role:${req.user.id}`, 10, 3600);
   const id = Number(req.params.id), make = req.body.admin === true;
   if (!auth.verifyPassword(String(req.body.password || ''), req.user.password_hash)) throw new HttpError(403, 'Your password is incorrect.');
   if (id === req.user.id) throw new HttpError(400, "You can't change your own administrator role.");
@@ -108,7 +108,7 @@ r.post('/api/admin/users/:id(\\d+)/admin', A, async (req, res) => {
 });
 // "Approve seller access": issues the normal single-use invitation (so the cap, expiry and slot reservation all apply). The link is returned once.
 r.post('/api/admin/users/:id(\\d+)/seller-invite', A, async (req, res) => {
-  auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
+  await auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
   const u = await q.get('SELECT id, email, is_seller FROM users WHERE id = ?', Number(req.params.id));
   if (!u) throw new HttpError(404, 'User not found');
   if (u.is_seller) throw new HttpError(409, 'Already a seller.');
@@ -117,7 +117,7 @@ r.post('/api/admin/users/:id(\\d+)/seller-invite', A, async (req, res) => {
 });
 // Kept for back-compat with the Users table; now a thin wrapper over the moderation service (reason required, logged in moderation_actions + audit).
 r.post('/api/admin/users/:id(\\d+)/ban', A, async (req, res) => {
-  auth.rateLimit(`mod:${req.user.id}`, 200, 3600);
+  await auth.rateLimit(`mod:${req.user.id}`, 200, 3600);
   const out = req.body.banned ? await M.ban(req.user, req.params.id, req.body.reason, req.body.caseId) : await M.unban(req.user, req.params.id, req.body.reason, req.body.caseId);
   res.json({ ok: true, ...(out || {}) });
 });

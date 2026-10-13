@@ -9,6 +9,7 @@ function hostAllowed(req) {
   const host = String(req.headers.host || '').toLowerCase();
   if (host && host === publicHost()) return true;
   const path = String(req.url || '').split('?')[0];
+  if (path.startsWith('/api/cron/')) return true;       // called by the scheduler on whatever host the deployment has; protected by its own bearer secret
   return path === '/healthz' && /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host);
 }
 module.exports = { hostAllowed, publicHost };

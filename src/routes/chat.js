@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const config = require('../config');
 const { esc, money, date, HttpError, wrap } = require('../util');
 const V = require('../views');
 const auth = require('../auth');
@@ -14,7 +15,7 @@ const shell = async (req, res) => {
   const convId = req.params.id ? Number(req.params.id) : null;
   let active = null;
   if (convId) { try { active = await service.getConversation(req.user, convId); } catch { return res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Conversation not found', 'It may not exist, or it belongs to someone else.', ['/messages', 'Back to messages']) })); } }
-  const boot = { me: { id: req.user.id, name: req.user.display_name }, conversations: await service.listConversations(req.user), cursor: await service.cursorFor(req.user.id), active: convId, forcedTransport: ['polling', 'ws'].includes(req.query.transport) ? req.query.transport : null };
+  const boot = { me: { id: req.user.id, name: req.user.display_name }, conversations: await service.listConversations(req.user), cursor: await service.cursorFor(req.user.id), active: convId, forcedTransport: config.chat.pollMs ? 'polling' : ['polling', 'ws'].includes(req.query.transport) ? req.query.transport : null, pollMs: config.chat.pollMs };
   const body = `<div class="chat${convId ? ' has-active' : ''}" id="chat">
     <aside class="chat-list" aria-label="Conversations"><div class="chat-list-head"><h1>Messages</h1><span class="conn conn-list" data-state="connecting"><i></i><span>Connecting…</span></span></div><div id="conv-list" role="list"></div></aside>
     <section class="chat-thread" aria-label="Conversation">
@@ -43,7 +44,7 @@ r.post('/api/chat/command', auth.requireUser, async (req, res) => res.json({ ok:
  * happened for this user (or ~20s), then answers. This is HTTP polling, not a WebSocket, and the client labels it as such.
  */
 r.get('/api/chat/sync', auth.requireUser, wrap(async (req, res) => {
-  const after = Number(req.query.after) || 0, wait = Math.min(Number(req.query.wait) || 0, 25) * 1000 || 0;
+  const after = Number(req.query.after) || 0, wait = config.chat.pollMs ? 0 : Math.min(Number(req.query.wait) || 0, 25) * 1000 || 0;   // serverless: never hold a function open waiting for an in-memory event
   const ephemeral = []; let wake;
   const woke = new Promise((resolve) => { wake = resolve; });
   // subscribe BEFORE reading the DB so an event arriving between the read and the wait can't be lost

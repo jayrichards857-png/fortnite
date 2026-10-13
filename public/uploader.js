@@ -16,7 +16,8 @@
     input.addEventListener('change', async () => {
       for (const file of [...input.files]) {
         if (files.length >= max) { pp.toast(`You can add at most ${max} photos.`, true); break; }
-        if (file.size > 5 * 1024 * 1024) { pp.toast(`${file.name} is larger than 5 MB`, true); continue; }
+        const maxBytes = Number((document.querySelector('meta[name=pp-max-image-bytes]') || {}).content) || 5 * 1024 * 1024;
+        if (file.size > maxBytes) { pp.toast(`${file.name} is larger than ${Math.round(maxBytes / 1048576)} MB`, true); continue; }
         add.textContent = 'Uploading…';
         try { const r = await pp.api('POST', url, file, file.type || 'image/jpeg'); files.push(r.file); render(r.file); }
         catch (e) { pp.toast(e.message, true); }

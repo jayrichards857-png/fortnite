@@ -24,7 +24,7 @@ r.get('/review-photos/:id(\\d+)', async (req, res) => {
   res.set({ 'Content-Type': p.mime, 'Content-Length': String(p.data.length), 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=300' });
   res.send(p.data);
 });
-r.post('/api/moderation/review-photos/:id(\\d+)/remove', S, async (req, res) => { auth.rateLimit(`mod:${req.user.id}`, 200, 3600); await RP.staffRemove(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
+r.post('/api/moderation/review-photos/:id(\\d+)/remove', S, async (req, res) => { await auth.rateLimit(`mod:${req.user.id}`, 200, 3600); await RP.staffRemove(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
 r.post('/api/reviews/:id(\\d+)/report', U, async (req, res) => res.json({ ok: true, id: await RV.report(req.user, req.params.id, req.body.reason) }));
 
 r.get('/moderation/reviews', S, async (req, res) => {
@@ -48,7 +48,7 @@ r.get('/moderation/reviews/:id(\\d+)', S, async (req, res) => {
   await adminPage(req, res, { title: 'Review history', body: `<p><a href="/moderation/reviews">← Review moderation</a></p><h1>Review #${Number(req.params.id)} history</h1>${h.length ? `<ul class="timeline">${h.map((e) => `<li><strong>${esc(e.display_name)}</strong> <span class="muted small">(${esc(e.actor_role)}) · ${when(e.created_at)} UTC · ${esc(e.kind.replace('_', ' '))}</span>${e.detail ? `<p style="margin:2px 0;white-space:pre-wrap" class="small">${esc(e.detail)}</p>` : ''}</li>`).join('')}</ul>` : V.empty('No history', '')}` });
 });
 for (const [act, fn] of [['hide', RV.hide], ['restore', RV.restore], ['dismiss', RV.dismiss]]) {
-  r.post(`/api/moderation/reviews/:id(\\d+)/${act}`, S, async (req, res) => { auth.rateLimit(`mod:${req.user.id}`, 200, 3600); await fn(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
+  r.post(`/api/moderation/reviews/:id(\\d+)/${act}`, S, async (req, res) => { await auth.rateLimit(`mod:${req.user.id}`, 200, 3600); await fn(req.user, req.params.id, req.body.reason); res.json({ ok: true }); });
 }
 void date;
 module.exports = { router: r };

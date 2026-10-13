@@ -67,7 +67,7 @@ async function startPurchase(user, { listingId, address, acknowledged }) {
   if (!isExternal()) throw new HttpError(404, 'Direct checkout is not enabled.');
   if (!acknowledged) throw new HttpError(422, 'Please confirm you understand how payment works.', { acknowledged: 'Required' });
   const addr = validateAddress(address);
-  rateLimit(`buy:${user.id}`, 12, 3600);
+  await rateLimit(`buy:${user.id}`, 12, 3600);
   await expireStaleCheckouts(); // free any expired holds first so a stale reservation can't block a real buyer
   const out = await tx(async () => {
     // lock the listing: concurrent purchases of the same item queue here, so the "already holds a reservation" check, the unit hold and the order insert are one atomic step
@@ -228,7 +228,7 @@ async function buyerSetAddress(user, orderId, address) {
 }
 /** The SELLER asks the buyer (in-app notification) to add the missing address. Throttled; never claims more than it did. */
 async function sellerRequestAddress(user, orderId) {
-  rateLimit(`addr-req:${user.id}`, 30, 3600);
+  await rateLimit(`addr-req:${user.id}`, 30, 3600);
   const o = await sellerOrder(user, orderId), ck = await q.get('SELECT * FROM checkouts WHERE id = ?', o.checkout_id);
   if (!addressMissing(ck)) throw new HttpError(409, 'This order already has a delivery address.');
   if (['cancelled', 'refunded', 'shipped', 'delivered', 'released'].includes(o.status)) throw new HttpError(409, 'This order no longer needs an address.');

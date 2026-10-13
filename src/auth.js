@@ -103,12 +103,23 @@ function csrfGuard(req, res, next) {
   next();
 }
 
-// Tiny in-memory sliding-window limiter (per key). Enough to blunt password guessing on one node.
+// Request limiter. Two stores with the same behaviour for callers (await it; it throws HttpError 429 when the limit is exceeded):
+//   memory  per-process sliding window (local development, one VM).
+//   db      fixed-window counters in PostgreSQL shared by every instance (REQUIRED on serverless hosts: Vercel runs many instances, so a
+//           per-process map would give each instance its own allowance). Selected automatically on Vercel or with RATE_LIMIT_STORE=db.
 const hits = new Map();
-function rateLimit(key, max, windowSec) {
+async function rateLimit(key, max, windowSec) {
+  const limit = max * config.rateLimitScale;
+  if (config.sharedRateLimit) {
+    const bucket = Math.floor(now() / windowSec), r = await q.get('INSERT INTO rate_limits(key, bucket, hits, expires_at) VALUES(?,?,1,?) ON CONFLICT (key, bucket) DO UPDATE SET hits = rate_limits.hits + 1 RETURNING hits', String(key).slice(0, 300), bucket, (bucket + 1) * windowSec);
+    if (Number(r.hits) > limit) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
+    return;
+  }
   const t = now(), arr = (hits.get(key) || []).filter((x) => x > t - windowSec);
-  if (arr.length >= max * config.rateLimitScale) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
+  if (arr.length >= limit) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
   arr.push(t); hits.set(key, arr);
 }
+/** Housekeeping for the shared store: drop counters whose window is long over. */
+const purgeRateLimits = async () => (await q.run('DELETE FROM rate_limits WHERE expires_at < ?', now())).changes;
 
-module.exports = { destroyOtherSessions, userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, requireStaff, csrfGuard, rateLimit };
+module.exports = { purgeRateLimits, destroyOtherSessions, userFromRequest, DUMMY_HASH, hashPassword, verifyPassword, createSession, destroySession, loadUser, requireUser, requireSeller, requireAdmin, requireStaff, csrfGuard, rateLimit };

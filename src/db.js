@@ -40,7 +40,8 @@ function getPool() {
     max: config.db.poolMax,
     idleTimeoutMillis: config.db.idleTimeoutMs,
     connectionTimeoutMillis: config.db.connectTimeoutMs,
-    statement_timeout: config.db.statementTimeoutMs,
+    // 0 omits the startup parameter (transaction poolers such as PgBouncer reject it; set the timeout on the database role instead)
+    ...(config.db.statementTimeoutMs > 0 ? { statement_timeout: config.db.statementTimeoutMs } : {}),
     application_name: 'pairplug',
     ssl: config.db.ssl,
   });
@@ -138,7 +139,17 @@ function ready() {
 }
 async function migrate() {
   const client = await getPool().connect();
-  try { await applyMigrations(client); } finally { client.release(); }
+  try {
+    if (config.db.autoMigrate) return await applyMigrations(client);
+    // Serverless mode: a web request never alters the schema. It only checks that the database matches this release.
+    const have = await schemaVersionOn(client);
+    if (have !== MIGRATIONS.length) throw new Error(`database schema is version ${have}, this release needs ${MIGRATIONS.length}: run \`npm run migrate -- --apply\` against this environment's database first (docs/VERCEL.md)`);
+  } finally { client.release(); }
+}
+/** Current schema version on a connected client without creating anything (0 = empty database). */
+async function schemaVersionOn(client) {
+  if (!(await client.query("SELECT to_regclass('schema_migrations') t")).rows[0].t) return 0;
+  return Number((await client.query('SELECT COALESCE(MAX(version), 0) v FROM schema_migrations')).rows[0].v);
 }
 /** Bring the database behind `client` (a connected pg Client) up to the latest schema. Serialised by an advisory lock; one transaction per migration. */
 async function applyMigrations(client) {
@@ -175,4 +186,4 @@ async function setSetting(key, value) {
 /** True for a PostgreSQL unique-constraint violation (SQLSTATE 23505): the database refused a duplicate. */
 const isUnique = (e) => Boolean(e) && e.code === '23505';
 
-module.exports = { q, tx, now, lockKey, isUnique, applyMigrations, ready, close, schemaVersion, getSettings, setSetting, getPool, toPg, MIGRATIONS };
+module.exports = { schemaVersionOn, q, tx, now, lockKey, isUnique, applyMigrations, ready, close, schemaVersion, getSettings, setSetting, getPool, toPg, MIGRATIONS };

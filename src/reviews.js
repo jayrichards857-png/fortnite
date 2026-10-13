@@ -42,7 +42,7 @@ async function ownOrder(user, orderId) {
 }
 
 async function submit(user, orderId, data) {
-  rateLimit(`review:${user.id}`, 20, 3600);
+  await rateLimit(`review:${user.id}`, 20, 3600);
   const { t, text, stars, photos } = input(data);
   return await tx(async () => {
     const o = await ownOrder(user, orderId);
@@ -64,7 +64,7 @@ async function submit(user, orderId, data) {
   });
 }
 async function edit(user, orderId, data) {
-  rateLimit(`review:${user.id}`, 20, 3600);
+  await rateLimit(`review:${user.id}`, 20, 3600);
   const { t, text, stars, photos } = input(data);
   return await tx(async () => {
     const o = await ownOrder(user, orderId), cur = await forOrder(o.id);
@@ -89,7 +89,7 @@ async function remove(user, orderId) {
 
 // ------------------------------------------------------------------ reports + moderation
 async function report(user, reviewId, reason) {
-  rateLimit(`review-report:${user.id}`, 10, 3600);
+  await rateLimit(`review-report:${user.id}`, 10, 3600);
   const why = clean(reason, 501);
   if (why.length < 5 || why.length > 500) throw new HttpError(422, 'Please fix the highlighted fields.', { reason: 'Tell us what is wrong (5 to 500 characters).' });
   return await tx(async () => {

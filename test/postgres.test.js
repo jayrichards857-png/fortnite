@@ -111,7 +111,7 @@ test('migrations: a fresh database reaches the latest version; running again cha
     const c1 = new Client({ connectionString: d.url }), c2 = new Client({ connectionString: d.url }), c3 = new Client({ connectionString: d.url }); await Promise.all([c1.connect(), c2.connect(), c3.connect()]);
     try { await Promise.all([applyMigrations(c1), applyMigrations(c2), applyMigrations(c3)]); await applyMigrations(c1); } finally { await Promise.all([c1.end(), c2.end(), c3.end()]); }
     assert.deepEqual((await d.all('SELECT version FROM schema_migrations ORDER BY version')).map((r) => Number(r.version)), Array.from({ length: MIGRATIONS.length }, (_, i) => i + 1), 'each migration recorded exactly once');
-    assert.equal(Number((await d.one("SELECT COUNT(*) n FROM pg_tables WHERE schemaname = 'public'")).n), 47);
+    assert.equal(Number((await d.one("SELECT COUNT(*) n FROM pg_tables WHERE schemaname = 'public'")).n), 49);
   } finally { await d.close(); }
 });
 
@@ -133,7 +133,7 @@ test('schema parity: every table, column, index and trigger of the legacy SQLite
   const liteTables = lite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
   const pgTables = (await q.all("SELECT tablename t FROM pg_tables WHERE schemaname = current_schema() AND tablename <> 'schema_migrations' ORDER BY 1")).map((r) => r.t);
   // Things added AFTER the frozen SQLite schema (v16) are PostgreSQL-only and listed here on purpose: migration 17 (photo reviews).
-  const PG_ONLY = { tables: ['review_photos'], columns: ['seller_reviews.rating'], triggers: ['review_photos_max3'] };
+  const PG_ONLY = { tables: ['review_photos', 'rate_limits', 'job_leases'], columns: ['seller_reviews.rating'], triggers: ['review_photos_max3'] };
   assert.deepEqual(pgTables.filter((t) => !PG_ONLY.tables.includes(t)), liteTables, 'same tables');
   for (const t of liteTables) {
     const lc = lite.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name).sort();

@@ -29,7 +29,7 @@ function present(m) {
  * { listingId } | { sellerHandle } (contacting a seller needs no listing and no payment link).
  */
 async function startConversation(user, arg) {
-  rateLimit(`chat-start:${user.id}`, 30, 3600);
+  await rateLimit(`chat-start:${user.id}`, 30, 3600);
   const input = arg && typeof arg === 'object' ? arg : { listingId: arg };
   let sellerId, listingId = null;
   if (input.listingId) {
@@ -72,7 +72,7 @@ async function sendMessage(user, { conversationId, clientId, body }) {
   if (!recipient || recipient.banned) throw new HttpError(403, 'This user is unavailable.');
   const existing = await q.get('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?', c.id, user.id, clientId);
   if (existing) return { message: present(existing), duplicate: true };
-  rateLimit(`chat-send:${user.id}`, 40, 60);
+  await rateLimit(`chat-send:${user.id}`, 40, 60);
 
   let msg, duplicate = false;
   await tx(async () => {
@@ -111,7 +111,7 @@ async function markRead(user, { conversationId, upTo }) {
 /** Typing indicators are ephemeral by design: published to the other member only, never stored. */
 async function typing(user, { conversationId }) {
   const c = await memberConversation(user, conversationId);
-  rateLimit(`chat-typing:${user.id}`, 60, 60);
+  await rateLimit(`chat-typing:${user.id}`, 60, 60);
   getHub().publish(other(c, user.id), { t: 'typing', conversationId: c.id, userId: user.id, at: Date.now() });
   return {};
 }

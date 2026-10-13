@@ -34,7 +34,7 @@ const touch = async (id, status) => await q.run('UPDATE cases SET updated_at = ?
 
 // ------------------------------------------------------------------ opening cases
 async function reportOrder(user, orderId, { reason, evidence = [], category, paymentMismatch = false }) {
-  rateLimit(`case:${user.id}`, 10, 3600);
+  await rateLimit(`case:${user.id}`, 10, 3600);
   const why = text(reason), cat = F.category(category); const imgs = await ownedUploads(user.id, evidence.slice(0, 4));
   return await tx(async () => {
     const o = await q.get('SELECT * FROM orders WHERE id = ? AND buyer_id = ? FOR UPDATE', Number(orderId), user.id);
@@ -51,7 +51,7 @@ async function reportOrder(user, orderId, { reason, evidence = [], category, pay
   });
 }
 async function reportSeller(user, handle, { reason, evidence = [], orderId, category }) {
-  rateLimit(`case:${user.id}`, 10, 3600);
+  await rateLimit(`case:${user.id}`, 10, 3600);
   const why = text(reason), cat = F.category(category), imgs = await ownedUploads(user.id, evidence.slice(0, 4));
   const s = await q.get('SELECT id FROM users WHERE handle = ? AND is_seller = 1', String(handle || '').slice(0, 40));
   if (!s) throw new HttpError(404, 'Seller not found');
@@ -76,7 +76,7 @@ async function reportSeller(user, handle, { reason, evidence = [], orderId, cate
 /** A seller asks staff to review a listing removal, restriction or suspension they think was a mistake. Opens a normal case (reporter = the seller) so the same evidence, reply and decision tools apply. */
 async function appeal(user, { reason, evidence = [] }) {
   if (!user.is_seller) throw new HttpError(403, 'Only sellers can appeal a seller action.');
-  rateLimit(`appeal:${user.id}`, 5, 3600);
+  await rateLimit(`appeal:${user.id}`, 5, 3600);
   const why = text(reason, 10, 2000, 'reason'), imgs = await ownedUploads(user.id, evidence.slice(0, 4));
   return await tx(async () => {
     await lockKey('case:appeal', user.id);
@@ -89,7 +89,7 @@ async function appeal(user, { reason, evidence = [] }) {
   });
 }
 async function reportMessage(user, { conversationId, messageId, reason }) {
-  rateLimit(`case:${user.id}`, 10, 3600);
+  await rateLimit(`case:${user.id}`, 10, 3600);
   const why = text(reason);
   const conv = await memberConversation(user, conversationId);                       // only a member can report a conversation
   let mid = null;
@@ -123,7 +123,7 @@ async function mine(user) {
 
 // ------------------------------------------------------------------ parties respond
 async function respond(user, id, { body, evidence = [] }) {
-  rateLimit(`case-msg:${user.id}`, 30, 3600);
+  await rateLimit(`case-msg:${user.id}`, 30, 3600);
   const t = text(body, 2, 2000, 'body'); const imgs = await ownedUploads(user.id, evidence.slice(0, 4));
   return await tx(async () => {
     const c = await q.get('SELECT * FROM cases WHERE id = ?', Number(id)); const access = c && accessFor(user, c);
@@ -203,7 +203,7 @@ const openRequest = async (orderId) => await q.get("SELECT * FROM refund_request
 const latestRequest = async (orderId) => await q.get('SELECT * FROM refund_requests WHERE order_id = ? ORDER BY id DESC LIMIT 1', orderId);
 
 async function requestRefund(user, orderId, { kind = 'refund', reason }) {
-  rateLimit(`refund:${user.id}`, 10, 3600);
+  await rateLimit(`refund:${user.id}`, 10, 3600);
   if (!['refund', 'cancellation'].includes(kind)) throw new HttpError(422, 'Choose refund or cancellation.');
   const why = text(reason);
   return await tx(async () => {

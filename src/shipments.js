@@ -92,7 +92,7 @@ async function saveShipFrom(user, body) {
 
 // ---------------------------------------------------------------- quote
 async function quote(user, orderId, body = {}) {
-  rateLimit(`ship-quote:${user.id}`, 20, 3600);
+  await rateLimit(`ship-quote:${user.id}`, 20, 3600);
   if (!SH.enabled()) throw new HttpError(503, SH.disabledReason());
   const o = await orderFor(user, orderId), el = eligibility(o);
   if (!el.ok) throw new HttpError(409, el.reason);
@@ -161,7 +161,7 @@ async function claimQuote(user, o, t, body) {
 }
 
 async function buy(user, orderId, body = {}) {
-  rateLimit(`ship-buy:${user.id}`, 10, 3600);
+  await rateLimit(`ship-buy:${user.id}`, 10, 3600);
   if (!SH.enabled()) throw new HttpError(503, SH.disabledReason());
   const o = await orderFor(user, orderId), t = isTest();
   const existing = await latest(o.id, t);
@@ -190,7 +190,7 @@ async function buy(user, orderId, body = {}) {
 
 /** Poll a pending purchase (QUEUED / unknown outcome with a transaction id). */
 async function refresh(user, orderId) {
-  rateLimit(`ship-refresh:${user.id}`, 30, 3600);
+  await rateLimit(`ship-refresh:${user.id}`, 30, 3600);
   const o = await orderFor(user, orderId), s = await latest(o.id, isTest());
   if (!s || s.status !== 'purchasing') return await state(user, o.id);
   if (!s.provider_transaction_id) throw new HttpError(409, 'There is no provider transaction to check. Look in your Shippo dashboard; if nothing was created you can release this purchase and try again.');
