@@ -71,16 +71,9 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
       await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); if (await s.pg.$('input[name=terms]')) await s.pg.check('input[name=terms]'); await s.pg.check('input[name=agree]');
       await Promise.all([s.pg.waitForURL(B + '/account'), s.pg.click('button[type=submit]')]);
     }
-    assert.match(await sellers.s1.pg.textContent('body'), /verify/i, 'unverified banner / prompt shown');
-    await adm.pg.goto(B + '/admin/outbox'); const outbox = await adm.pg.textContent('main'); assert.match(outbox, /No email provider is configured/);
-    // Match each token to its recipient row
-    const rows = await adm.pg.locator('table tbody tr').allTextContents();
-    for (const key of ['s1', 's2', 's3']) {
-      const idx = rows.findIndex((r) => r.includes(`${key}@example.test`) && /verify-email/.test(r)); assert.ok(idx >= 0, 'row for ' + key);
-      const tok = rows[idx].match(/verify-email\?token=([A-Za-z0-9_\-]+)/)[1];
-      await sellers[key].pg.goto(`${B}/verify-email?token=${tok}`); await Promise.all([sellers[key].pg.waitForURL(B + '/account'), sellers[key].pg.click('#vbtn')]);
-    }
-    step('3. 3 sellers accepted invitations; verification links came only from the outbox (nothing was sent)');
+    assert.doesNotMatch(await sellers.s1.pg.textContent('body'), /verify your email/i, 'no email-verification requirement is shown to sellers');
+    await adm.pg.goto(B + '/admin/outbox'); assert.match(await adm.pg.textContent('main'), /No email provider is configured/);
+    step('3. 3 sellers accepted invitations; no email verification is needed to sell');
 
     // ---- 4. 4th seller race: a 4th invitation cannot be created, and a direct onboarding POST by a buyer fails
     const b = await mk(); await b.pg.goto(links.buyer.replace(/^https?:\/\/[^/]+/, B));

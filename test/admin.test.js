@@ -81,17 +81,17 @@ test('password change hashes with scrypt, needs the current password, and signs 
   assert.equal((await a.get('/account')).status, 200); assert.equal((await b.get('/account')).status, 302);
 });
 
-test('local email verification: recorded email preview works in development, still needs the real token step, and cannot bypass the seller gate', async () => {
+test('local email verification (optional): recorded email preview works in development and still needs the real token step', async () => {
   const adm = await H.newUser('Adm'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', adm.email);
   const inv = await adm.post('/api/admin/invitations', { kind: 'seller', email: `devseller-${Date.now()}@example.test` });
   const s = new H.Client(); const email = (await q.get('SELECT email FROM invitations ORDER BY id DESC LIMIT 1')).email;
   assert.equal((await s.post('/api/invitations/accept', { token: inv.json.link.split('/').pop(), display_name: 'Dev Seller', password: 'a-long-password-1', store_name: 'Dev Store', handle: 'devstore', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 200);
   assert.equal((await q.get('SELECT email_verified_at v FROM users WHERE email = ?', email)).v, null);
-  // an unverified seller cannot publish
+  // an unverified seller can publish (verification is optional)
   const file = await H.upload(s);
   const body = { title: 'Wool sweater', description: 'x', category: 'clothing', condition: 'good', size: 'M', price: '30.00', shipping: '5.00', shipping_payer: 'buyer', weight_oz: 20, images: [file], status: 'active' };
-  const blocked = await s.post('/api/seller/listings', body); assert.equal(blocked.status, 403); assert.match(blocked.json.error, /Verify your email/);
-  assert.equal((await q.get("SELECT COUNT(*) n FROM listings WHERE title = 'Wool sweater' AND status = 'active' AND seller_id = (SELECT id FROM users WHERE email = ?)", email)).n, 0);
+  const first = await s.post('/api/seller/listings', body); assert.equal(first.status, 200, 'publishing never needs a verified email');
+  assert.equal((await q.get("SELECT COUNT(*) n FROM listings WHERE title = 'Wool sweater' AND status = 'active' AND seller_id = (SELECT id FROM users WHERE email = ?)", email)).n, 1);
   // development preview shows the recorded message with its link, only to its recipient
   await s.post('/api/email/resend');
   const prev = await s.get('/dev/emails'); assert.equal(prev.status, 200); assert.match(prev.text, /Local development only/);
@@ -103,7 +103,7 @@ test('local email verification: recorded email preview works in development, sti
   assert.equal((await s.get(url)).status, 200); assert.equal((await q.get('SELECT email_verified_at v FROM users WHERE email = ?', email)).v, null);
   assert.equal((await s.post('/api/email/verify', { token: url.split('token=')[1] })).status, 200);
   assert.ok((await q.get('SELECT email_verified_at v FROM users WHERE email = ?', email)).v);
-  assert.equal((await s.post('/api/seller/listings', body)).status, 200, 'verified seller can publish');
+  assert.equal((await s.post('/api/seller/listings', body)).status, 200, 'and still can once verified');
 });
 
 test('safeguards: a configured email provider switches the development preview off, and no env flag can enable it', async () => {

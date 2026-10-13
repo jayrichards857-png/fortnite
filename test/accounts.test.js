@@ -25,7 +25,7 @@ test('with no email provider nothing is claimed as sent: messages are only recor
   const m = await lastMail(s.email, 'verify_email');
   assert.equal(m.status, 'not_configured'); assert.equal(m.provider, null); assert.equal(m.sent_at, null);
   assert.match(m.body, /\/verify-email\?token=/);
-  assert.match((await s.get('/account')).text, /no email provider is configured/);
+  assert.doesNotMatch((await s.get('/account')).text, /Send verification email/, 'no verification prompt when no provider exists');
 });
 
 test('verification tokens: hashed at rest, GET never consumes, single use, expiring, one generic error', async () => {
@@ -62,28 +62,17 @@ test('resend is throttled (1/min, 5/day) and already-verified accounts are told 
   assert.equal((await new H.Client().post('/api/email/resend')).status, 401);
 });
 
-test('an unverified seller cannot publish or take orders, but can save drafts and be contacted; verifying unlocks everything', async () => {
-  const s = await unverifiedSeller('Gate'), buyer = await H.newUser('B');
+test('email verification is NOT required: a seller with an unverified email publishes, is purchasable and contactable (curated sellers)', async () => {
+  const s = await unverifiedSeller('NoGate'), buyer = await H.newUser('B');
+  assert.equal((await q.get('SELECT email_verified_at v FROM users WHERE handle = ?', s.handle)).v, null, 'the email is not falsely marked verified');
   const file = await H.upload(s);
-  const pub = await s.post('/api/seller/listings', { ...body(), images: [file] });
-  assert.equal(pub.status, 403); assert.match(pub.json.error, /Verify your email/);
-  const draft = await s.post('/api/seller/listings', { ...body(), images: [file], status: 'draft' }); assert.equal(draft.status, 200);
-  const bulk = await s.post('/api/seller/listings/bulk', { ids: [draft.json.id], action: 'status', status: 'active' });
-  assert.equal(bulk.json.updated, 0); assert.match(bulk.json.skipped[0].reason, /verify your email/);
-  assert.match((await s.get('/dashboard')).text, /Verify your email to publish/);
-  // a listing that was already live when the seller became unverified is not purchasable, but messaging still works
-  const live = await H.makeListing(s, { payment_url: LINK }).catch(() => null); assert.equal(live, null, 'makeListing publishes, which must be refused');
-  await q.run('UPDATE users SET email_verified_at = 1 WHERE handle = ?', s.handle);
-  const id = await H.makeListing(s, { payment_url: LINK, shipping_payer: 'buyer' });
-  await q.run('UPDATE users SET email_verified_at = NULL WHERE handle = ?', s.handle);
-  const page = (await buyer.get(`/listing/${id}`)).text; assert.doesNotMatch(page, /Buy now/); assert.match(page, /hasn&#39;t verified their email/); assert.match(page, /Contact seller/);
-  assert.equal((await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 409);
-  assert.equal((await buyer.post('/api/chat/conversations', { listingId: id })).status, 200, 'still contactable');
-  // verify through the real flow
-  await s.post('/api/email/resend'); const raw = tokenIn((await lastMail(s.email, 'verify_email')).body);
-  assert.equal((await new H.Client().post('/api/email/verify', { token: raw })).status, 200);
-  assert.equal((await s.post('/api/seller/listings', { ...body(), images: [await H.upload(s)] })).status, 200);
+  const pub = await s.post('/api/seller/listings', { ...body(), images: [file] }); assert.equal(pub.status, 200, pub.text);
+  const draft = await s.post('/api/seller/listings', { ...body(), images: [await H.upload(s)], status: 'draft' }); assert.equal(draft.status, 200);
+  const bulk = await s.post('/api/seller/listings/bulk', { ids: [draft.json.id], action: 'status', status: 'active' }); assert.equal(bulk.json.updated, 1, JSON.stringify(bulk.json));
+  const dash = (await s.get('/dashboard')).text; assert.doesNotMatch(dash, /Verify your email/); assert.doesNotMatch((await s.get('/account')).text, /Sellers must verify/);
+  const id = await H.makeListing(s, { payment_url: LINK, shipping_payer: 'buyer' }), page = (await buyer.get(`/listing/${id}`)).text; assert.match(page, /Buy now/); assert.doesNotMatch(page, /verified their email/); assert.match(page, /Contact seller/);
   assert.equal((await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 200);
+  assert.equal((await q.get('SELECT email_verified_at v FROM users WHERE handle = ?', s.handle)).v, null, 'still not marked verified by any of this');
 });
 
 test('a configured provider is used and recorded honestly (mock is labelled; bodies with links are not retained)', async () => {

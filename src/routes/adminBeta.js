@@ -29,6 +29,10 @@ r.get('/admin/invitations', A, async (req, res) => {
     <script>document.getElementById('invform').addEventListener('submit',async e=>{e.preventDefault();const f=e.target,o=document.getElementById('invout');o.textContent='';try{const r=await pp.api('POST','/api/admin/invitations',Object.fromEntries(new FormData(f)));
       o.innerHTML='<div class="panel notice strong" style="margin-top:12px"><strong>Copy this link now — it will not be shown again:</strong><p style="word-break:break-all;user-select:all"></p></div>';o.querySelector('p').textContent=r.link;f.reset()}catch(x){o.innerHTML='<div class="form-err"></div>';o.firstChild.textContent=x.message}})</script>` });
 });
+// Direct, admin-only account creation and password reset. The temporary password is returned ONCE in this response (no-store) and nowhere else.
+const accountsAdmin = require('../adminAccounts');
+r.post('/api/admin/accounts/create', A, async (req, res) => { const out = await accountsAdmin.createAccount(req.user, req.body || {}); res.set('Cache-Control', 'no-store').json({ ok: true, ...out }); });
+r.post('/api/admin/users/:id(\\d+)/reset-password', A, async (req, res) => { const out = await accountsAdmin.resetPassword(req.user, req.params.id); res.set('Cache-Control', 'no-store').json({ ok: true, ...out }); });
 r.post('/api/admin/invitations', A, async (req, res) => {
   await auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
   const out = await invitations.create(req.user, { kind: req.body.kind, email: req.body.email, note: req.body.note });

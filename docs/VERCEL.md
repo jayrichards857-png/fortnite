@@ -58,7 +58,8 @@ Do **not** set: `PAYMENTS_MODE=sandbox`, `SHIPPO_API_KEY`, `RATE_LIMIT_SCALE`, `
    ```
    The dry run changes nothing. `--apply` refuses unless the label is set, you retype the exact host you verified against the Neon branch page, the host is a direct connection, and the database is empty or already managed by this tool (a database with tables but no migration history is never touched). It never seeds data or touches existing rows beyond what the migration files do.
 4. Redeploy. Check `GET /healthz` → `{"ok":true,"schema":18}`. If the site answers 503, read the deployment logs: they list exactly which setting is missing or wrong.
-5. Create the admin (`npm run admin:setup -- --email you@example.com`, run locally against that environment's DB), then invite your three sellers from the admin pages.
+5. Admin access: `node scripts/create-admin.js status` (names the database it reached and lists admins), then `reset --email <you> --confirm-host <host>` if the account exists, or `setup --email <you> --confirm-host <host>` if there is no admin yet (set `PAIRPLUG_DB_LABEL` and `DATABASE_URL` for that environment first; remote databases are never migrated by this tool). The temporary password is printed once in your terminal and must be changed at first login.
+6. Sellers are curated by you only: **Admin → Accounts → "Create an account now"** creates a seller/buyer/admin with a one-time temporary password (no email needed, no email verification required to list). **Admin → Users → "Reset password"** helps anyone who cannot log in. Public sign-up only ever creates buyers.
 
 ## Scheduled jobs
 `GET /api/cron/tick` runs `sweep` (expired reservations, due escrow releases, ended suspensions) and `housekeeping` (hourly: orphaned uploads, search log, expired sessions, rate-limit rows). `?job=sweep` runs one. Overlapping or repeated calls are safe (database lease per job); a missing/wrong `CRON_SECRET` gets 401/503.

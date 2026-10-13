@@ -38,7 +38,6 @@ async function purchasable(listing) {
   const seller = await q.get('SELECT * FROM users WHERE id = ?', listing.seller_id);
   if (!seller || seller.banned || !seller.is_seller) return { ok: false, reason: 'This seller is unavailable.' };
   if (seller.selling_restricted_at) return { ok: false, reason: 'This seller is temporarily unavailable.' };
-  if (!seller.email_verified_at) return { ok: false, reason: "This seller hasn't verified their email yet, so online checkout is paused. You can still message them." };
   const link = resolveLink(listing);
   // Beta rule: only the listing's OWN Stripe link, and only after the seller confirmed it charges exactly the current item + shipping total. The confirmation is the seller's statement;
   // PairPlug cannot read the amount at Stripe. Any change to price, shipping or link clears it (see saveListing and the listings_ack_follows_total trigger).

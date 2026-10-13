@@ -72,15 +72,18 @@ r.get('/admin/users', A, async (req, res) => {
   const us = await q.all(`SELECT * FROM users WHERE email ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\' OR handle ILIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 100`, t, t, t);
   await page(req, res, { title: 'Users', body: `<h1>Users</h1><form class="filterbar"><input type="search" name="q" placeholder="Search email, name, handle" value="${esc(f)}" aria-label="Search users"><button class="btn ghost small">Search</button></form>
   <div class="tablewrap"><table><thead><tr><th>User</th><th>Role</th><th>Plan</th><th>Joined</th><th>Actions</th></tr></thead><tbody>${us.map((u) => `<tr><td>${esc(u.display_name)}<div class="muted small">${esc(u.email)}</div></td><td>${[u.is_admin && 'admin', u.is_seller && 'seller'].filter(Boolean).join(', ') || 'buyer'}${u.banned ? ' <span class="pill s-disputed">banned</span>' : ''}</td><td>${u.plan}</td><td>${date(u.created_at)}</td>
-    <td>${u.id === req.user.id ? '—' : `<button class="btn ghost small" data-post="/api/admin/users/${u.id}/ban" data-body='{"banned":${!u.banned}}'>${u.banned ? 'Unban' : 'Ban'}</button> ${u.is_seller ? `<a class="btn ghost small" href="/admin/sellers">Manage seller access</a>` : (u.is_admin ? '' : `<button class="btn ghost small" data-seller-invite="${u.id}" data-email="${esc(u.email)}">Invite as seller</button>`)} <button class="btn ghost small" data-admin-role="${u.id}" data-make="${!u.is_admin}" data-email="${esc(u.email)}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+    <td>${u.id === req.user.id ? '—' : `<button class="btn ghost small" data-reset-pw="${u.id}" data-email="${esc(u.email)}">Reset password</button> <button class="btn ghost small" data-post="/api/admin/users/${u.id}/ban" data-body='{"banned":${!u.banned}}'>${u.banned ? 'Unban' : 'Ban'}</button> ${u.is_seller ? `<a class="btn ghost small" href="/admin/sellers">Manage seller access</a>` : (u.is_admin ? '' : `<button class="btn ghost small" data-seller-invite="${u.id}" data-email="${esc(u.email)}">Invite as seller</button>`)} <button class="btn ghost small" data-admin-role="${u.id}" data-make="${!u.is_admin}" data-email="${esc(u.email)}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>`}</td></tr>`).join('')}</tbody></table></div>
   <p class="small muted">Seller access is invitation-only and limited to ${(await invitations.slots()).cap} accounts: “Invite as seller” creates a single-use invitation for that person's email (it uses one slot). Revoking or suspending sellers is on the Sellers page. Admin role changes ask for your password and are audit-logged.</p>
   <script>
   document.addEventListener('click',async e=>{
-    const inv=e.target.closest('[data-seller-invite]'),role=e.target.closest('[data-admin-role]');
+    const inv=e.target.closest('[data-seller-invite]'),role=e.target.closest('[data-admin-role]'),rst=e.target.closest('[data-reset-pw]');
     try{
       if(inv){if(!confirm('Create a seller invitation for '+inv.dataset.email+'? It reserves one of the seller slots.'))return;
         const r=await pp.api('POST','/api/admin/users/'+inv.dataset.sellerInvite+'/seller-invite',{});
         prompt('Copy this invitation link now. It will not be shown again:',r.link)}
+      if(rst){if(!confirm('Reset the password for '+rst.dataset.email+'? Their current password stops working and they are signed out everywhere. Ban/suspension status is not changed.'))return;
+        const r=await pp.api('POST','/api/admin/users/'+rst.dataset.resetPw+'/reset-password',{});
+        prompt('Temporary password for '+rst.dataset.email+' (copy it now; it is shown once and they must replace it at first login):',r.tempPassword)}
       if(role){const make=role.dataset.make==='true';
         if(!confirm((make?'Give ADMINISTRATOR access to ':'Remove administrator access from ')+role.dataset.email+'?'))return;
         const pw=prompt('Confirm with YOUR password:');if(!pw)return;

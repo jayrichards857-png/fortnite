@@ -104,7 +104,6 @@ async function saveListing(user, id, body) {
   const files = await ownedUploads(user.id, v.images);
   // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
   if (publish && (await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) throw new HttpError(403, 'Selling is paused on your account while PairPlug reviews a report. You can still reply to PairPlug and handle existing orders.');
-  if (publish && !(await q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id)).v) throw new HttpError(403, 'Verify your email address before publishing listings. You can still save drafts.');
   // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
   let prev = null;
   const saved = await tx(async () => {
@@ -202,7 +201,6 @@ async function bulkAction(user, { ids, action, status, price, percent }) {
         if (!SELLER_STATUSES.has(status)) throw new HttpError(422, 'Invalid status');
         if (status === 'active') {
           if ((await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) { result.skipped.push({ id, reason: 'selling is paused on your account' }); continue; }
-          if (!(await q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id)).v) { result.skipped.push({ id, reason: 'verify your email first' }); continue; }
           const hasImg = await q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', id);
           if (!hasImg || !l.condition || !(l.weight_oz > 0)) { result.skipped.push({ id, reason: 'incomplete (needs photo, condition, weight) — edit it first' }); continue; }
         }
@@ -283,7 +281,6 @@ async function importCsv(user, text) {
 /** Can this listing go live right now? Returns a human-readable reason it can't, or null. One rule set for publish, resume and bulk. */
 async function publishBlocker(user, l) {
   if ((await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) return 'Selling is paused on your account while PairPlug reviews a report.';
-  if (!(await q.get('SELECT email_verified_at v FROM users WHERE id = ?', user.id)).v) return 'Verify your email address first.';
   if (!await q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', l.id)) return 'Add at least one photo.';
   if (!l.condition) return 'Choose a condition.';
   if (!(l.weight_oz > 0)) return 'Add a shipping weight.';

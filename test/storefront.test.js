@@ -129,9 +129,7 @@ test('listing lifecycle: pause, resume, unpublish, mark sold, delete — ownersh
   assert.equal((await buyer.get(`/listing/${id}`)).status, 404, 'a paused listing is not public');
   assert.equal((await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 409);
   assert.equal((await s.post(`/api/seller/listings/${id}/mark-sold`)).status, 409, 'only items for sale can be marked sold');
-  await q.run('UPDATE users SET email_verified_at = NULL WHERE handle = ?', s.handle);
-  const blocked = await s.post(`/api/seller/listings/${id}/resume`); assert.equal(blocked.status, 422); assert.match(blocked.json.error, /Verify your email/);
-  await q.run('UPDATE users SET email_verified_at = 1 WHERE handle = ?', s.handle);
+  await q.run('UPDATE users SET email_verified_at = NULL WHERE handle = ?', s.handle);       // an unverified email never blocks selling
   assert.equal((await s.post(`/api/seller/listings/${id}/resume`)).status, 200); assert.equal(await st(), 'active');
   assert.equal((await s.post(`/api/seller/listings/${id}/unpublish`)).status, 200); assert.equal(await st(), 'draft');
   assert.equal((await s.post(`/api/seller/listings/${id}/resume`)).status, 409);

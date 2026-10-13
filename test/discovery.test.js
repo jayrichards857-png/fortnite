@@ -126,7 +126,7 @@ test('new-drop notifications: only first genuine publication, once, to eligible 
   const direct = await seller.post('/api/seller/listings', { ...body, title: 'Direct active', status: 'active' }); assert.equal((await notifs(fan.email, 'New from%')).length, 2);
   const arch = await seller.post('/api/seller/listings', { ...body, title: 'Quietly paused', status: 'archived' }); assert.equal((await notifs(fan.email, 'New from%')).length, 2, 'a paused listing was never published'); void direct; void arch;
   // unverified sellers cannot publish, so nobody is notified
-  await q.run('UPDATE users SET email_verified_at = NULL WHERE handle = ?', 'dropseller'); const blocked = await seller.post('/api/seller/listings', { ...body, title: 'Blocked', status: 'active' }); assert.equal(blocked.status, 403); assert.equal((await notifs(fan.email, 'New from%')).length, 2); await q.run("UPDATE users SET email_verified_at = 1 WHERE handle = ?", 'dropseller');
+  assert.equal((await notifs(fan.email, 'New from%')).length, 2);
   // read / unread + link
   const page = await get(fan, '/notifications'); assert.match(page, /New from Drop Seller/); assert.match(page, /Fresh drop jacket/); assert.match(page, new RegExp(`href="/listing/${d.json.id}"`)); assert.match(page, new RegExp(`/uploads/${file}`));
   assert.equal((await q.all("SELECT * FROM notifications n JOIN users u ON u.id = n.user_id WHERE u.email = ? AND n.read_at IS NULL", fan.email)).length, 0, 'viewing marks them read'); assert.equal((await fan.get(`/listing/${d.json.id}`)).status, 200);
