@@ -34,15 +34,11 @@ test('visitors can browse home, shop, categories and listings without logging in
   assert.doesNotMatch((await anon.get('/shop')).text, /List now|Start selling|Become a seller/i);
 });
 
-test('the Sell link shows Coming Soon to visitors, buyers and even admins; no onboarding form; API refuses', async () => {
+test('the Sell page is a self-service request form (no more Coming Soon): visitors are asked to sign in, buyers can apply, nobody is instantly a seller', async () => {
   const anon = new H.Client(), buyer = await H.newUser('Plain'), adm = await admin();
-  assert.match((await anon.get('/')).text, /href="\/sell"/, 'the Sell link is still in the navigation');
-  for (const who of [anon, buyer, adm]) {
-    const r = await who.get('/sell'); assert.equal(r.status, 200);
-    assert.match(r.text, /Coming Soon!/); assert.match(r.text, /limited while PairPlug prepares its private beta/); assert.match(r.text, /href="\/shop"[^>]*>Back to shopping/); assert.match(r.text, /href="\/login"/);
-    assert.doesNotMatch(r.text, /name="store_name"|name="handle"|Set up your store/);
-  }
-  assert.match((await adm.get('/sell')).text, /href="\/admin\/invitations"/, 'admins are pointed at invitations');
+  assert.match((await anon.get('/')).text, /href="\/sell"/, 'the Sell link is in the navigation');
+  const a = (await anon.get('/sell')).text; assert.match(a, /Sell on PairPlug/); assert.match(a, /href="\/register\?next=\/sell"/); assert.match(a, /href="\/login\?next=\/sell"/); assert.doesNotMatch(a, /Coming Soon!|name="store_name"/);
+  for (const who of [buyer, adm]) { const r = (await who.get('/sell')).text; assert.match(r, /name="store_name"/); assert.match(r, /Request seller access|Join the waitlist/); assert.match(r, /free/i); assert.doesNotMatch(r, /Coming Soon!/); }
   // server enforcement: hiding the button is not the control
   assert.equal((await anon.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky1', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 401);
   for (const who of [buyer, adm]) assert.equal((await who.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky2', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403);
@@ -77,17 +73,15 @@ test('buyers cannot publish listings or reach seller-only pages and endpoints', 
   assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', lid)).status, 'active');
 });
 
-test('seller cap counts sellers only: buyers never use a slot; the 4th seller is refused; sign-up stays open', async () => {
-  const before = (await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n;
+test('there is no seller limit: many sellers can exist, buyers stay buyers, and sign-up stays open', async () => {
   const adm = await admin();
-  for (let i = 0; i < 6; i++) await H.newUser('Many');                 // buyers, many more than 3
-  const sellers = [];
-  for (let i = before; i < 3; i++) sellers.push(await approvedSeller(adm, `cap${i}`));
-  assert.equal((await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n, 3);
-  assert.equal((await adm.post('/api/admin/invitations', { kind: 'seller', email: 'fourth@example.test' })).status, 409, 'the 4th seller invitation is refused');
-  await assert.rejects(async () => await q.run("INSERT INTO users(email, password_hash, display_name, is_seller, handle, created_at) VALUES('x4@x.test','x','X',1,'x4',1)"), /seller cap reached/);
-  assert.equal((await adm.post('/api/admin/invitations', { kind: 'buyer', email: 'buyer-invite@example.test' })).status, 200, 'buyer invitations are unaffected');
-  assert.equal((await new H.Client().post('/api/register', { email: `after-cap-${Date.now()}@example.test`, display_name: 'Late Buyer', terms: true, password: 'a-long-password-1' })).status, 200, 'buyer sign-up still works at the cap');
+  for (let i = 0; i < 6; i++) await H.newUser('Many');                 // buyers
+  for (let i = 0; i < 5; i++) await approvedSeller(adm, `many${i}`);
+  const n = (await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n;
+  assert.ok(n >= 5, 'five more sellers than any old cap of 3 were created');
+  assert.equal((await adm.post('/api/admin/invitations', { kind: 'seller', email: `more-${Date.now()}@example.test` })).status, 200, 'another seller invitation is accepted');
+  await q.run("INSERT INTO users(email, password_hash, display_name, is_seller, handle, created_at) VALUES('x4@x.test','x','X',1,'x4',1)");   // no database trigger blocks it any more
+  assert.equal((await new H.Client().post('/api/register', { email: `after-${Date.now()}@example.test`, display_name: 'Late Buyer', terms: true, password: 'a-long-password-1' })).status, 200, 'buyer sign-up works');
 });
 
 test('approved sellers keep seller access after logging in again', async () => {
@@ -104,17 +98,12 @@ test('approved sellers keep seller access after logging in again', async () => {
   assert.match((await re.get('/')).text, /href="\/dashboard"/, 'the nav sends sellers to their dashboard');
 });
 
-test('admins can approve seller access via an invitation (cap-aware) and manage the admin role with password confirmation and audit logging', async () => {
+test('admins can approve seller access via an invitation and manage the admin role with password confirmation and audit logging', async () => {
   const adm = await admin(), target = await H.newUser('Target'), other = await H.newUser('Other');
   const tid = (await q.get('SELECT id FROM users WHERE email = ?', target.email)).id;
   assert.equal((await target.post(`/api/admin/users/${tid}/seller-invite`)).status, 403, 'non-admin cannot');
-  // approve seller: cap is full in this file by now => refused, then works after a slot is freed
-  assert.equal((await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n, 3, 'earlier tests filled the 3 slots');
-  assert.equal((await adm.post(`/api/admin/users/${tid}/seller-invite`)).status, 409, 'cap full => refused');
-  await q.run("UPDATE settings SET value = '4' WHERE key = 'seller_cap'");            // simulate a freed slot / raised cap
   const inv = await adm.post(`/api/admin/users/${tid}/seller-invite`);
   assert.equal(inv.status, 200); assert.match(inv.json.link, /\/invite\/pp_inv_/);
-  await q.run("UPDATE settings SET value = '3' WHERE key = 'seller_cap'");
   // admin role
   const oid = (await q.get('SELECT id FROM users WHERE email = ?', other.email)).id;
   assert.equal((await adm.post(`/api/admin/users/${oid}/admin`, { admin: true, password: 'wrong-password' })).status, 403);

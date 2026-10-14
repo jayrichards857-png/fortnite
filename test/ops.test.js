@@ -52,7 +52,7 @@ test('backup: consistent snapshot, manifest + verification, incremental photos, 
   assert.equal(a.integrity, 'ok'); assert.ok(a.photosCopied >= 1);
   assert.equal(a.manifest.schemaVersion, MIGRATIONS.length);
   assert.equal(a.manifest.tables.users, (await q.get('SELECT COUNT(*) n FROM users')).n); assert.equal(a.manifest.tables.listings, (await q.get('SELECT COUNT(*) n FROM listings')).n);
-  assert.equal(Object.keys(a.manifest.tables).length, 49, 'every table (48 app tables + schema_migrations) is counted'); assert.match(a.manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(Object.keys(a.manifest.tables).length, 50, 'every table (49 app tables + schema_migrations) is counted'); assert.match(a.manifest.sha256, /^[a-f0-9]{64}$/);
   assert.ok(!fs.readFileSync(a.database + '.json', 'utf8').includes('s3cr3tpw'), 'the manifest never contains the database password');
   const b = await backup({ dir, keep: 1, stamp: '2030-01-02-00-00-00' });
   assert.equal(b.photosCopied, 0, 'uploads are copied once');
@@ -104,19 +104,19 @@ test('uploads: only real images, size-limited, and files are served inert', asyn
   assert.equal((await new H.Client().post('/api/uploads', {})).status, 401);
 });
 
-test('migration 4 on a populated v3 database with MORE sellers than the cap: nothing is deleted, new sellers are blocked', async () => {
+test('migration 4 + later on a populated v3 database with 11 sellers: nothing is deleted and (after migration 19) new sellers are NOT blocked', async () => {
   const old = await dbAt(3);
   const t = 1700000000;
-  for (let i = 1; i <= 5; i++) await old.run(`INSERT INTO users(id, email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES (${i},'s${i}@x.test','h','S${i}',1,'s${i}','Store ${i}','US',${t})`);
-  await old.run(`INSERT INTO users(id, email, password_hash, display_name, is_seller, created_at) VALUES (6,'b@x.test','h','B',0,${t})`);
+  for (let i = 1; i <= 11; i++) await old.run(`INSERT INTO users(id, email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES (${i},'s${i}@x.test','h','S${i}',1,'s${i}','Store ${i}','US',${t})`);
+  await old.run(`INSERT INTO users(id, email, password_hash, display_name, is_seller, created_at) VALUES (12,'b@x.test','h','B',0,${t})`);
   const out = upgradeAndRun(old.url, `
-    let blocked='no'; try{await q.run("INSERT INTO users(email,password_hash,display_name,is_seller,handle,store_name,country,created_at) VALUES('n@x.test','h','N',1,'nn','NN','US',1)")}catch(e){blocked=e.message}
-    let upgrade='no'; try{await q.run('UPDATE users SET is_seller=1, handle=?, store_name=?, country=? WHERE id=6','bb','BB','US')}catch(e){upgrade=e.message}
+    let blocked='no'; try{await q.run("INSERT INTO users(id,email,password_hash,display_name,is_seller,handle,store_name,country,created_at) VALUES(13,'n@x.test','h','N',1,'nn','NN','US',1)")}catch(e){blocked=e.message}
+    let upgrade='no'; try{await q.run('UPDATE users SET is_seller=1, handle=?, store_name=?, country=? WHERE id=12','bb','BB','US')}catch(e){upgrade=e.message}
     return ({v:await db.schemaVersion(), sellers:(await q.get('SELECT COUNT(*) n FROM users WHERE is_seller=1')).n, users:(await q.get('SELECT COUNT(*) n FROM users')).n, cap:(await q.get("SELECT value FROM settings WHERE key='seller_cap'")).value, blocked, upgrade})
   `);
   await old.close();
-  assert.equal(out.v, MIGRATIONS.length); assert.equal(out.sellers, 5, 'existing sellers preserved'); assert.equal(out.users, 6); assert.equal(out.cap, '3');
-  assert.match(out.blocked, /seller/i, 'a new seller is refused while over the cap'); assert.match(out.upgrade, /seller/i, 'a buyer cannot become a seller while over the cap');
+  assert.equal(out.v, MIGRATIONS.length); assert.equal(out.sellers, 13, JSON.stringify(out)); assert.equal(out.users, 13); 
+  assert.equal(out.blocked, 'no', 'a new seller is not refused: there is no cap'); assert.equal(out.upgrade, 'no', 'a buyer can be promoted by the server');
 });
 
 test('backup files are owner-only; restore verifies the manifest and schema version, refuses to overwrite without --force, keeps a pre-restore copy', async () => {
@@ -127,7 +127,7 @@ test('backup files are owner-only; restore verifies the manifest and schema vers
   const fresh = testdb.createSync(), up = path.join(dir, 'restored', 'uploads');
   try {
     const r = await restore({ dump: a.database, databaseUrl: fresh.url, uploadDir: up, photosDir: path.join(dir, 'uploads'), supportedVersion: MIGRATIONS.length });
-    assert.equal(r.integrity, 'ok'); assert.equal(r.schemaVersion, MIGRATIONS.length); assert.ok(r.photosRestored >= 0); assert.equal(r.tables, 49);
+    assert.equal(r.integrity, 'ok'); assert.equal(r.schemaVersion, MIGRATIONS.length); assert.ok(r.photosRestored >= 0); assert.equal(r.tables, 50);
     const { Client } = require('pg'); const c = new Client({ connectionString: fresh.url }); await c.connect();
     try { assert.equal(Number((await c.query('SELECT COUNT(*) n FROM users')).rows[0].n), (await q.get('SELECT COUNT(*) n FROM users')).n);
       // the restored database keeps its guarantees: append-only tables, constraints and triggers came across

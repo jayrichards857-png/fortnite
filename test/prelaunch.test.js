@@ -114,7 +114,7 @@ test('production process: DB, sessions and uploaded photos survive a restart; co
     // buyers cannot become sellers: invite-only onboarding
     const onboard = await pf(base + '/api/sell/onboard', { method: 'POST', headers: { ...J, cookie }, body: JSON.stringify({ store_name: 'S', handle: 'sneaky', country: 'US', region: 'NY', city: 'B', agree: true, terms: true }) });
     assert.equal(onboard.status, 403);
-    assert.match(await (await pf(base + '/sell', { headers: { cookie } })).text(), /Coming soon/i);
+    const sellPage = await (await pf(base + '/sell', { headers: { cookie } })).text(); assert.match(sellPage, /Request seller access|Sell on PairPlug/); assert.doesNotMatch(sellPage, /Coming soon/i);
     // upload a photo
     const photo = png(8, 8, (x, y) => [x * 30, y * 30, 90]);
     const up = await pf(base + '/api/uploads', { method: 'POST', headers: { 'x-requested-with': 'pairplug', 'content-type': 'image/png', cookie }, body: photo });

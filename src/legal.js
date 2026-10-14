@@ -40,7 +40,7 @@ ${operatorBlock()}
 <li><strong>We do</strong> accept and review reports of suspected scams and can act on PairPlug accounts and listings.</li>
 </ul>
 <h2>3. Private beta</h2>
-<p>PairPlug is in a private beta. Anyone can create a free buyer account while sign-ups are open. Selling is by invitation only. Features may change, be paused or be removed, and the service may have interruptions. Listing on PairPlug is free, and PairPlug charges no listing fees, subscriptions or commission (0%) to buyers or sellers. Payment processors such as Stripe charge sellers their own processing fees. If PairPlug's fees ever change, we will say so before it applies to you.</p>
+<p>PairPlug is in a private beta. Anyone can create a free buyer account while sign-ups are open. Anyone with an account can request seller access; requests are reviewed for safety, with no fee to apply and no limit on the number of sellers. Features may change, be paused or be removed, and the service may have interruptions. Listing on PairPlug is free, and PairPlug charges no listing fees, subscriptions or commission (0%) to buyers or sellers. Payment processors such as Stripe charge sellers their own processing fees. If PairPlug's fees ever change, we will say so before it applies to you.</p>
 <h2>4. Your account</h2>
 <ul><li>You must be old enough to form a binding contract where you live. PairPlug is intended for people in the United States, Canada and Mexico; we have not built age verification, so you confirm this yourself by signing up.</li>
 <li>Give accurate information, keep your password private, and tell us if you think someone else has used your account. You are responsible for activity under your account.</li>

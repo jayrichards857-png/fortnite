@@ -111,7 +111,7 @@ test('migrations: a fresh database reaches the latest version; running again cha
     const c1 = new Client({ connectionString: d.url }), c2 = new Client({ connectionString: d.url }), c3 = new Client({ connectionString: d.url }); await Promise.all([c1.connect(), c2.connect(), c3.connect()]);
     try { await Promise.all([applyMigrations(c1), applyMigrations(c2), applyMigrations(c3)]); await applyMigrations(c1); } finally { await Promise.all([c1.end(), c2.end(), c3.end()]); }
     assert.deepEqual((await d.all('SELECT version FROM schema_migrations ORDER BY version')).map((r) => Number(r.version)), Array.from({ length: MIGRATIONS.length }, (_, i) => i + 1), 'each migration recorded exactly once');
-    assert.equal(Number((await d.one("SELECT COUNT(*) n FROM pg_tables WHERE schemaname = 'public'")).n), 49);
+    assert.equal(Number((await d.one("SELECT COUNT(*) n FROM pg_tables WHERE schemaname = 'public'")).n), 50);
   } finally { await d.close(); }
 });
 
@@ -133,7 +133,7 @@ test('schema parity: every table, column, index and trigger of the legacy SQLite
   const liteTables = lite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
   const pgTables = (await q.all("SELECT tablename t FROM pg_tables WHERE schemaname = current_schema() AND tablename <> 'schema_migrations' ORDER BY 1")).map((r) => r.t);
   // Things added AFTER the frozen SQLite schema (v16) are PostgreSQL-only and listed here on purpose: migration 17 (photo reviews).
-  const PG_ONLY = { tables: ['review_photos', 'rate_limits', 'job_leases'], columns: ['seller_reviews.rating'], triggers: ['review_photos_max3'] };
+  const PG_ONLY = { tables: ['review_photos', 'rate_limits', 'job_leases', 'seller_applications'], columns: ['seller_reviews.rating'], triggers: ['review_photos_max3'] };
   assert.deepEqual(pgTables.filter((t) => !PG_ONLY.tables.includes(t)), liteTables, 'same tables');
   for (const t of liteTables) {
     const lc = lite.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name).sort();
@@ -145,7 +145,8 @@ test('schema parity: every table, column, index and trigger of the legacy SQLite
   for (const i of liteIdx) assert.ok(pgIdx.has(i), `index ${i}`);
   const liteTrig = lite.prepare("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name").all().map((r) => r.name);
   const pgTrig = (await q.all("SELECT tgname n FROM pg_trigger WHERE NOT tgisinternal ORDER BY 1")).map((r) => r.n);
-  assert.deepEqual(pgTrig.filter((n) => !PG_ONLY.triggers.includes(n)), liteTrig, 'same triggers (the one SQLite trigger dropped by migration 9 stays dropped)');
+  const DROPPED = ['sellers_cap_insert', 'sellers_cap_update'];      // the seller cap was removed by migration 19
+  assert.deepEqual(pgTrig.filter((n) => !PG_ONLY.triggers.includes(n)), liteTrig.filter((n) => !DROPPED.includes(n)), 'same triggers (the one SQLite trigger dropped by migration 9 stays dropped)');
   const nn = (await q.all("SELECT table_name t, column_name c FROM information_schema.columns WHERE table_schema = current_schema() AND is_nullable = 'NO' AND table_name <> 'schema_migrations'")).map((r) => `${r.t}.${r.c}`);
   for (const t of liteTables) for (const c of lite.prepare(`PRAGMA table_info("${t}")`).all()) if (c.notnull && !c.pk) assert.ok(nn.includes(`${t}.${c.name}`), `${t}.${c.name} is NOT NULL in both`);
   lite.close();
@@ -215,15 +216,12 @@ test('failed purchase rolls back completely: a failure late in the transaction l
 });
 
 // ------------------------------------------------------------------------------------------------ concurrency: caps, moderation, links, duplicates
-test('seller cap: racing promotions can never exceed the cap (advisory-locked trigger)', async () => {
-  const current = await count('SELECT COUNT(*) n FROM users WHERE is_seller = 1'), prev = (await q.get("SELECT value FROM settings WHERE key = 'seller_cap'")).value;
-  await q.run("UPDATE settings SET value = ? WHERE key = 'seller_cap'", String(current + 1));
-  try {
-    const us = await Promise.all(Array.from({ length: 6 }, async (_, i) => await H.newUser('Cap' + i)));
-    const rs = await Promise.allSettled(us.map((u, i) => q.run("UPDATE users SET is_seller = 1, handle = ?, store_name = 'S', country = 'US' WHERE email = ?", 'capper' + i + Date.now(), u.email)));
-    assert.equal(rs.filter((r) => r.status === 'fulfilled').length, 1, 'exactly one succeeds'); assert.ok(rs.filter((r) => r.status === 'rejected').every((r) => /seller cap reached/.test(String(r.reason.message))));
-    assert.equal(await count('SELECT COUNT(*) n FROM users WHERE is_seller = 1'), current + 1);
-  } finally { await q.run("UPDATE settings SET value = ? WHERE key = 'seller_cap'", prev); }
+test('no seller cap: racing promotions all succeed (no trigger, no arbitrary limit)', async () => {
+  const current = await count('SELECT COUNT(*) n FROM users WHERE is_seller = 1');
+  const us = await Promise.all(Array.from({ length: 6 }, async (_, i) => await H.newUser('Cap' + i)));
+  const rs = await Promise.allSettled(us.map((u, i) => q.run("UPDATE users SET is_seller = 1, handle = ?, store_name = 'S', country = 'US' WHERE email = ?", 'capper' + i + Date.now(), u.email)));
+  assert.equal(rs.filter((r) => r.status === 'fulfilled').length, 6);
+  assert.equal(await count('SELECT COUNT(*) n FROM users WHERE is_seller = 1'), current + 6);
 });
 
 test('moderation: racing bans of one account by several staff produce exactly one ban, one log entry, and clean conflicts for the rest', async () => {

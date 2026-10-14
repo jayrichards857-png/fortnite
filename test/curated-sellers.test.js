@@ -66,12 +66,10 @@ test('ACCEPTANCE: admin creates a seller -> seller logs in with the temporary pa
   assert.equal((await row(email)).email_verified_at, null, 'still never marked verified');
 });
 
-test('seller creation keeps the eligibility rules: cap, handle, country, duplicates; admin creation needs the admin password; buyers can be created too', async () => {
+test('seller creation keeps the eligibility rules: handle, country, duplicates; admin creation needs the admin password; buyers can be created too', async () => {
   const admin = await mkAdmin();
-  await q.run("UPDATE settings SET value = ? WHERE key = 'seller_cap'", String(Number((await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n) + 1));
   const first = await create(admin); assert.equal(first.status, 200, first.text);
-  const full = await create(admin); assert.equal(full.status, 409); assert.match(full.json.error, /seller slots/);
-  await q.run("UPDATE settings SET value = '1000' WHERE key = 'seller_cap'");
+  const second = await create(admin); assert.equal(second.status, 200, 'no seller limit: a second and further seller can be created');
   assert.equal((await create(admin, { email: first.json.email })).status, 409, 'no duplicate accounts for the same email');
   assert.equal((await create(admin, { handle: 'a b' })).status, 422); assert.equal((await create(admin, { country: 'FR' })).status, 422); assert.equal((await create(admin, { email: 'not-an-email' })).status, 422); assert.equal((await create(admin, { display_name: '' })).status, 422);
   assert.equal((await create(admin, { confirm: false })).status, 422, 'explicit confirmation required'); assert.equal((await create(admin, { role: 'superuser' })).status, 422);

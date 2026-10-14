@@ -133,7 +133,7 @@ async function importSqlite({ source, target, uploadDir, replace = false, confir
     const pgTables = (await pg.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).rows.map((r) => r.tablename).filter((t) => !SKIP_TABLES.has(t));
     const liteTables = sqliteTables(src);
     // Tables introduced in PostgreSQL after the frozen SQLite schema (v16) have no SQLite counterpart: they are created empty by the migrations, never copied.
-    const PG_ONLY_TABLES = new Set(['review_photos', 'rate_limits', 'job_leases']);   // migrations 17-18: photo reviews, shared rate limits, job leases
+    const PG_ONLY_TABLES = new Set(['review_photos', 'rate_limits', 'job_leases', 'seller_applications']);   // migrations 17-19: photo reviews, shared rate limits, job leases, seller applications
     const missingInPg = liteTables.filter((t) => !pgTables.includes(t)), missingInLite = pgTables.filter((t) => !liteTables.includes(t) && !PG_ONLY_TABLES.has(t));
     check('same set of tables on both sides', !missingInPg.length && !missingInLite.length, `only in SQLite: [${missingInPg}] only in PostgreSQL: [${missingInLite}]`);
 
@@ -213,7 +213,6 @@ async function importSqlite({ source, target, uploadDir, replace = false, confir
       // rules the disabled triggers normally enforce for new rows: report (do not block) if legacy data violates them
       const w = async (msg, sql) => { const n = Number((await pg.query(sql)).rows[0].n); if (n) report.warnings.push(`${msg}: ${n}`); };
       await w('reviews whose order is not a completed order of that buyer/seller', "SELECT COUNT(*) n FROM seller_reviews r WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = r.order_id AND o.buyer_id = r.buyer_id AND o.seller_id = r.seller_id AND o.status IN ('delivered','released'))");
-      await w('sellers above the seller cap (nothing is deleted; new sellers stay blocked)', "SELECT GREATEST(0, (SELECT COUNT(*) FROM users WHERE is_seller = 1) - COALESCE((SELECT CAST(value AS BIGINT) FROM settings WHERE key = 'seller_cap'), 3)) n");
       await w('moderators above the moderator cap', "SELECT GREATEST(0, (SELECT COUNT(*) FROM users WHERE is_moderator = 1) - COALESCE((SELECT CAST(value AS BIGINT) FROM settings WHERE key = 'moderator_cap'), 5)) n");
       // the schema's own guarantees still work after the import
       await pg.query('SAVEPOINT guard');

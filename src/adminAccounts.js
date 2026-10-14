@@ -5,7 +5,7 @@
 //   * Credentials are random temporary passwords (~120 bits), shown ONCE to the acting admin in the response, stored only as a scrypt hash, never
 //     logged or audited. The account must replace it at first login (must_change_password); changing it signs the user out everywhere else.
 //   * Email is not verified and is never marked verified here: sellers do not need verified email (see listings.js).
-//   * Seller creation obeys the same seller cap and store eligibility rules as invitations; admin creation needs the acting admin's own password.
+//   * Seller creation obeys the same store eligibility rules as invitations (there is no seller cap); admin creation needs the acting admin's own password.
 const crypto = require('node:crypto');
 const config = require('./config');
 const { q, tx, now } = require('./db');
@@ -32,14 +32,9 @@ async function createAccount(admin, b = {}) {
   const id = await tx(async () => {
     if (await q.get('SELECT 1 x FROM users WHERE email = ?', email)) throw new HttpError(409, 'An account with that email already exists. Use "Reset password" on the Users page for someone who cannot log in; do not create a duplicate.');
     let store = null;
-    if (role === 'seller') {
-      store = await inv.validateStore({ ...b, agree: true });              // same eligibility rules as an accepted invitation
-      if ((await inv.slots()).available <= 0) throw new HttpError(409, 'All seller slots are in use during the private beta.');
-    }
-    try {
-      return Number(await q.insert('INSERT INTO users(email, password_hash, display_name, is_admin, is_seller, store_name, handle, country, region, city, bio, must_change_password, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)',
-        email, auth.hashPassword(pw), name, role === 'admin' ? 1 : 0, store ? 1 : 0, store && store.store, store && store.handle, store && store.country, store && store.region, store && store.city, store && store.bio, now()));
-    } catch (e) { inv.mapCap(e); }
+    if (role === 'seller') store = await inv.validateStore({ ...b, agree: true });              // same eligibility rules as an accepted invitation
+    return Number(await q.insert('INSERT INTO users(email, password_hash, display_name, is_admin, is_seller, store_name, handle, country, region, city, bio, must_change_password, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)',
+      email, auth.hashPassword(pw), name, role === 'admin' ? 1 : 0, store ? 1 : 0, store && store.store, store && store.handle, store && store.country, store && store.region, store && store.city, store && store.bio, now()));
   });
   await audit(admin, 'account_created_by_admin', { type: 'user', id, detail: { role, email } });       // never the password
   return { id, email, role, tempPassword: pw };

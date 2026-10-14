@@ -15,7 +15,7 @@ const M = require('../moderation');
 const r = express.Router();
 const A = [auth.requireAdmin];
 const STAFF_NAV = [['/moderation', 'Moderation'], ['/moderation/users', 'Find users'], ['/moderation/reviews', 'Reviews'], ['/moderation/payment-links', 'Payment links'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/moderation/log', 'Action log']];
-const nav = (p, staffOnly) => `<nav class="subnav">${(staffOnly ? STAFF_NAV : [['/admin', 'Overview'], ['/admin/accounts', 'Accounts'], ['/moderation', 'Moderation'], ['/moderation/reviews', 'Reviews'], ['/moderation/payment-links', 'Payment links'], ['/admin/moderators', 'Moderators'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/responses', 'Response times'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']]).map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+const nav = (p, staffOnly) => `<nav class="subnav">${(staffOnly ? STAFF_NAV : [['/admin', 'Overview'], ['/admin/accounts', 'Accounts'], ['/moderation', 'Moderation'], ['/moderation/reviews', 'Reviews'], ['/moderation/payment-links', 'Payment links'], ['/admin/moderators', 'Moderators'], ['/admin/applications', 'Seller requests'], ['/admin/invitations', 'Invitations'], ['/admin/sellers', 'Sellers'], ['/admin/cases', 'Cases'], ['/admin/risk', 'Reported sellers'], ['/admin/orders', 'Orders'], ['/admin/users', 'Users'], ['/admin/listings', 'Listings'], ['/admin/responses', 'Response times'], ['/admin/audit', 'Audit'], ['/admin/outbox', 'Email outbox'], ['/admin/disputes', 'Legacy disputes'], ['/admin/withdrawals', 'Legacy payouts']]).map(([h, l]) => `<a href="${h}"${p === h ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
 const page = async (req, res, opts) => res.send(await V.layout({ user: req.user, wide: true, path: '/admin', ...opts, body: nav(req.path, !(req.user && req.user.is_admin)) + opts.body }));
 const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ''}</div>`;
 
@@ -29,8 +29,8 @@ r.get('/admin', A, async (req, res) => {
   const c = await q.get(`SELECT (SELECT COUNT(*) FROM users) users, (SELECT COUNT(*) FROM users WHERE is_seller=1) sellers, (SELECT COUNT(*) FROM listings WHERE status='active') active,
     (SELECT COUNT(*) FROM disputes WHERE status='open') disputes, (SELECT COUNT(*) FROM withdrawals WHERE status='requested') wd`);
   const failedRefunds = (await q.get("SELECT COUNT(*) n FROM refunds WHERE status <> 'succeeded'")).n;
-  const sl = await invitations.slots(), openCases = (await q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')")).n;
-  await page(req, res, { title: 'Admin', body: `<h1>Marketplace</h1>${sl.over ? `<div class="form-err">There are ${sl.used} seller accounts but the beta cap is ${sl.cap}. Nothing was deleted; new sellers are blocked until this is resolved.</div>` : ''}<div class="stats">${stat('Seller slots', `${sl.used} / ${sl.cap}`, `${sl.liveInvites} pending invitation(s), ${sl.available} free`)}${stat('Open support cases', openCases)}${stat('Users', c.users, `${c.sellers} sellers`)}${stat('Active listings', c.active)}${stat('Orders', o.orders)}${stat('Gross merchandise value', money(o.gmv), 'buyer totals incl. shipping & tax')}
+  const sl = await invitations.slots(), pendingApps = Number((await q.get("SELECT COUNT(*) n FROM seller_applications WHERE status = 'pending'")).n), openCases = (await q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')")).n;
+  await page(req, res, { title: 'Admin', body: `<h1>Marketplace</h1><div class="stats">${stat('Sellers', sl.used, `${sl.liveInvites} pending invitation(s), ${pendingApps} request(s) waiting`)}${stat('Open support cases', openCases)}${stat('Users', c.users, `${c.sellers} sellers`)}${stat('Active listings', c.active)}${stat('Orders', o.orders)}${stat('Gross merchandise value', money(o.gmv), 'buyer totals incl. shipping & tax')}
     ${stat('PairPlug commission', money(o.fees), '0%')}${stat('Processing fees (est.)', money(o.proc), 'paid to the processor')}${stat('Refunded', money(o.refunds))}${stat('Held in escrow', money(o.escrow), 'seller payouts pending')}
     ${stat('Open disputes', c.disputes)}${stat('Pending withdrawals', c.wd)}${stat('Refunds needing attention', failedRefunds)}</div>` });
 });
@@ -73,12 +73,12 @@ r.get('/admin/users', A, async (req, res) => {
   await page(req, res, { title: 'Users', body: `<h1>Users</h1><form class="filterbar"><input type="search" name="q" placeholder="Search email, name, handle" value="${esc(f)}" aria-label="Search users"><button class="btn ghost small">Search</button></form>
   <div class="tablewrap"><table><thead><tr><th>User</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead><tbody>${us.map((u) => `<tr><td>${esc(u.display_name)}<div class="muted small">${esc(u.email)}</div></td><td>${[u.is_admin && 'admin', u.is_seller && 'seller'].filter(Boolean).join(', ') || 'buyer'}${u.banned ? ' <span class="pill s-disputed">banned</span>' : ''}</td><td>${date(u.created_at)}</td>
     <td>${u.id === req.user.id ? '—' : `<button class="btn ghost small" data-reset-pw="${u.id}" data-email="${esc(u.email)}">Reset password</button> <button class="btn ghost small" data-post="/api/admin/users/${u.id}/ban" data-body='{"banned":${!u.banned}}'>${u.banned ? 'Unban' : 'Ban'}</button> ${u.is_seller ? `<a class="btn ghost small" href="/admin/sellers">Manage seller access</a>` : (u.is_admin ? '' : `<button class="btn ghost small" data-seller-invite="${u.id}" data-email="${esc(u.email)}">Invite as seller</button>`)} <button class="btn ghost small" data-admin-role="${u.id}" data-make="${!u.is_admin}" data-email="${esc(u.email)}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>`}</td></tr>`).join('')}</tbody></table></div>
-  <p class="small muted">Seller access is invitation-only and limited to ${(await invitations.slots()).cap} accounts: “Invite as seller” creates a single-use invitation for that person's email (it uses one slot). Revoking or suspending sellers is on the Sellers page. Admin role changes ask for your password and are audit-logged.</p>
+  <p class="small muted">Seller access is by request and approval (see Seller requests; there is no seller limit). You can also invite someone directly: “Invite as seller” creates a single-use invitation for that person's email (single-use, expiring). Revoking or suspending sellers is on the Sellers page. Admin role changes ask for your password and are audit-logged.</p>
   <script>
   document.addEventListener('click',async e=>{
     const inv=e.target.closest('[data-seller-invite]'),role=e.target.closest('[data-admin-role]'),rst=e.target.closest('[data-reset-pw]');
     try{
-      if(inv){if(!confirm('Create a seller invitation for '+inv.dataset.email+'? It reserves one of the seller slots.'))return;
+      if(inv){if(!confirm('Create a seller invitation for '+inv.dataset.email+'? The link is single-use and expires.'))return;
         const r=await pp.api('POST','/api/admin/users/'+inv.dataset.sellerInvite+'/seller-invite',{});
         prompt('Copy this invitation link now. It will not be shown again:',r.link)}
       if(rst){if(!confirm('Reset the password for '+rst.dataset.email+'? Their current password stops working and they are signed out everywhere. Ban/suspension status is not changed.'))return;
@@ -109,7 +109,7 @@ r.post('/api/admin/users/:id(\\d+)/admin', A, async (req, res) => {
   });
   res.json({ ok: true });
 });
-// "Approve seller access": issues the normal single-use invitation (so the cap, expiry and slot reservation all apply). The link is returned once.
+// "Approve seller access": issues the normal single-use invitation (single-use and expiring). The link is returned once.
 r.post('/api/admin/users/:id(\\d+)/seller-invite', A, async (req, res) => {
   await auth.rateLimit(`inv-create:${req.user.id}`, 30, 3600);
   const u = await q.get('SELECT id, email, is_seller FROM users WHERE id = ?', Number(req.params.id));

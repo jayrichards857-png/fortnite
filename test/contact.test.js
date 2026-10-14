@@ -96,7 +96,7 @@ test('Account Management: only the owner/admin can open it or create invitations
 
 test('Account Management: confirmation required, links are bound to email+role, shown once, never stored/logged in plaintext, not emailed', async () => {
   await clear(); const adm = await mkAdmin(), page = await get(adm, '/admin/accounts');
-  assert.match(page, /Account management/); assert.match(page, /confirm\(/); assert.match(page, /not emailed/); assert.match(page, /Seller slots used/); assert.match(page, /Moderator slots used/); assert.doesNotMatch(page, /password_hash|scrypt/);
+  assert.match(page, /Account management/); assert.match(page, /confirm\(/); assert.match(page, /not emailed/); assert.match(page, /Unused seller links/); assert.match(page, /Moderator slots used/); assert.doesNotMatch(page, /password_hash|scrypt/);
   const email = `seller${Date.now()}@example.test`;
   assert.equal((await post(adm, { role: 'seller', email, name: 'Nina Seller' })).status, 422, 'no confirmation, no invitation'); assert.equal((await q.get('SELECT COUNT(*) n FROM invitations WHERE email = ?', email)).n, 0);
   assert.equal((await post(adm, { role: 'admin', email, confirm: true })).status, 422, 'admins cannot be created here'); assert.equal((await post(adm, { role: 'seller', email: 'nope', confirm: true })).status, 422);

@@ -1,6 +1,6 @@
 'use strict';
 // Beta-readiness journey in a real browser (Playwright + Chromium) on a THROWAWAY database, with the beta's real gating:
-// closed sign-ups, invite-only sellers, seller cap 3, email verification via the admin outbox (no email is sent),
+// closed sign-ups, invite-only sellers, no seller cap, email verification via the admin outbox (no email is sent),
 // storefront customization, contact-first listings, direct checkout (Stripe is never contacted), refunds, cases, mobile, access control.
 //   node scripts/browser-final.js [--screenshots]
 const { spawn, execFileSync } = require('node:child_process');
@@ -53,15 +53,15 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     }
     step('1. public sign-up and seller onboarding are closed; "Coming soon" with release date');
 
-    // ---- 2. admin invites four sellers + a buyer; the 4th seller invitation is refused (cap 3)
+    // ---- 2. admin invites four sellers + a buyer; a 4th seller invitation is accepted (no cap)
     const adm = await mk(); await login(adm.pg, ADMIN.email, ADMIN.pw);
     const links = {};
     for (const [key, kind] of [['s1', 'seller'], ['s2', 'seller'], ['s3', 'seller'], ['buyer', 'buyer']]) {
       const r = await api(adm.ctx, 'POST', '/api/admin/invitations', { kind, email: `${key}@example.test`, note: key }); assert.equal(r.status, 200, JSON.stringify(r.json)); links[key] = r.json.link;
     }
-    assert.equal((await api(adm.ctx, 'POST', '/api/admin/invitations', { kind: 'seller', email: 's4@example.test' })).status, 409, '4th seller invitation refused');
-    await adm.pg.goto(B + '/admin/invitations'); assert.match(await adm.pg.textContent('main'), /Pending seller invitations3.*Slots free to invite0/s, 'three pending invitations reserve all slots'); await shot(adm.pg, 'final-02-admin-invitations.png');
-    step('2. invitations created; 3 pending invitations reserve all 3 slots; 4th seller invitation refused');
+    assert.equal((await api(adm.ctx, 'POST', '/api/admin/invitations', { kind: 'seller', email: 's4@example.test' })).status, 200, '4th seller invitation accepted: there is no seller limit');
+    await adm.pg.goto(B + '/admin/invitations'); assert.match(await adm.pg.textContent('main'), /Pending seller invitations4/s, 'four pending invitations'); await shot(adm.pg, 'final-02-admin-invitations.png');
+    step('2. invitations created; 4 pending seller invitations, none refused (no cap)');
 
     // ---- 3. sellers accept invitations in the browser (concurrently), verify email from the admin outbox
     const sellers = {};
@@ -80,7 +80,7 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     await b.pg.fill('#n', 'Bea Buyer'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]'); await Promise.all([b.pg.waitForURL(B + '/account'), b.pg.click('button[type=submit]')]);
     const race = await Promise.all(Array.from({ length: 5 }, () => api(b.ctx, 'POST', '/api/sell/onboard', { store_name: 'Sneaky', handle: 'sneaky', country: 'US', region: 'OR', city: 'Portland', agree: true, terms: true })));
     assert.ok(race.every((r) => r.status === 403), 'closed onboarding: ' + JSON.stringify(race.map((r) => r.status)));
-    step('4. concurrent self-onboarding attempts by a buyer all refused (cap + closed onboarding)');
+    step('4. concurrent self-onboarding attempts by a buyer all refused (closed onboarding)');
 
     // ---- 5. storefront customisation: draft, preview, publish; public view
     const s1 = sellers.s1; await s1.pg.goto(B + '/dashboard/storefront');

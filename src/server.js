@@ -160,7 +160,7 @@ function assertProductionConfig() {
   if (config.paymentsMode === 'sandbox') problems.push('PAYMENTS_MODE=sandbox simulates payments and must never run in production');
   if (config.isProd && config.shippo.apiKey) problems.push('SHIPPO_API_KEY must not be set in production: label purchasing is test-mode only until postage billing is verified (docs/SHIPPING.md)');
   if (config.isProd && config.sellerOnboardingRequested === 'open') problems.push('SELLER_ONBOARDING=open is not allowed in production (sellers are invitation-only)');
-  if (config.sellerOnboarding !== 'invite') problems.push('SELLER_ONBOARDING must be "invite" in production (hard seller cap, invitation-only)');
+  if (config.sellerOnboarding !== 'invite') problems.push('SELLER_ONBOARDING must be "invite" in production (instant dev onboarding is disabled; sellers come from approved requests, invitations or admins)');
   if (config.email.provider === 'resend' && !(config.email.apiKey && config.email.from)) problems.push('EMAIL_PROVIDER=resend needs EMAIL_API_KEY and EMAIL_FROM');
   if (config.rateLimitScale !== 1) problems.push('RATE_LIMIT_SCALE must not be changed in production');
   if (config.checkoutMode === 'platform' && !config.stripe.secretKey) problems.push('CHECKOUT_MODE=platform needs a configured payment provider; use CHECKOUT_MODE=external for the beta');

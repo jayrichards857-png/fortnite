@@ -1,10 +1,6 @@
 'use strict';
-// Invite-only onboarding + the hard seller cap.
+// Seller invitations (single-use links) and seller-account helpers. There is no limit on the number of sellers.
 //   * An invitation is a single-use, expiring, revocable capability bound to ONE email. Only its SHA-256 is stored.
-//   * The seller cap is enforced by SQLite triggers (see migration 4), so a race, a retry or a bug in this file cannot create
-//     a fourth seller. This module adds friendly errors and the audited admin operations around it.
-//   * Slots: every account with is_seller = 1 occupies one slot, including suspended ones. A slot is only freed by the audited
-//     admin action releaseSellerSlot(). Reactivating a suspended seller never needs a new slot.
 const crypto = require('node:crypto');
 const config = require('./config');
 const { q, tx, now } = require('./db');
@@ -17,14 +13,12 @@ const LEGAL = require('./legal');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SELLER_COUNTRIES = () => config.naCountries;
 
+/** Seller accounts and pending seller invitations. There is NO limit on the number of sellers. */
 async function slots() {
-  const cap = Number((await q.get("SELECT value v FROM settings WHERE key = 'seller_cap'"))?.v ?? 3);
   const used = (await q.get('SELECT COUNT(*) n FROM users WHERE is_seller = 1')).n;
   const live = (await q.get("SELECT COUNT(*) n FROM invitations WHERE kind = 'seller' AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?", now())).n;
-  return { cap, used, liveInvites: live, available: Math.max(0, cap - used - live), over: used > cap };
+  return { used, liveInvites: live };
 }
-const capError = () => new HttpError(409, 'All seller slots are in use during the private beta.');
-function mapCap(e) { if (/seller cap reached/.test(String(e.message))) throw capError(); throw e; }
 
 async function create(admin, { kind, email, note, suggestedName }) {
   const addr = cleanLine(email, 200).toLowerCase();
@@ -34,7 +28,6 @@ async function create(admin, { kind, email, note, suggestedName }) {
     const existing = await q.get('SELECT id, is_seller FROM users WHERE email = ?', addr);
     if (kind === 'buyer' && existing) throw new HttpError(409, 'That email already has an account.');
     if (kind === 'seller' && existing && existing.is_seller) throw new HttpError(409, 'That account is already a seller.');
-    if (kind === 'seller' && (await slots()).available <= 0) throw capError();
     await q.run('UPDATE invitations SET revoked_at = ? WHERE email = ? AND kind = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at <= ?', now(), addr, kind, now()); // retire expired
     if (await q.get('SELECT 1 x FROM invitations WHERE email = ? AND kind = ? AND used_at IS NULL AND revoked_at IS NULL', addr, kind)) throw new HttpError(409, 'A live invitation for that email already exists. Revoke it first.');
     const raw = 'pp_inv_' + crypto.randomBytes(24).toString('base64url');
@@ -95,14 +88,12 @@ async function accept(raw, body, currentUser) {
     }
     if (!user || !LEGAL.accepted(user)) { if (body.terms !== true) throw new HttpError(422, 'Please fix the highlighted fields.', { terms: 'Please accept the Terms of Service and Privacy Policy to continue.' }); }
     const store = inv.kind === 'seller' ? await validateStore(body) : null;
-    try {
-      if (!user) {
-        const r = await q.insert('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', inv.email, hashPassword(String(body.password)), cleanLine(body.display_name, 80), now());
-        user = await q.get('SELECT * FROM users WHERE id = ?', r);
-      }
-      if (!LEGAL.accepted(user)) { await LEGAL.recordAcceptance(user.id); }       // explicit tick on this very form; never inferred
-      if (store) await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', store.store, store.handle, store.country, store.region, store.city, store.bio, user.id);
-    } catch (e) { mapCap(e); }
+    if (!user) {
+      const r = await q.insert('INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)', inv.email, hashPassword(String(body.password)), cleanLine(body.display_name, 80), now());
+      user = await q.get('SELECT * FROM users WHERE id = ?', r);
+    }
+    if (!LEGAL.accepted(user)) { await LEGAL.recordAcceptance(user.id); }       // explicit tick on this very form; never inferred
+    if (store) await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', store.store, store.handle, store.country, store.region, store.city, store.bio, user.id);
     const mark = await q.run('UPDATE invitations SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?', now(), user.id, inv.id, now());
     if (mark.changes !== 1) throw gone();                                        // someone else consumed the token first
     await audit(user, 'invitation_accepted', { type: 'invitation', id: inv.id, detail: { kind: inv.kind } });
@@ -114,7 +105,7 @@ async function accept(raw, body, currentUser) {
 async function onboardOpen(user, body) {
   const s = await validateStore(body);
   return await tx(async () => {
-    try { await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=? AND is_seller=0', s.store, s.handle, s.country, s.region, s.city, s.bio, user.id); } catch (e) { mapCap(e); }
+    await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=? AND is_seller=0', s.store, s.handle, s.country, s.region, s.city, s.bio, user.id); 
     await audit(user, 'seller_onboarded_open', { type: 'user', id: user.id });
   });
 }
@@ -132,4 +123,4 @@ async function releaseSellerSlot(admin, userId) {
   });
 }
 
-module.exports = { slots, create, revoke, lookup, accept, onboardOpen, releaseSellerSlot, validateStore, mapCap };
+module.exports = { slots, create, revoke, lookup, accept, onboardOpen, releaseSellerSlot, validateStore };

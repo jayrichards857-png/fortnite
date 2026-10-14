@@ -127,12 +127,12 @@ test('sequences continue above every id ever used (including ids SQLite remember
   }
 });
 
-test('the schema guarantees survive the import: triggers are active again (append-only, immutability, caps) and constraints hold', async () => {
+test('the schema guarantees survive the import: triggers are active again (append-only, immutability) and constraints hold', async () => {
   const t = freshTarget(); await importSqlite({ source: src, target: t.url });
   await assert.rejects(pgq(t.url, 'DELETE FROM audit_log'), /append-only/);
   await assert.rejects(pgq(t.url, 'DELETE FROM orders'), /cannot be deleted/);
   await assert.rejects(pgq(t.url, 'UPDATE ledger SET amount_cents = 1'), /append-only/).catch(() => {});      // no ledger rows in this scenario: nothing to update, the trigger is still installed
-  assert.equal(Number((await pgq(t.url, "SELECT COUNT(*) n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'O'"))[0].n), 39, 'all 39 user triggers enabled');
+  assert.equal(Number((await pgq(t.url, "SELECT COUNT(*) n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'O'"))[0].n), 37, 'all 37 user triggers enabled');
   await assert.rejects(pgq(t.url, 'UPDATE listings SET quantity = -1'), /check constraint/i);
 });
 
@@ -188,12 +188,13 @@ test('SQLite quirks are handled or reported precisely: text in an integer column
   await assert.rejects(importSqlite({ source: f, target: freshTarget().url }), /listings\.shipping_cents.*cannot store "abc"/);
 });
 
-test('a source with more sellers than the cap imports completely (nothing deleted), warns, and the cap still blocks new sellers', async () => {
+test('a source whose old seller cap setting is lower than its seller count imports completely (nothing deleted), with no warning, and new sellers are not blocked', async () => {
   const f = path.join(dir, 'overcap.db'); fs.copyFileSync(src, f);
   const d = new DatabaseSync(f); d.exec("UPDATE settings SET value = '1' WHERE key = 'seller_cap'"); d.close();              // two sellers exist; the cap is 1
   const t = freshTarget(); const r = await importSqlite({ source: f, target: t.url });
-  assert.ok(r.warnings.some((w) => /above the seller cap/.test(w)), r.warnings.join('|')); assert.equal(Number((await pgq(t.url, 'SELECT COUNT(*) n FROM users WHERE is_seller = 1'))[0].n), 2);
-  await assert.rejects(pgq(t.url, "INSERT INTO users(email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES('x@x.test','h','X',1,'xx','XX','US',1)"), /seller cap reached/);
+  assert.ok(!r.warnings.some((w) => /seller cap/.test(w)), r.warnings.join('|')); assert.equal(Number((await pgq(t.url, 'SELECT COUNT(*) n FROM users WHERE is_seller = 1'))[0].n), 2);
+  await pgq(t.url, "INSERT INTO users(email, password_hash, display_name, is_seller, handle, store_name, country, created_at) VALUES('x@x.test','h','X',1,'xx','XX','US',1)");
+  assert.equal(Number((await pgq(t.url, 'SELECT COUNT(*) n FROM users WHERE is_seller = 1'))[0].n), 3);
 });
 
 test('an older SQLite schema is upgraded on a private copy with the frozen additive migrations, then imported; newer or unusable sources are refused', async () => {

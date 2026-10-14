@@ -31,7 +31,7 @@ Scope each variable to the right Vercel environment. **Preview and Production mu
 | `PAIRPLUG_DB_LABEL` | `production` | `preview` | **must equal `VERCEL_ENV`**; stops a preview from ever running against production data |
 | `PUBLIC_URL` | `https://your-domain` | the exact preview alias you browse | the app answers only on this host (HTTP 421 elsewhere) |
 | `CHECKOUT_MODE` | `external` | `external` | |
-| `SELLER_ONBOARDING` | `invite` | `invite` | seller cap is enforced |
+| `SELLER_ONBOARDING` | `invite` | `invite` | disables only the dev-only instant onboarding; self-service requests still work |
 | `TRUST_PROXY` | `1` | `1` | |
 | `CRON_SECRET` | 32+ random chars (generate) | different value | Vercel sends it as `Authorization: Bearer …` |
 | `S3_ENDPOINT` | e.g. `https://<account>.r2.cloudflarestorage.com` | preview bucket's endpoint | |
@@ -57,9 +57,9 @@ Do **not** set: `PAYMENTS_MODE=sandbox`, `SHIPPO_API_KEY`, `RATE_LIMIT_SCALE`, `
    npm run migrate                                                  # must say "Up to date"
    ```
    The dry run changes nothing. `--apply` refuses unless the label is set, you retype the exact host you verified against the Neon branch page, the host is a direct connection, and the database is empty or already managed by this tool (a database with tables but no migration history is never touched). It never seeds data or touches existing rows beyond what the migration files do.
-4. Redeploy. Check `GET /healthz` → `{"ok":true,"schema":18}`. If the site answers 503, read the deployment logs: they list exactly which setting is missing or wrong.
+4. Redeploy. Check `GET /healthz` → `{"ok":true,"schema":19}`. If the site answers 503, read the deployment logs: they list exactly which setting is missing or wrong.
 5. Admin access: `node scripts/create-admin.js status` (names the database it reached and lists admins), then `reset --email <you> --confirm-host <host>` if the account exists, or `setup --email <you> --confirm-host <host>` if there is no admin yet (set `PAIRPLUG_DB_LABEL` and `DATABASE_URL` for that environment first; remote databases are never migrated by this tool). The temporary password is printed once in your terminal and must be changed at first login.
-6. Sellers are curated by you only: **Admin → Accounts → "Create an account now"** creates a seller/buyer/admin with a one-time temporary password (no email needed, no email verification required to list). **Admin → Users → "Reset password"** helps anyone who cannot log in. Public sign-up only ever creates buyers.
+6. Sellers: members request seller access themselves at **/sell** (free; no contact with you needed). You approve or reject at **Admin → Seller requests**; there is no seller limit, no waitlist and no fee (an account is required first; applying needs a signed-in account). You can still create accounts directly (**Admin → Accounts → Create an account now**), invite by link, and reset passwords (**Admin → Users**). Email verification is **not required** to apply, be approved, or sell (changed in commit 381af22), because no email provider may be configured: with `EMAIL_PROVIDER` unset (the default) messages are only recorded in the outbox and never sent. Seller notices appear in-app. Verification links still exist and can be used if you configure a provider. Keep `SELLER_ONBOARDING=invite`: that only disables the dev-only *instant* onboarding; the request/approval flow works regardless.
 
 ## Scheduled jobs
 `GET /api/cron/tick` runs `sweep` (expired reservations, due escrow releases, ended suspensions) and `housekeeping` (hourly: orphaned uploads, search log, expired sessions, rate-limit rows). `?job=sweep` runs one. Overlapping or repeated calls are safe (database lease per job); a missing/wrong `CRON_SECRET` gets 401/503.
