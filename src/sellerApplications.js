@@ -37,6 +37,38 @@ async function apply(user, body = {}) {
   return { status: 'active', redirect: '/dashboard' };
 }
 
+/**
+ * The owner closes their own storefront. is_seller goes to 0, which removes the store from every public page and from discovery and blocks all
+ * seller routes; the account, any admin/moderator role, orders, payments and audit history are untouched. Active/draft listings are archived.
+ * Refused while there are open orders (those must be resolved first). Reopen later with reopenStore().
+ */
+async function closeStore(user) {
+  return await tx(async () => {
+    await lockKey('seller-apply', user.id);
+    const u = await q.get('SELECT id, is_seller, handle FROM users WHERE id = ? FOR UPDATE', user.id);
+    if (!u || !u.is_seller) throw new HttpError(409, 'You do not have an open storefront.');
+    const open = Number((await q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status IN ('pending_payment','paid','shipped')", u.id)).n);
+    if (open) throw new HttpError(409, `You still have ${open} open order(s). Finish or resolve them before closing your storefront.`);
+    await q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE seller_id = ? AND status IN ('active','draft')", now(), u.id);
+    await q.run('UPDATE users SET is_seller = 0 WHERE id = ?', u.id);
+    await audit(user, 'storefront_closed', { type: 'user', id: u.id, detail: { handle: u.handle } });
+  });
+}
+
+/** Reopen a storefront the owner closed earlier (same store details; listings stay archived until they republish them). */
+async function reopenStore(user) {
+  await auth.rateLimit(`seller-apply:${user.id}`, 10, 3600);
+  return await tx(async () => {
+    await lockKey('seller-apply', user.id);
+    const u = await q.get('SELECT id, is_seller, banned, handle, store_name FROM users WHERE id = ? FOR UPDATE', user.id);
+    if (!u || u.banned) throw new HttpError(403, 'This account cannot open a store.');
+    if (u.is_seller) throw new HttpError(409, 'Your storefront is already open.');
+    if (!u.handle || !u.store_name) throw new HttpError(404, 'You have no closed storefront to reopen. Use the Sell page to open one.');
+    await q.run('UPDATE users SET is_seller = 1 WHERE id = ?', u.id);
+    await audit(user, 'storefront_reopened', { type: 'user', id: u.id, detail: { handle: u.handle } });
+  });
+}
+
 async function withdraw(user) {
   const r = await q.run("UPDATE seller_applications SET status = 'withdrawn', decided_at = ? WHERE user_id = ? AND status = 'pending'", now(), user.id);
   if (r.changes !== 1) throw new HttpError(404, 'You have no waiting seller request.');
@@ -78,4 +110,4 @@ async function reject(admin, id, reason) {
     await notify(a.user_id, `seller-app:${a.id}:rejected`, 'Seller request not approved', `Your seller request was not approved: ${why}`, '/sell');
   });
 }
-module.exports = { apply, withdraw, mine, queue, history, approve, reject };
+module.exports = { closeStore, reopenStore, apply, withdraw, mine, queue, history, approve, reject };

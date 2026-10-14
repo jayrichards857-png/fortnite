@@ -41,6 +41,9 @@ r.get('/sell', async (req, res, next) => {
   if (!req.user) return await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
     <p>You need an account first: create a free account (or log in), then come back here to open your store. No fees, no subscription, no payment.</p>
     <p><a class="btn" href="/register?next=/sell">Create an account</a> <a class="btn ghost" href="/login?next=/sell">Log in</a></p></div>` });
+  if (req.user.handle && req.user.store_name) return await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
+    <h2>Your storefront is closed</h2><p><strong>${esc(req.user.store_name)}</strong> (@${esc(req.user.handle)}) is not public and cannot be used to sell. You can reopen it any time; your listings stay archived until you republish them.</p>
+    <p><button class="btn" data-post="/api/sell/reopen" data-redirect="/dashboard">Reopen my storefront</button></p></div>` });
   let body;
   body = `<div class="narrow panel form-wide" style="max-width:560px">${intro}
     <form data-api="/api/sell/apply" data-redirect="/dashboard"><label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" required><label for="sh">Store URL name <span class="opt">(3–30 letters, numbers, - _)</span></label><input id="sh" name="handle" maxlength="30" required>
@@ -50,6 +53,11 @@ r.get('/sell', async (req, res, next) => {
   await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body });
 });
 r.post('/api/sell/apply', auth.requireUser, async (req, res) => res.json({ ok: true, ...(await SA.apply(req.user, req.body || {})) }));   // alias kept for older pages
+r.post('/api/sell/close', auth.requireUser, async (req, res) => {
+  if (!req.body || req.body.confirm !== true) throw new HttpError(422, 'Please confirm that you want to close your storefront.');
+  await SA.closeStore(req.user); res.json({ ok: true, redirect: '/sell' });
+});
+r.post('/api/sell/reopen', auth.requireUser, async (req, res) => { await SA.reopenStore(req.user); res.json({ ok: true, redirect: '/dashboard' }); });
 r.post('/api/sell/apply/withdraw', auth.requireUser, async (req, res) => { await SA.withdraw(req.user); res.json({ ok: true }); });
 r.post('/api/sell/onboard', auth.requireUser, async (req, res) => res.json({ ok: true, ...(await SA.apply(req.user, req.body || {})) }));   // same immediate path
 
