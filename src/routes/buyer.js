@@ -257,7 +257,7 @@ function summary(qt, cta) {
     <div class="summary-row"><span>Shipping${qt.groups.length > 1 ? ` (${qt.groups.length} sellers)` : ''}</span><span>${qt.shippingCents ? money(qt.shippingCents) : 'Free'}</span></div>
     ${qt.taxRateBps ? `<div class="summary-row"><span>Estimated tax (${(qt.taxRateBps / 100).toFixed(2)}%)</span><span>${money(qt.taxCents)}</span></div>` : ''}
     <div class="summary-row total"><span>Total</span><span>${money(qt.totalCents)}</span></div>
-    <p class="small muted">No buyer fee. Seller fees are deducted from the seller's payout. Your payment is held in escrow until you confirm delivery.</p>${cta || ''}</aside>`;
+    <p class="small muted">No buyer fee. Your payment is held in escrow until you confirm delivery.</p>${cta || ''}</aside>`;
 }
 r.post('/api/cart', auth.requireUser, async (req, res) => { await checkout.addToCart(req.user.id, Number(req.body.listingId)); res.json({ ok: true }); });
 r.delete('/api/cart/:id', auth.requireUser, async (req, res) => { await q.run('DELETE FROM cart_items WHERE user_id = ? AND listing_id = ?', req.user.id, Number(req.params.id)); res.json({ ok: true }); });

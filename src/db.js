@@ -177,6 +177,7 @@ async function close() { if (pool) { const p = pool; pool = null; readyPromise =
 async function getSettings() {
   const out = { ...config.defaults };
   for (const r of await q.all('SELECT key, value FROM settings')) if (r.key in out) out[r.key] = Number(r.value);
+  out.fee_bps_standard = 0; out.fee_bps_pro = 0;                 // PairPlug commission is 0% for every seller, whatever an old settings row says
   return out;
 }
 async function setSetting(key, value) {

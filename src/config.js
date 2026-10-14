@@ -70,8 +70,8 @@ module.exports = {
   publicUrl: env.PUBLIC_URL || `http://localhost:${env.PORT || 3000}`,
   // Platform defaults. Admins can override fees at runtime (settings table).
   defaults: {
-    fee_bps_standard: 1000, // 10% transaction fee
-    fee_bps_pro: 600, // 6% for Pro sellers
+    fee_bps_standard: 0, // PairPlug takes 0% commission (listing is free). Enforced in getSettings(); the fee engine stays so historic orders still read correctly.
+    fee_bps_pro: 0,
     processing_bps: 290, // 2.9% estimated card processing, passed through to seller
     processing_fixed_cents: 30, // + $0.30
     shipping_margin_bps: 0, // markup on integrated labels (applies once a label provider is connected)

@@ -31,7 +31,7 @@ r.get('/admin', A, async (req, res) => {
   const failedRefunds = (await q.get("SELECT COUNT(*) n FROM refunds WHERE status <> 'succeeded'")).n;
   const sl = await invitations.slots(), openCases = (await q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')")).n;
   await page(req, res, { title: 'Admin', body: `<h1>Marketplace</h1>${sl.over ? `<div class="form-err">There are ${sl.used} seller accounts but the beta cap is ${sl.cap}. Nothing was deleted; new sellers are blocked until this is resolved.</div>` : ''}<div class="stats">${stat('Seller slots', `${sl.used} / ${sl.cap}`, `${sl.liveInvites} pending invitation(s), ${sl.available} free`)}${stat('Open support cases', openCases)}${stat('Users', c.users, `${c.sellers} sellers`)}${stat('Active listings', c.active)}${stat('Orders', o.orders)}${stat('Gross merchandise value', money(o.gmv), 'buyer totals incl. shipping & tax')}
-    ${stat('Platform fees', money(o.fees))}${stat('Processing fees (est.)', money(o.proc), 'paid to the processor')}${stat('Refunded', money(o.refunds))}${stat('Held in escrow', money(o.escrow), 'seller payouts pending')}
+    ${stat('PairPlug commission', money(o.fees), '0%')}${stat('Processing fees (est.)', money(o.proc), 'paid to the processor')}${stat('Refunded', money(o.refunds))}${stat('Held in escrow', money(o.escrow), 'seller payouts pending')}
     ${stat('Open disputes', c.disputes)}${stat('Pending withdrawals', c.wd)}${stat('Refunds needing attention', failedRefunds)}</div>` });
 });
 
@@ -71,7 +71,7 @@ r.get('/admin/users', A, async (req, res) => {
   const f = String(req.query.q || '').slice(0, 80), t = `%${f.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
   const us = await q.all(`SELECT * FROM users WHERE email ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\' OR handle ILIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 100`, t, t, t);
   await page(req, res, { title: 'Users', body: `<h1>Users</h1><form class="filterbar"><input type="search" name="q" placeholder="Search email, name, handle" value="${esc(f)}" aria-label="Search users"><button class="btn ghost small">Search</button></form>
-  <div class="tablewrap"><table><thead><tr><th>User</th><th>Role</th><th>Plan</th><th>Joined</th><th>Actions</th></tr></thead><tbody>${us.map((u) => `<tr><td>${esc(u.display_name)}<div class="muted small">${esc(u.email)}</div></td><td>${[u.is_admin && 'admin', u.is_seller && 'seller'].filter(Boolean).join(', ') || 'buyer'}${u.banned ? ' <span class="pill s-disputed">banned</span>' : ''}</td><td>${u.plan}</td><td>${date(u.created_at)}</td>
+  <div class="tablewrap"><table><thead><tr><th>User</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead><tbody>${us.map((u) => `<tr><td>${esc(u.display_name)}<div class="muted small">${esc(u.email)}</div></td><td>${[u.is_admin && 'admin', u.is_seller && 'seller'].filter(Boolean).join(', ') || 'buyer'}${u.banned ? ' <span class="pill s-disputed">banned</span>' : ''}</td><td>${date(u.created_at)}</td>
     <td>${u.id === req.user.id ? '—' : `<button class="btn ghost small" data-reset-pw="${u.id}" data-email="${esc(u.email)}">Reset password</button> <button class="btn ghost small" data-post="/api/admin/users/${u.id}/ban" data-body='{"banned":${!u.banned}}'>${u.banned ? 'Unban' : 'Ban'}</button> ${u.is_seller ? `<a class="btn ghost small" href="/admin/sellers">Manage seller access</a>` : (u.is_admin ? '' : `<button class="btn ghost small" data-seller-invite="${u.id}" data-email="${esc(u.email)}">Invite as seller</button>`)} <button class="btn ghost small" data-admin-role="${u.id}" data-make="${!u.is_admin}" data-email="${esc(u.email)}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>`}</td></tr>`).join('')}</tbody></table></div>
   <p class="small muted">Seller access is invitation-only and limited to ${(await invitations.slots()).cap} accounts: “Invite as seller” creates a single-use invitation for that person's email (it uses one slot). Revoking or suspending sellers is on the Sellers page. Admin role changes ask for your password and are audit-logged.</p>
   <script>
@@ -124,10 +124,7 @@ r.post('/api/admin/users/:id(\\d+)/ban', A, async (req, res) => {
   const out = req.body.banned ? await M.ban(req.user, req.params.id, req.body.reason, req.body.caseId) : await M.unban(req.user, req.params.id, req.body.reason, req.body.caseId);
   res.json({ ok: true, ...(out || {}) });
 });
-r.post('/api/admin/users/:id(\\d+)/plan', A, async (req, res) => {
-  if (!['standard', 'pro'].includes(req.body.plan)) throw new HttpError(422, 'Invalid plan');
-  await q.run('UPDATE users SET plan = ? WHERE id = ? AND is_seller = 1', req.body.plan, Number(req.params.id)); await audit(req.user, 'seller_plan_changed', { type: 'user', id: req.params.id, detail: { plan: req.body.plan } }); res.json({ ok: true });
-});
+// Seller plans are gone: listing is free and PairPlug takes 0% commission, so there is nothing to upgrade to (users.plan is kept only for old data).
 
 r.get('/admin/listings', A, async (req, res) => {
   const ls = await q.all(`SELECT l.id, l.title, l.status, l.price_cents, l.created_at, u.store_name, u.handle FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.status <> 'draft' ORDER BY l.created_at DESC LIMIT 100`);
@@ -157,14 +154,14 @@ r.post('/api/admin/withdrawals/:id(\\d+)', A, async (req, res) => {
   res.json({ ok: true });
 });
 
-const FEE_FIELDS = [['fee_bps_standard', 'Standard transaction fee (basis points)'], ['fee_bps_pro', 'Pro transaction fee (basis points)'], ['processing_bps', 'Processing fee estimate (basis points)'], ['processing_fixed_cents', 'Processing fixed fee (cents)'], ['shipping_margin_bps', 'Shipping label margin (basis points)'], ['auto_release_days', 'Escrow auto-release (days after delivery)'], ['reservation_minutes', 'Checkout hold (minutes)']];
+const FEE_FIELDS = [['processing_bps', 'Processing fee estimate (basis points)'], ['processing_fixed_cents', 'Processing fixed fee (cents)'], ['shipping_margin_bps', 'Shipping label margin (basis points)'], ['auto_release_days', 'Escrow auto-release (days after delivery)'], ['reservation_minutes', 'Checkout hold (minutes)']];
 r.get('/admin/settings', A, async (req, res) => {
   const s = await getSettings();
-  await page(req, res, { title: 'Settings', body: `<h1>Fees & settings</h1><div class="panel form-wide"><p class="small muted">Changes apply to <strong>new</strong> orders only; fees on existing orders are fixed at checkout. 100 basis points = 1%.</p>
+  await page(req, res, { title: 'Settings', body: `<h1>Fees & settings</h1><div class="panel form-wide"><p class="small muted"><strong>PairPlug commission is fixed at 0%</strong> and listing is free; it cannot be changed here. The values below are estimates of the payment processor's own fees and apply to <strong>new</strong> orders only. 100 basis points = 1%.</p>
   <form data-api="/api/admin/settings" data-method="PUT">${FEE_FIELDS.map(([k, l]) => `<label for="${k}">${l}</label><input id="${k}" name="${k}" inputmode="numeric" value="${s[k]}">`).join('')}<button class="btn" style="margin-top:14px" type="submit">Save</button></form></div>` });
 });
 r.put('/api/admin/settings', A, async (req, res) => {
-  const lim = { fee_bps_standard: [0, 3000], fee_bps_pro: [0, 3000], processing_bps: [0, 1000], processing_fixed_cents: [0, 200], shipping_margin_bps: [0, 5000], auto_release_days: [0, 30], reservation_minutes: [5, 120] };
+  const lim = { processing_bps: [0, 1000], processing_fixed_cents: [0, 200], shipping_margin_bps: [0, 5000], auto_release_days: [0, 30], reservation_minutes: [5, 120] };
   const fields = {};
   for (const [k, [lo, hi]] of Object.entries(lim)) { const v = Number(req.body[k]); if (!Number.isInteger(v) || v < lo || v > hi) fields[k] = `Enter a whole number from ${lo} to ${hi}.`; }
   if (Object.keys(fields).length) throw new HttpError(422, 'Please fix the highlighted fields.', fields);

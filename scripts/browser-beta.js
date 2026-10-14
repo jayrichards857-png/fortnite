@@ -35,7 +35,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     // ---- seller: account, store, checkout settings
     await s.pg.goto(B + '/register'); await s.pg.fill('#n', 'Riley Reseller'); await s.pg.fill('#e', 'riley@example.test'); await s.pg.fill('#p', 'a-long-password-1'); await s.pg.check('input[name=terms]');
     await Promise.all([s.pg.waitForURL(B + '/'), s.pg.click('button[type=submit]')]);
-    await s.pg.goto(B + '/sell'); assert.match(await s.pg.textContent('main'), /no PairPlug fees/i); assert.doesNotMatch(await s.pg.textContent('main'), /escrow/i);
+    await s.pg.goto(B + '/sell'); assert.match(await s.pg.textContent('main'), /0% commission/i); assert.doesNotMatch(await s.pg.textContent('main'), /escrow/i);
     await s.pg.fill('#sn', 'Riley Resale'); await s.pg.fill('#sh', 'riley'); await s.pg.fill('#sr', 'OR'); await s.pg.fill('#sy', 'Portland'); if (await s.pg.$('input[name=terms]')) await s.pg.check('input[name=terms]'); await s.pg.check('input[name=agree]');
     await Promise.all([s.pg.waitForURL(B + '/dashboard'), s.pg.click('button[type=submit]')]); step('seller onboarded (no fees/escrow language)');
     await require('./verify-email-helper')(fresh.url);

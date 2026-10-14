@@ -11,7 +11,7 @@ const stats = require('../stats');
 const escrow = require('../escrow');
 const { transition } = require('../orderMachine');
 const { notify } = require('../notify');
-const { PricingEngine } = require('../pricing');
+const { PricingEngine, FREE_LISTING } = require('../pricing');
 const SHIPPO = require('../shippo');
 const ES = require('../externalSales');
 const { uploader } = require('./buyer');
@@ -27,12 +27,11 @@ r.get('/sell', async (req, res) => {
   if (req.user && req.user.is_seller) return res.redirect('/dashboard');
   if (!req.user) return res.send(await V.layout({ user: null, title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:520px"><h1>Sell on PairPlug</h1>
     <p>List clothing, sneakers and accessories, manage inventory and ship from anywhere in North America.${X.isExternal() ? ' Buyers pay <strong>you</strong> directly through your own Stripe checkout link — PairPlug never holds your money.' : ' Payments are held in escrow until the buyer receives the item.'}</p>
-    ${X.isExternal() ? '<ul class="muted"><li>No PairPlug fees during the private beta</li><li>You confirm payments, ship, and handle refunds and chargebacks with your own payment provider</li><li>You need a Stripe account with Payment Links</li></ul>'
-      : `<ul class="muted"><li>${((await getSettings()).fee_bps_standard / 100).toFixed(0)}% transaction fee on item price (${((await getSettings()).fee_bps_pro / 100).toFixed(0)}% on Pro)</li><li>Estimated card processing: ${((await getSettings()).processing_bps / 100).toFixed(1)}% + ${money((await getSettings()).processing_fixed_cents)}</li><li>No listing fees</li></ul>`}
+    <ul class="muted"><li>Listing is free: no listing fees, no subscriptions, no commission (0%)</li>${X.isExternal() ? '<li>You confirm payments, ship, and handle refunds and chargebacks with your own payment provider</li><li>You need a Stripe account with Payment Links (Stripe charges its own processing fees)</li>' : '<li>Estimated card processing (charged by the payment processor, not PairPlug): ' + ((await getSettings()).processing_bps / 100).toFixed(1) + '% + ' + money((await getSettings()).processing_fixed_cents) + '</li>'}</ul>
     <a class="btn block" href="/register?next=/sell">Create an account to start</a><p class="small muted">Already have one? <a href="/login?next=/sell">Log in</a></p></div>` }));
   const s = await getSettings();
   res.send(await V.layout({ user: req.user, title: 'Set up your store', path: '/sell', body: `<div class="narrow panel form-wide" style="max-width:560px"><h1>Set up your store</h1>
-    <p class="muted small">${X.isExternal() ? 'Private beta: no PairPlug fees. Buyers pay you directly through your own checkout link (set it up next in Settings). You handle payment confirmation, refunds and chargebacks.' : `Fees: ${(s.fee_bps_standard / 100).toFixed(0)}% transaction fee + estimated processing ${(s.processing_bps / 100).toFixed(1)}% + ${money(s.processing_fixed_cents)} per order, deducted from your payout. Funds are released from escrow after delivery is confirmed.`}</p>
+    <p class="muted small">${FREE_LISTING}${X.isExternal() ? ' You handle payment confirmation, refunds and chargebacks.' : ''}</p>
     <form data-api="/api/sell/onboard" data-redirect="/dashboard">
       <label for="sn">Store name</label><input id="sn" name="store_name" required maxlength="60">
       <label for="sh">Store URL <span class="opt">(pairplug.com/s/…)</span></label><input id="sh" name="handle" required pattern="[a-zA-Z0-9_-]{3,30}" placeholder="your-handle">
@@ -64,7 +63,7 @@ const stat = (k, v, n = '') => `<div class="stat"><div class="k">${k}</div><div 
 r.get('/dashboard', S, async (req, res) => {
   const o = await stats.overview(req.user.id), recent = await q.all(`SELECT * FROM orders WHERE seller_id = ? AND status <> 'cancelled' ORDER BY created_at DESC LIMIT 5`, req.user.id);
   const todo = (await q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'paid'", req.user.id)).n, toConfirm = (await q.get("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND payment_mode = 'external' AND status = 'pending_payment'", req.user.id)).n;
-  const body = `<h1>Overview</h1><p class="muted small">All figures come from your orders and listings. “Gross sales” is sales volume (item prices); “Net proceeds” is revenue after fees; “Profit” also subtracts what you paid for the item.</p>
+  const body = `<h1>Overview</h1><p class="small free-note" role="note"><strong>Free to list, 0% commission.</strong> ${FREE_LISTING}</p><p class="muted small">All figures come from your orders and listings. “Gross sales” is sales volume (item prices); “Net proceeds” is revenue after fees; “Profit” also subtracts what you paid for the item.</p>
   ${toConfirm ? `<div class="panel" style="border-color:var(--accent)"><strong>${toConfirm} order${toConfirm > 1 ? 's' : ''} awaiting your payment check.</strong> <a href="/dashboard/orders?status=pending_payment">Review →</a></div>` : ''}
   ${todo ? `<div class="panel" style="border-color:var(--accent)"><strong>${todo} order${todo > 1 ? 's' : ''} waiting to ship.</strong> <a href="/dashboard/orders?status=paid">Ship now →</a></div>` : ''}
   ${X.isExternal() ? `<h2>Direct checkout <span class="muted small">(buyers pay you through your own payment link)</span></h2><div class="stats">
@@ -73,7 +72,7 @@ r.get('/dashboard', S, async (req, res) => {
     <p class="small muted">PairPlug does not process these payments, so it shows no fees, payouts or balance for them. Check your payment provider for the money itself.</p>` : ''}
   <h2>${X.isExternal() ? 'Earlier PairPlug-processed sales' : 'Sales'}</h2><div class="stats">
     ${stat('Active listings', o.listings.active, `${o.listings.drafts} draft${o.listings.drafts === 1 ? '' : 's'}`)}${stat('Total orders', o.orders, 'paid, excluding refunds')}${stat('Completed sales', o.completed, 'funds released')}
-    ${stat('Gross sales', money(o.gross), 'item price volume')}${stat('Platform fees', money(o.platform_fees), `${((await getSettings())[req.user.plan === 'pro' ? 'fee_bps_pro' : 'fee_bps_standard'] / 100).toFixed(0)}% transaction fee`)}${stat('Processing fees', money(o.processing_fees), 'estimated')}
+    ${stat('Gross sales', money(o.gross), 'item price volume')}${stat('PairPlug commission', money(o.platform_fees), '0% — PairPlug takes no commission')}${stat('Processing fees', money(o.processing_fees), 'estimated')}
     ${stat('Refunds', money(o.refunds), `${o.refund_count} order${o.refund_count === 1 ? '' : 's'}`)}${stat('Net proceeds', money(o.net), 'item + shipping − fees')}
     ${stat('Estimated profit', o.profit.orders ? money(o.profit.cents) : '—', o.profit.orders ? `from ${o.profit.orders} of ${o.orders} orders with cost recorded` : 'record acquisition cost on listings')}</div>
   <h2>Balance <span class="muted small">(historical PairPlug-held funds only)</span></h2><div class="stats">${stat('Available', money(o.balance.availableCents), 'released from escrow')}${stat('In escrow', money(o.balance.escrowCents), 'paid, awaiting delivery confirmation')}</div>
@@ -125,6 +124,7 @@ async function editor(req, res, l) {
   const locked = l && ['sold', 'reserved'].includes(l.status);
   const body = `<h1>${l ? 'Edit listing' : 'New listing'} ${l ? V.statusPill(l.status) : ''}</h1>
   ${locked ? `<div class="form-err">This item is ${l.status}; it can't be edited.</div>` : ''}
+  <p class="small muted free-note" role="note"><strong>Free to list.</strong> ${FREE_LISTING}</p>
   <div class="two"><form class="panel" id="lform" data-listing="${l ? l.id : ''}" novalidate ${locked ? 'inert' : ''}>
     <label>Photos <span class="opt">(JPEG/PNG/WebP, up to 5 MB each, first is the cover)</span></label>${uploader('images', config.limits.maxImages)}
     <label for="title">Title</label><input id="title" name="title" maxlength="120" value="${v('title')}" required>
@@ -285,7 +285,7 @@ r.get('/dashboard/finance', S, async (req, res) => {
   <div class="panel" style="margin-top:16px"><h3>Withdraw funds</h3><p class="small muted">Withdrawals are requests reviewed by PairPlug staff. Automated bank payouts need a Stripe Connect integration, which isn't enabled.</p>
     <form data-api="/api/seller/withdrawals" data-reload style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><div><label for="wa">Amount ($)</label><input id="wa" name="amount" inputmode="decimal" value="${(o.balance.availableCents / 100).toFixed(2)}"></div><button class="btn" type="submit"${o.balance.availableCents > 0 ? '' : ' disabled'}>Request withdrawal</button></form>
     ${wd.length ? `<table style="margin-top:10px"><tbody>${wd.map((w) => `<tr><td>${date(w.created_at)}</td><td class="num">${money(w.amount_cents)}</td><td>${V.statusPill(w.status)}</td></tr>`).join('')}</tbody></table>` : ''}</div>
-  <h2>Fee structure</h2><div class="panel small">Plan: <strong>${req.user.plan === 'pro' ? 'Pro' : 'Standard'}</strong> · Transaction fee ${((req.user.plan === 'pro' ? s.fee_bps_pro : s.fee_bps_standard) / 100).toFixed(2)}% of item price · Estimated processing ${(s.processing_bps / 100).toFixed(2)}% + ${money(s.processing_fixed_cents)} of the buyer total · Payout = item price + shipping − fees.${req.user.plan === 'pro' ? '' : ` Pro sellers pay ${(s.fee_bps_pro / 100).toFixed(2)}% (plan billing isn't automated yet; an admin can enable it).`}</div>
+  <h2>Fees</h2><div class="panel small"><strong>Listing is free and PairPlug takes 0% commission.</strong> Estimated card processing (charged by the payment processor, not PairPlug): ${(s.processing_bps / 100).toFixed(2)}% + ${money(s.processing_fixed_cents)} of the buyer total. Payout = item price + shipping − processing fees.</div>
   <h2>Monthly tax summary <span class="muted small">(by release date)</span></h2>
   ${tax.length ? `<div class="tablewrap"><table><thead><tr><th>Month</th><th class="num">Orders</th><th class="num">Item sales</th><th class="num">Shipping</th><th class="num">Sales tax collected*</th><th class="num">Fees</th><th class="num">Net payout</th></tr></thead><tbody>${tax.map((t) => `<tr><td>${t.month}</td><td class="num">${t.orders}</td><td class="num">${money(t.gross)}</td><td class="num">${money(t.shipping)}</td><td class="num">${money(t.tax)}</td><td class="num">${money(t.fees)}</td><td class="num">${money(t.net)}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">* Tax shown is held by the marketplace for remittance and is not part of your payout. This summary is informational, not tax advice. <a href="/api/seller/tax.csv">Download CSV</a></p>` : V.empty('No completed sales yet', 'Monthly summaries appear once funds are released.')}
