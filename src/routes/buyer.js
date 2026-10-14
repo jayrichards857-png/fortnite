@@ -164,7 +164,7 @@ r.get('/s/:handle', async (req, res) => {
 const authForm = (kind, next) => {
   const reg = kind === 'register';
   return `<div class="narrow panel"><h1>${reg ? 'Create your account' : 'Log in'}</h1>
-  <p class="muted small" style="margin-top:-6px">${reg ? 'Join PairPlug — The Clothing Marketplace. A free buyer account lets you follow independent sellers, message them, save favorites and order. Want to sell? <a href="/sell">Request seller access</a> (free; no fee to apply).' : 'Welcome back to PairPlug — The Clothing Marketplace. Approved beta sellers and staff sign in here too.'}</p>
+  <p class="muted small" style="margin-top:-6px">${reg ? 'Join PairPlug — The Clothing Marketplace. A free buyer account lets you follow independent sellers, message them, save favorites and order. Want to sell? <a href="/sell">Start selling</a> (free, no approval needed).' : 'Welcome back to PairPlug — The Clothing Marketplace. Approved beta sellers and staff sign in here too.'}</p>
   <form data-api="/api/${kind}" data-redirect="${esc(next)}" novalidate>
     ${reg ? '<label for="n">Name</label><input id="n" name="display_name" autocomplete="name" required>' : ''}
     <label for="e">Email</label><input id="e" name="email" type="email" autocomplete="email" required>
@@ -212,7 +212,7 @@ r.get('/account', auth.requireUser, async (req, res) => {
     <label for="dn">Name</label><input id="dn" name="display_name" value="${esc(u.display_name)}">
     <label for="em">Email</label><input id="em" value="${esc(u.email)}" disabled>
     <button class="btn" type="submit" style="margin-top:14px">Save</button></form></div>
-    ${u.is_seller ? `<p><a href="/dashboard">Go to seller dashboard →</a> · <a href="/s/${esc(u.handle)}">View my storefront</a></p>` : '<p class="muted small">Want to sell? <a href="/sell">Request seller access</a> (free; no fee to apply).</p>'}` });
+    ${u.is_seller ? `<p><a href="/dashboard">Go to seller dashboard →</a> · <a href="/s/${esc(u.handle)}">View my storefront</a></p>` : '<p class="muted small">Want to sell? <a href="/sell">Start selling</a> (free, no approval needed).</p>'}` });
 });
 r.patch('/api/account', auth.requireUser, async (req, res) => {
   const name = cleanLine(req.body.display_name, 80);

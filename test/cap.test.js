@@ -104,9 +104,9 @@ test('buyers register without consuming slots; admins cannot create sellers by a
   await reg.req('PATCH', '/api/account', { display_name: 'Sneaky', is_admin: 1, is_seller: 1, banned: 0 });
   assert.deepEqual({ ...await q.get("SELECT is_seller, is_admin FROM users WHERE email = 'sneaky@x.test'") }, { is_seller: 0, is_admin: 0 });
   for (const [m, u] of [['post', '/api/admin/invitations'], ['post', '/api/admin/users/1/ban'], ['put', '/api/admin/settings'], ['post', '/api/seller/listings'], ['put', '/api/seller/settings']]) assert.equal((await reg[m](u, {})).status, 403, u);
-  const prevO = config.sellerOnboarding; config.sellerOnboarding = 'invite';
-  try { assert.equal((await reg.post('/api/sell/onboard', { store_name: 'S', handle: 'sneakyshop', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403, 'a buyer cannot open a store without an invitation'); }
-  finally { config.sellerOnboarding = prevO; }
+  const own = await H.newUser('Opens');                  // selling is open to every account; roles still cannot be injected
+  assert.equal((await own.post('/api/sell/onboard', { store_name: 'S', handle: 'openshop' + Date.now() % 1e6, country: 'US', region: 'NY', city: 'B', agree: true, terms: true, is_admin: 1, is_moderator: 1 })).status, 200);
+  assert.deepEqual({ ...await q.get('SELECT is_seller, is_admin, is_moderator FROM users WHERE email = ?', own.email) }, { is_seller: 1, is_admin: 0, is_moderator: 0 });
   // existing buyer upgraded through a seller invitation only when logged in as that account
   await q.run("UPDATE users SET is_seller = 0 WHERE email LIKE 'fill%'");
   const up = await invite(adm, 'seller', 'sneaky@x.test'), anon = new H.Client();
@@ -130,11 +130,11 @@ test('Coming soon: closed sign-ups show the release date, create nothing, but lo
     assert.equal((await q.get('SELECT COUNT(*) n FROM users')).n, before); assert.equal((await q.get("SELECT COUNT(*) n FROM users WHERE email = 'closed@x.test'")).n, 0);
     const sell = await anon.get('/sell'); assert.match(sell.text, /Coming soon/i); assert.match(sell.text, /November 1, 2026/);
     const home = (await anon.get('/')).text; assert.match(home, /Coming soon/i); assert.doesNotMatch(home, />Sign up</);
-    // existing users can still log in; a logged-in buyer sees the seller request form (not instant onboarding)
+    // existing users can still log in; a logged-in buyer sees the open Start selling form
     const existing = await q.get("SELECT email FROM users WHERE email = 'newbuyer@x.test'");
     assert.equal((await anon.post('/api/login', { email: existing.email, password: 'a-long-password-1' })).status, 200);
-    assert.match((await anon.get('/sell')).text, /Request seller access|Join the waitlist/); assert.doesNotMatch((await anon.get('/sell')).text, /Coming soon/i);
-    assert.equal((await anon.post('/api/sell/onboard', { store_name: 'S', handle: 'nopeshop', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403);
+    assert.match((await anon.get('/sell')).text, /Start selling/); assert.doesNotMatch((await anon.get('/sell')).text, /Coming soon/i);
+    assert.equal((await new H.Client().post('/api/sell/onboard', { store_name: 'S', handle: 'nopeshop', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 401, 'anonymous visitors cannot sell');
     // without a configured date we say "very soon" instead of inventing one
     config.releaseDate = ''; assert.match((await new H.Client().get('/register')).text, /Selling opens very soon/);
   } finally { config.signups = prevS; config.releaseDate = prevD; config.sellerOnboarding = prevO; }

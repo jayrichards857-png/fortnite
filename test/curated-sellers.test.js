@@ -23,9 +23,8 @@ test('public sign-up creates buyers only: role fields in the request are ignored
   const r = await c.post('/api/register', { email, display_name: 'Eve', password: 'a-long-password-1', terms: true, is_admin: 1, is_seller: 1, role: 'admin', handle: 'evilstore', must_change_password: 0, is_moderator: 1 });
   assert.equal(r.status, 200, r.text);
   const u = await row(email); assert.deepEqual([u.is_admin, u.is_seller, u.is_moderator, u.handle], [0, 0, 0, null]);
-  const keep = config.sellerOnboarding; config.sellerOnboarding = 'invite';      // production behaviour (SELLER_ONBOARDING=open is refused there)
-  try { assert.equal((await c.post('/api/sell/onboard', { ...store(1), agree: true, terms: true })).status, 403); } finally { config.sellerOnboarding = keep; }
-  assert.equal((await row(email)).is_seller, 0);
+  assert.equal((await c.post('/api/sell/onboard', { ...store(1), agree: true, terms: true })).status, 200, 'any signed-in account may open a store');   // the server grants is_seller; the sign-up roles above were ignored
+  const after = await row(email); assert.deepEqual([after.is_seller, after.is_admin, after.is_moderator], [1, 0, 0]);
   for (const [url, body] of [[`/api/admin/users/${u.id}/admin`, { admin: true, password: 'x' }], [`/api/admin/users/${u.id}/seller-invite`, {}], ['/api/admin/accounts/create', { role: 'seller', email: 'x@example.test', display_name: 'X', confirm: true, ...store(2) }], ['/api/admin/invitations', { kind: 'seller', email: 'y@example.test' }]])
     assert.ok([401, 403].includes((await c.post(url, body)).status), url);
   assert.equal((await row(email)).is_admin, 0);

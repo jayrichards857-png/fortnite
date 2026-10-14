@@ -1,8 +1,8 @@
 'use strict';
-// Self-service seller access. Anyone with an account (sign-in required: no anonymous listing or buying) asks for seller access with their store
-// details; an administrator approves or rejects. There is NO limit on the number of sellers and no capacity queue.
-//   * Seller privileges come ONLY from approve(): the client never sends a role, and the route is admin-only (re-checked here).
-//   * One open request per person (partial unique index + a friendly check), so repeated submissions are harmless.
+// Open self-service selling. Anyone with an account (sign-in required: no anonymous listing or buying) starts selling immediately with their
+// store details. There is NO limit on the number of sellers, no queue and no approval step.
+//   * apply() sets is_seller on the server from the authenticated session; the client never sends a role.
+//   * approve()/reject() remain only to close out requests that were filed before selling became immediate (admin-only).
 //   * No fee, subscription or payment is involved.
 const { q, tx, now, lockKey } = require('./db');
 const { HttpError, clean } = require('./util');
@@ -14,19 +14,27 @@ const LEGAL = require('./legal');
 
 const needAdmin = (a) => { if (!(a && a.is_admin)) throw new HttpError(403, 'Administrator access required'); };
 
+/**
+ * Start selling NOW. Any signed-in, non-suspended account becomes a seller immediately: no request queue, no approval, no invitation, no limit.
+ * The server decides: the caller supplies only store details (never a role). A legacy waiting request from this user is closed as approved.
+ */
 async function apply(user, body = {}) {
   await auth.rateLimit(`seller-apply:${user.id}`, 10, 3600);
   if (user.is_seller) throw new HttpError(409, 'You already have a store.');
-  const s = await inv.validateStore(body);                                   // same store eligibility rules as everywhere (handle, North America, terms ticked)
-  const id = await tx(async () => {
+  const s = await inv.validateStore(body);                                   // store eligibility: handle, North America, terms ticked
+  await tx(async () => {
     await lockKey('seller-apply', user.id);
-    if (await q.get("SELECT 1 x FROM seller_applications WHERE user_id = ? AND status = 'pending'", user.id)) throw new HttpError(409, 'You already have a seller request waiting. You can withdraw it and send a new one.');
-    if (await q.get("SELECT 1 x FROM seller_applications WHERE handle = ? AND status = 'pending'", s.handle)) throw new HttpError(422, 'Please fix the highlighted fields.', { handle: 'That URL is taken.' });
-    return Number(await q.insert('INSERT INTO seller_applications(user_id, store_name, handle, country, region, city, bio, status, created_at) VALUES(?,?,?,?,?,?,?,?,?)', user.id, s.store, s.handle, s.country, s.region, s.city, s.bio, 'pending', now()));
+    const u = await q.get('SELECT is_seller, banned FROM users WHERE id = ? FOR UPDATE', user.id);
+    if (!u) throw new HttpError(401, 'Please log in');
+    if (u.banned) throw new HttpError(403, 'This account cannot open a store.');
+    if (u.is_seller) throw new HttpError(409, 'You already have a store.');
+    try { await q.run('UPDATE users SET is_seller=1, store_name=?, handle=?, country=?, region=?, city=?, bio=? WHERE id=?', s.store, s.handle, s.country, s.region, s.city, s.bio, user.id); }
+    catch (e) { if (/users_handle|handle/i.test(String(e.message)) && /unique|duplicate/i.test(String(e.message))) throw new HttpError(422, 'Please fix the highlighted fields.', { handle: 'That URL is taken.' }); throw e; }
+    await q.run("UPDATE seller_applications SET status = 'approved', decision_note = 'Automatic: selling is open to every account', decided_at = ? WHERE user_id = ? AND status = 'pending'", now(), user.id);
+    await audit(user, 'seller_started', { type: 'user', id: user.id });
   });
   if (!LEGAL.accepted(await q.get('SELECT terms_version, terms_accepted_at FROM users WHERE id = ?', user.id))) await LEGAL.recordAcceptance(user.id);   // the agree box on this form is the explicit tick
-  await audit(user, 'seller_application_submitted', { type: 'seller_application', id });
-  return { id, status: 'pending' };
+  return { status: 'active', redirect: '/dashboard' };
 }
 
 async function withdraw(user) {

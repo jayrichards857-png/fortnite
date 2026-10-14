@@ -111,10 +111,10 @@ test('production process: DB, sessions and uploaded photos survive a restart; co
     const sc = acc.headers.get('set-cookie'); assert.match(sc, /HttpOnly/i); assert.match(sc, /Secure/i); assert.match(sc, /SameSite=Lax/i); assert.match(sc, /Path=\//);
     assert.equal(acc.headers.get('strict-transport-security'), 'max-age=31536000');
     const cookie = sc.split(';')[0];
-    // buyers cannot become sellers: invite-only onboarding
+    // any signed-in account can open a store immediately (the production process runs with SELLER_ONBOARDING=invite: the old instant switch stays off)
+    const sellPage = await (await pf(base + '/sell', { headers: { cookie } })).text(); assert.match(sellPage, /Start selling/); assert.doesNotMatch(sellPage, /Coming soon/i);
     const onboard = await pf(base + '/api/sell/onboard', { method: 'POST', headers: { ...J, cookie }, body: JSON.stringify({ store_name: 'S', handle: 'sneaky', country: 'US', region: 'NY', city: 'B', agree: true, terms: true }) });
-    assert.equal(onboard.status, 403);
-    const sellPage = await (await pf(base + '/sell', { headers: { cookie } })).text(); assert.match(sellPage, /Request seller access|Sell on PairPlug/); assert.doesNotMatch(sellPage, /Coming soon/i);
+    assert.equal(onboard.status, 200);
     // upload a photo
     const photo = png(8, 8, (x, y) => [x * 30, y * 30, 90]);
     const up = await pf(base + '/api/uploads', { method: 'POST', headers: { 'x-requested-with': 'pairplug', 'content-type': 'image/png', cookie }, body: photo });

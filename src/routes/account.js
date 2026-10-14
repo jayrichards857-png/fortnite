@@ -30,40 +30,28 @@ r.post('/api/register', (req, res, next) => {
   if (config.signups === 'open') return next();
   res.status(403).json({ error: 'Sign-ups are paused during the private beta.' });
 });
-// Selling: self-service request (account required) + administrator approval. No limit on the number of sellers. See src/sellerApplications.js.
-// Open instant onboarding (SELLER_ONBOARDING=open) still exists only for developers/tests outside production.
+// Selling: any signed-in account starts selling immediately (account required; no approval, invitation, waitlist or limit). See src/sellerApplications.js.
 const SA = require('../sellerApplications');
 const { FREE_LISTING } = require('../pricing');
 r.get('/sell', async (req, res, next) => {
-  if ((req.user && req.user.is_seller) || config.sellerOnboarding === 'open') return next();
+  if (req.user && req.user.is_seller) return res.redirect('/dashboard');
   const intro = `<h1>Sell on PairPlug</h1><p class="lead">${esc(FREE_LISTING)}</p>
-    <p class="small muted">Anyone with a PairPlug account can ask to sell. There is no fee to apply and no limit on the number of sellers; PairPlug reviews each request to keep buyers safe.</p>`;
+    <p class="small muted">Any PairPlug account can start selling right away. There is no fee, no approval and no limit on the number of sellers.</p>`;
   if (!req.user && config.signups !== 'open') return await page(req, res, { title: 'Selling — Coming Soon', path: '/sell', body: soon('sell') });   // accounts cannot be created yet (pre-release): the old Coming Soon page
   if (!req.user) return await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
-    <p>You need an account first: create a free account (or log in), then request seller access from this page. No fees, no subscription, no payment to apply.</p>
+    <p>You need an account first: create a free account (or log in), then come back here to open your store. No fees, no subscription, no payment.</p>
     <p><a class="btn" href="/register?next=/sell">Create an account</a> <a class="btn ghost" href="/login?next=/sell">Log in</a></p></div>` });
-  const app = await SA.mine(req.user.id), open = app && app.status === 'pending';
   let body;
-  if (open) body = `<div class="narrow panel" style="max-width:560px">${intro}<h2>Your request</h2>
-    <p><span class="pill s-pending_payment">Waiting for review</span> <strong>${esc(app.store_name)}</strong> (@${esc(app.handle)})</p>
-    <p class="small muted">You do not need to contact anyone: we will notify you here when it is decided.</p>
-    <p><button class="btn ghost" data-post="/api/sell/apply/withdraw" data-confirm="Withdraw your seller request?" data-reload>Withdraw request</button></p></div>`;
-  else body = `<div class="narrow panel form-wide" style="max-width:560px">${intro}
-    ${app && app.status === 'rejected' ? `<div class="form-err"><strong>Your last request was not approved:</strong> ${esc(app.decision_note || '')} You can update your details and ask again.</div>` : ''}
-    <form data-api="/api/sell/apply" data-reload><label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" required><label for="sh">Store URL name <span class="opt">(3–30 letters, numbers, - _)</span></label><input id="sh" name="handle" maxlength="30" required>
+  body = `<div class="narrow panel form-wide" style="max-width:560px">${intro}
+    <form data-api="/api/sell/apply" data-redirect="/dashboard"><label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" required><label for="sh">Store URL name <span class="opt">(3–30 letters, numbers, - _)</span></label><input id="sh" name="handle" maxlength="30" required>
     ${storeFields}<label for="sb">About your store <span class="opt">(optional)</span></label><textarea id="sb" name="bio" maxlength="500"></textarea>
     <label style="font-weight:400;display:flex;gap:8px;margin-top:10px"><input type="checkbox" name="agree"> <span>I agree to the <a href="/terms">Terms</a> and <a href="/rules">Seller rules</a>, and that I handle payments, shipping and refunds through my own Stripe Payment Link.</span></label>
-    <button class="btn" type="submit" style="margin-top:12px">Request seller access</button></form></div>`;
+    <button class="btn" type="submit" style="margin-top:12px">Start selling</button></form></div>`;
   await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body });
 });
-r.post('/api/sell/apply', auth.requireUser, async (req, res) => res.json({ ok: true, ...(await SA.apply(req.user, req.body || {})) }));
+r.post('/api/sell/apply', auth.requireUser, async (req, res) => res.json({ ok: true, ...(await SA.apply(req.user, req.body || {})) }));   // alias kept for older pages
 r.post('/api/sell/apply/withdraw', auth.requireUser, async (req, res) => { await SA.withdraw(req.user); res.json({ ok: true }); });
-r.post('/api/sell/onboard', auth.requireUser, async (req, res) => {
-  if (config.sellerOnboarding !== 'open') throw new HttpError(403, 'Seller access is by request and approval: use the Sell page to apply.');
-  if (req.user.is_seller) throw new HttpError(409, 'You already have a store.');
-  await inv.onboardOpen(req.user, req.body);
-  res.json({ ok: true });
-});
+r.post('/api/sell/onboard', auth.requireUser, async (req, res) => res.json({ ok: true, ...(await SA.apply(req.user, req.body || {})) }));   // same immediate path
 
 // ---------- Invitations ----------
 const storeFields = `<div class="row"><div><label for="sc">Ships from (country)</label><select id="sc" name="country">${config.naCountries.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>

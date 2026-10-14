@@ -75,12 +75,12 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
     await adm.pg.goto(B + '/admin/outbox'); assert.match(await adm.pg.textContent('main'), /No email provider is configured/);
     step('3. 3 sellers accepted invitations; no email verification is needed to sell');
 
-    // ---- 4. 4th seller race: a 4th invitation cannot be created, and a direct onboarding POST by a buyer fails
+    // ---- 4. open selling: any signed-in buyer can open a store at once; 5 parallel attempts yield exactly one store (no approval, no cap)
     const b = await mk(); await b.pg.goto(links.buyer.replace(/^https?:\/\/[^/]+/, B));
     await b.pg.fill('#n', 'Bea Buyer'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]'); await Promise.all([b.pg.waitForURL(B + '/account'), b.pg.click('button[type=submit]')]);
     const race = await Promise.all(Array.from({ length: 5 }, () => api(b.ctx, 'POST', '/api/sell/onboard', { store_name: 'Sneaky', handle: 'sneaky', country: 'US', region: 'OR', city: 'Portland', agree: true, terms: true })));
-    assert.ok(race.every((r) => r.status === 403), 'closed onboarding: ' + JSON.stringify(race.map((r) => r.status)));
-    step('4. concurrent self-onboarding attempts by a buyer all refused (closed onboarding)');
+    assert.ok(race.filter((r) => r.status === 200).length === 1 && race.every((r) => [200, 409, 422].includes(r.status)), 'open selling, exactly one store; the losers are refused (409 already a seller / 422 handle taken): ' + JSON.stringify(race.map((r) => r.status)));
+    step('4. a plain buyer opened a store immediately (no approval); parallel duplicates safely refused');
 
     // ---- 5. storefront customisation: draft, preview, publish; public view
     const s1 = sellers.s1; await s1.pg.goto(B + '/dashboard/storefront');

@@ -34,16 +34,19 @@ test('visitors can browse home, shop, categories and listings without logging in
   assert.doesNotMatch((await anon.get('/shop')).text, /List now|Start selling|Become a seller/i);
 });
 
-test('the Sell page is a self-service request form (no more Coming Soon): visitors are asked to sign in, buyers can apply, nobody is instantly a seller', async () => {
+test('the Sell page lets any signed-in account open a store immediately; anonymous visitors are asked to sign in first', async () => {
   const anon = new H.Client(), buyer = await H.newUser('Plain'), adm = await admin();
   assert.match((await anon.get('/')).text, /href="\/sell"/, 'the Sell link is in the navigation');
   const a = (await anon.get('/sell')).text; assert.match(a, /Sell on PairPlug/); assert.match(a, /href="\/register\?next=\/sell"/); assert.match(a, /href="\/login\?next=\/sell"/); assert.doesNotMatch(a, /Coming Soon!|name="store_name"/);
-  for (const who of [buyer, adm]) { const r = (await who.get('/sell')).text; assert.match(r, /name="store_name"/); assert.match(r, /Request seller access|Join the waitlist/); assert.match(r, /free/i); assert.doesNotMatch(r, /Coming Soon!/); }
-  // server enforcement: hiding the button is not the control
-  assert.equal((await anon.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky1', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 401);
-  for (const who of [buyer, adm]) assert.equal((await who.post('/api/sell/onboard', { store_name: 'X', handle: 'sneaky2', country: 'US', region: 'NY', city: 'B', agree: true, terms: true })).status, 403);
-  assert.equal((await q.get('SELECT is_seller s FROM users WHERE email = ?', buyer.email)).s, 0);
-  assert.equal((await q.get('SELECT is_seller s FROM users WHERE email = ?', adm.email)).s, 0);
+  for (const who of [buyer, adm]) { const r = (await who.get('/sell')).text; assert.match(r, /name="store_name"/); assert.match(r, /Start selling/); assert.match(r, /free|no fee/i); assert.doesNotMatch(r, /Coming Soon!|Request seller access|waitlist|approval needed/i); }
+  const body = (h) => ({ store_name: 'X', handle: h, country: 'US', region: 'NY', city: 'B', agree: true, terms: true });
+  assert.equal((await anon.post('/api/sell/onboard', body('sneaky1'))).status, 401, 'anonymous visitors cannot sell');
+  assert.equal((await anon.post('/api/sell/apply', body('sneaky1'))).status, 401);
+  assert.equal((await buyer.post('/api/sell/onboard', body('plain' + Date.now() % 1e6))).status, 200, 'a plain buyer opens a store with no approval');
+  assert.equal((await q.get('SELECT is_seller s FROM users WHERE email = ?', buyer.email)).s, 1);
+  assert.equal((await buyer.get('/dashboard')).status, 200);
+  assert.equal((await adm.post('/api/sell/apply', body('adm' + Date.now() % 1e6))).status, 200);
+  assert.equal((await q.get('SELECT is_admin a FROM users WHERE email = ?', adm.email)).a, 1, 'admins keep their role');
 });
 
 test('buyer registration and login work; sign-up can never grant seller or admin privileges', async () => {
