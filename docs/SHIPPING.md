@@ -1,12 +1,12 @@
 # Shipping in the live beta, and the Shippo test-mode integration
 
 ## Live beta workflow (manual shipping — what sellers actually do)
-**Sellers buy their own postage; PairPlug never buys labels or pays postage.** After the seller confirms the buyer's payment, the seller order page (`/dashboard/orders/<id>`) shows *How to ship this order*:
+**Sellers buy their own postage; Grailedside never buys labels or pays postage.** After the seller confirms the buyer's payment, the seller order page (`/dashboard/orders/<id>`) shows *How to ship this order*:
 1. **Buy postage yourself** in your own account (Shippo, Pirate Ship, USPS, Canada Post, any carrier).
 2. **Ship to the address under “Ship to”** (visible only after payment is confirmed).
 3. **Enter the carrier and tracking number**, an optional note for the buyer, and press **Mark shipped** (the buyer is notified).
 
-Buyer-paid shipping is money the buyer already paid *directly to the seller* as part of the total; it is not a prepaid label. Entering tracking *records* it in PairPlug and shows it to the buyer; it does not buy postage or guarantee delivery. Ownership, payment-confirmation, carrier/tracking validation and refund handling are unchanged.
+Buyer-paid shipping is money the buyer already paid *directly to the seller* as part of the total; it is not a prepaid label. Entering tracking *records* it in Grailedside and shows it to the buyer; it does not buy postage or guarantee delivery. Ownership, payment-confirmation, carrier/tracking validation and refund handling are unchanged.
 
 **Shippo label purchasing is unavailable in the live beta.** `SH.enabled()` is true only when *all* hold: a `shippo_test_` token, `NODE_ENV` is not production, **and** the isolated sandbox flag (`PAIRPLUG_SANDBOX=1`, set only by `scripts/shipping-sandbox.js`). A test token on a normal run, a live token, an invalid token or production all leave the label API returning 503 with a neutral message, the order page without any label UI, and **no call to Shippo (so no customer address is ever sent to it)**. The integration code, its tests and the sandbox remain for future work.
 
@@ -26,7 +26,7 @@ On a seller's order page (`/dashboard/orders/<id>`, orders that are *paid* and n
 
 **Test labels are separated from real ones:** `shipments.test = 1` rows are shown with a TEST MODE banner, are *not valid postage*, are never copied into `orders.carrier/tracking_number`, never prefill the ship form and are never shown to buyers. Only real (`test = 0`) labels do those things, and no code path can create one in this release. Buyers see tracking/carrier status on their order page exactly as before (seller enters tracking; the optional `/webhooks/tracking` updates `shipments.tracking_status` for real labels).
 
-Marking the order **shipped** stays a separate, explicit seller action (a label is not proof the parcel was handed over). The checkout model is unchanged: no escrow, no PairPlug fee or markup on postage, no change to payment processing, onboarding stays invitation-only.
+Marking the order **shipped** stays a separate, explicit seller action (a label is not proof the parcel was handed over). The checkout model is unchanged: no escrow, no Grailedside fee or markup on postage, no change to payment processing, onboarding stays invitation-only.
 
 ## Safety properties (all covered by `test/shipping.test.js`)
 * Every endpoint requires a seller session and is scoped by `seller_id`; other sellers get **404**, buyers 403 (HTML: redirect), anonymous 401. The API key and label/provider ids never appear in browser-visible data.
@@ -74,44 +74,44 @@ It prints the login URL (`http://localhost:3100/login`), the two test accounts (
 
 ## Pricing assumptions (from Shippo's pages as summarised by search on 2026-10-11; I could not load the pages themselves — confirm before relying on them)
 * **API “Starter” (pay as you go):** no monthly fee; **30 labels/month free, then about $0.07 per label** ([goshippo.com/pricing/api](https://goshippo.com/pricing/api)). The web-app Starter plan is also free for up to 30 labels/month; Pro starts around $19/month ([support article](https://support.goshippo.com/hc/en-us/articles/360003855652-Shippo-Subscription-Plan-Overview)).
-* **Other per-use API fees listed there:** about **$0.01 per rate generation** (every “Get shipping rates” is a rating call), **$0.02 per tracked shipment**, $0.03 per delivery-date estimate, $0.02 per US address validation (PairPlug uses none of the last two). A **$0.05/label** fee applies to labels bought through *your own carrier account* on Starter (not used here).
+* **Other per-use API fees listed there:** about **$0.01 per rate generation** (every “Get shipping rates” is a rating call), **$0.02 per tracked shipment**, $0.03 per delivery-date estimate, $0.02 per US address validation (Grailedside uses none of the last two). A **$0.05/label** fee applies to labels bought through *your own carrier account* on Starter (not used here).
 * **Postage is separate and always extra**, charged at carrier rates to whichever Shippo account owns the token. Plan/API fees (cents) and postage (dollars) are different things. Third-party sources disagree with the numbers above in places, so treat them as indicative.
 * Test mode costs nothing. A test token doesn't call carriers for real rates and uses placeholder rates, so **test mode can't validate real prices**.
-* Refunds of unused labels exist (`POST /refunds`, within 90 days, credited to the *next Shippo invoice*, up to 14 business days; USPS labels expire after 30 days). **PairPlug does not implement label refunds yet.**
+* Refunds of unused labels exist (`POST /refunds`, within 90 days, credited to the *next Shippo invoice*, up to 14 business days; USPS labels expire after 30 days). **Grailedside does not implement label refunds yet.**
 * For 1–3 sellers at a few dozen labels a month, plan fees are ≈ $0 for the first 30 labels per account and cents beyond that; the real cost is postage, paid by whoever owns the account.
 
 ## Who pays for postage — unresolved (blocker for live labels)
-PairPlug must not pay for or front postage. Options investigated (from Shippo's [integration paths](https://docs.goshippo.com/docs/Guides_general/integration-paths) and OAuth docs):
+Grailedside must not pay for or front postage. Options investigated (from Shippo's [integration paths](https://docs.goshippo.com/docs/Guides_general/integration-paths) and OAuth docs):
 | Option | Who is billed | Requirement / blocker |
 |---|---|---|
 | **A. Shippo OAuth (“connected accounts”)** | **Each seller, directly by Shippo** (their own Shippo account + payment method) | OAuth credentials are issued by **Shippo's sales team** on request (company, callback URL, use case). That is an extra approval/account step outside this repo; plus an OAuth flow and secure per-seller token storage. **Not implemented.** Best long-term fit. |
 | **B. Seller pastes their own Shippo API key** | Each seller, by Shippo | Needs per-seller secret storage (encryption at rest, rotation, key never shown again), sellers must each hold a Shippo account, and a live key must be validated safely. Feasible but real security work. **Not implemented.** |
-| **C. Platform / white-label managed accounts** | **PairPlug** collects/pays postage and must bill sellers | Violates the beta rule that PairPlug holds no funds and doesn't pay for postage. **Rejected.** |
+| **C. Platform / white-label managed accounts** | **Grailedside** collects/pays postage and must bill sellers | Violates the beta rule that Grailedside holds no funds and doesn't pay for postage. **Rejected.** |
 
 **Decision:** real purchasing stays disabled. Enabling it requires: choose A or B, verify Shippo account setup and who is invoiced, implement per-seller credentials with security review, test with Shippo's test mode end-to-end, then a small supervised live purchase by one seller on their own account. Until then sellers buy labels in their own Shippo/carrier account and enter the tracking number (existing flow).
 
 ## Live readiness audit (2026-10-11): what is real, what is not
 **Today no live label can be bought**: `src/shippo.js` only enables `shippo_test_` tokens, refuses live tokens and production, and the server refuses to start in production if `SHIPPO_API_KEY` is set.
 
-**If someone simply removed those guards, who would pay?** The single global `SHIPPO_API_KEY` belongs to *one* Shippo account (the operator's). Shippo charges postage to the account that owns the token, so **every label would be charged to PairPlug's own Shippo account** (and sellers would not pay anything) — exactly what must not happen. The code has **no per-seller credentials** (no OAuth, no stored seller tokens): `seller_ship_from` and `shipments` carry addresses and results only. Buyers pay sellers directly, and nothing in the data model routes postage costs to sellers.
+**If someone simply removed those guards, who would pay?** The single global `SHIPPO_API_KEY` belongs to *one* Shippo account (the operator's). Shippo charges postage to the account that owns the token, so **every label would be charged to Grailedside's own Shippo account** (and sellers would not pay anything) — exactly what must not happen. The code has **no per-seller credentials** (no OAuth, no stored seller tokens): `seller_ship_from` and `shipments` carry addresses and results only. Buyers pay sellers directly, and nothing in the data model routes postage costs to sellers.
 
 **What works (tested against a fake transport only):** ship-from/parcel/address validation, rate quotes, explicit-confirmation purchase, exactly-once purchase (DB unique index + claim-before-call), failure classification (rejected / unknown / queued), stale-quote checks, seller ownership (404 for others), no secrets or provider ids in browser output, isolated sandbox with test data.
 
-**Unverified against Shippo's real API (test or live):** the request/response field mapping (`/shipments/`, `/transactions/`, `servicelevel.name`, `estimated_days`, `label_url`, `tracking_number`, `status` values, `test` flag semantics); `label_file_type: PDF_4x6`; the label-URL host allowlist (`goshippo.com`/`amazonaws.com`); whether `GET /transactions/<id>` reconciles an interrupted purchase as assumed; error-body shapes; phone-number requirements for CA/MX; rate expiry (< 7 days per Shippo; PairPlug uses 24 h); address validation errors.
+**Unverified against Shippo's real API (test or live):** the request/response field mapping (`/shipments/`, `/transactions/`, `servicelevel.name`, `estimated_days`, `label_url`, `tracking_number`, `status` values, `test` flag semantics); `label_file_type: PDF_4x6`; the label-URL host allowlist (`goshippo.com`/`amazonaws.com`); whether `GET /transactions/<id>` reconciles an interrupted purchase as assumed; error-body shapes; phone-number requirements for CA/MX; rate expiry (< 7 days per Shippo; Grailedside uses 24 h); address validation errors.
 
 **Known gaps before live use**
 1. **No seller-paid billing path** (the blocker; see below).
 2. **Tracking sync from Shippo is not wired.** The existing `/webhooks/tracking` expects `{carrier, trackingNumber, status}` with an `x-webhook-secret` header; Shippo's `track_updated` webhook has a different payload and no such header. Buyer-facing carrier status therefore would not update automatically. Needs either a proper Shippo webhook handler (with verification) or polling; tracking itself is billed per shipment.
 3. **No label refund/void** action: a mistaken label can only be refunded by the seller in the Shippo dashboard.
 4. A real label stays unmarked-as-shipped until the seller presses “Mark shipped” (intentional) and is not copied to the order until then; the prefill only reads `test = 0` rows, which no code path creates yet.
-5. Purchase has no provider idempotency key (Shippo offers none that I verified); duplicate protection relies on PairPlug's own claim row. The “unknown outcome” path needs a manual Shippo-dashboard check by design.
-6. Rate generation is itself a billed call (≈ $0.01) on the token owner's account; PairPlug rate-limits quotes (20/h per seller) but does not cap spend.
+5. Purchase has no provider idempotency key (Shippo offers none that I verified); duplicate protection relies on Grailedside's own claim row. The “unknown outcome” path needs a manual Shippo-dashboard check by design.
+6. Rate generation is itself a billed call (≈ $0.01) on the token owner's account; Grailedside rate-limits quotes (20/h per seller) but does not cap spend.
 
-## Smallest safe path to live labels without PairPlug fronting postage
-* **Step 0 (no engineering, available today):** each seller creates their *own* free Shippo account (own payment method), buys the label there (30 free labels/month on Starter), and enters carrier + tracking in PairPlug's existing “Mark shipped” form. PairPlug pays nothing and holds no credentials. Keep in-app labels in test mode only.
+## Smallest safe path to live labels without Grailedside fronting postage
+* **Step 0 (no engineering, available today):** each seller creates their *own* free Shippo account (own payment method), buys the label there (30 free labels/month on Starter), and enters carrier + tracking in Grailedside's existing “Mark shipped” form. Grailedside pays nothing and holds no credentials. Keep in-app labels in test mode only.
 * **Step 1 (smallest in-app option): each seller connects their own Shippo API token** (Settings → Shipping). Postage and API fees are billed by Shippo to that seller. Needs: a per-seller token column encrypted at rest with a server-held key (`SHIPPO_TOKEN_ENCRYPTION_KEY`, not yet implemented), write-only UI (never displayed again), token-type check (`shippo_test_` vs `shippo_live_` stored separately, live only after explicit per-seller opt-in), delete/rotate, audit log, and calling Shippo with the *acting seller's* token only. Not implemented; **I also have not verified that Shippo's terms allow a platform to hold customers' API tokens** — confirm with Shippo support first.
-* **Step 2 (cleanest long-term): Shippo OAuth** — each seller authorises PairPlug against their own Shippo account; Shippo bills the seller. Requires OAuth credentials issued by Shippo's sales team; no PairPlug-side fee found, but it is a request/approval step outside this repo.
-* **Rejected:** a PairPlug-owned live key (PairPlug pays), and Shippo “white-label managed accounts” (PairPlug becomes the billing party).
+* **Step 2 (cleanest long-term): Shippo OAuth** — each seller authorises Grailedside against their own Shippo account; Shippo bills the seller. Requires OAuth credentials issued by Shippo's sales team; no Grailedside-side fee found, but it is a request/approval step outside this repo.
+* **Rejected:** a Grailedside-owned live key (Grailedside pays), and Shippo “white-label managed accounts” (Grailedside becomes the billing party).
 
 ## Environment variables and safe procedure (no secrets in this file or in Git)
 | Variable | Today | Notes |

@@ -47,7 +47,7 @@ test('invitations: hashed at rest, single use, expiring, revocable, email-bound;
   // wrong / malformed tokens give one generic answer
   const anon = new H.Client();
   for (const t of ['pp_inv_' + 'a'.repeat(32), 'garbage', '', 'pp_inv_']) { const r = await anon.post('/api/invitations/accept', { token: t, ...body() }); assert.equal(r.status, 400); assert.match(r.json.error, /invalid, expired or already used/); }
-  assert.match((await anon.get(`/invite/${tok}`)).text, /Open your PairPlug store/);
+  assert.match((await anon.get(`/invite/${tok}`)).text, /Open your Grailedside store/);
   assert.match((await anon.get(`/invite/pp_inv_${'b'.repeat(32)}`)).text, /invalid, expired or already used/);
   // validation errors don't burn the invitation
   assert.equal((await anon.post('/api/invitations/accept', { token: tok, ...body({ handle: 'x' }) })).status, 422);

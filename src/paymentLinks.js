@@ -1,5 +1,5 @@
 'use strict';
-// Seller payment links. PairPlug only ever sends a buyer to a link that (a) was validated when the seller saved it and
+// Seller payment links. Grailedside only ever sends a buyer to a link that (a) was validated when the seller saved it and
 // (b) is re-validated against the allowlist at redirect time. Nothing in a request can choose the destination.
 const config = require('./config');
 const { HttpError } = require('./util');
@@ -27,7 +27,7 @@ function validatePaymentUrl(raw, hosts = allowedHosts()) {
   if (u.port && u.port !== '443') throw bad('Payment links must use the standard HTTPS port.');
   const host = u.hostname.toLowerCase();
   const shown = APPROVED_HOSTS.join(', ');
-  if (!hosts.includes(host)) throw bad(`Only Stripe-hosted checkout links (${shown}) are accepted in the PairPlug beta. Other payment providers and lookalike addresses are not.`);
+  if (!hosts.includes(host)) throw bad(`Only Stripe-hosted checkout links (${shown}) are accepted in the Grailedside beta. Other payment providers and lookalike addresses are not.`);
   // The text itself must start with exactly "https://<host>/": this also rejects https:buy.stripe.com, https:///buy.stripe.com, a trailing-dot host and similar parser quirks.
   if (!new RegExp(`^https://${host.replace(/\./g, '\\.')}(:443)?/`, 'i').test(text)) throw bad('That does not look like a normal Stripe Payment Link address.');
   const seg = u.pathname.replace(/^\//, '');
@@ -62,7 +62,7 @@ function trackingUrl(carrier, number) {
   const f = TRACK[carrier]; if (!f || !/^[A-Za-z0-9-]{6,40}$/.test(String(number || ''))) return null;
   return f(encodeURIComponent(number));
 }
-// Where a seller can buy a label themselves. PairPlug does NOT buy labels or integrate with these services.
+// Where a seller can buy a label themselves. Grailedside does NOT buy labels or integrate with these services.
 const LABEL_PROVIDERS = [
   { name: 'Pirate Ship (US)', url: 'https://www.pirateship.com/' },
   { name: 'USPS Click-N-Ship (US)', url: 'https://cns.usps.com/' },

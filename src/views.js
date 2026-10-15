@@ -17,7 +17,7 @@ const ICONS = {
 };
 /** The official contact address as a mailto: link. One place, used by every page. */
 const contactLink = (text) => `<a href="mailto:${esc(config.supportEmail)}">${esc(text || config.supportEmail)}</a>`;
-const SUBJECT = 'PairPlug Support';
+const SUBJECT = 'Grailedside Support';
 /** mailto: draft in the visitor's default email app, and Gmail's web composer for visitors who use Gmail in a browser. Both only OPEN a draft; nothing is sent until the visitor sends it. */
 const mailtoHref = (subject = SUBJECT) => `mailto:${config.supportEmail}?subject=${encodeURIComponent(subject)}`;
 const gmailHref = (subject = SUBJECT) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(config.supportEmail)}&su=${encodeURIComponent(subject)}`;
@@ -38,10 +38,10 @@ function releaseText() {
 function comingSoon(kind = 'sell') {
   const when = config.releaseDate ? `<p class="lead">Selling available <strong>${esc(releaseText())}</strong>.</p>` : '<p class="lead">Selling opens very soon.</p>';
   if (kind === 'signup') return `<div class="soon-card"><span class="pill s-pending_payment">Private beta</span><h1>Coming Soon!</h1>${when}
-    <p class="muted">PairPlug is opening step by step. Sign-ups are paused for now. Have an invitation? Open the link you were sent.</p>
+    <p class="muted">Grailedside is opening step by step. Sign-ups are paused for now. Have an invitation? Open the link you were sent.</p>
     <p class="soon-actions"><a class="btn" href="/shop">Browse the shop</a> <a class="btn ghost" href="/login">Log in</a></p></div>`;
   return `<div class="soon-card"><span class="pill s-pending_payment">Private beta</span><h1>Coming Soon!</h1>${when}
-    <p class="muted">Seller onboarding is currently limited while PairPlug prepares its private beta. A small group of invited sellers is getting set up first, and everyone else can shop in the meantime.</p>
+    <p class="muted">Seller onboarding is currently limited while Grailedside prepares its private beta. A small group of invited sellers is getting set up first, and everyone else can shop in the meantime.</p>
     <p class="soon-actions"><a class="btn" href="/shop">Back to shopping</a> <a class="btn ghost" href="/login">Log in</a>${config.signups === 'open' ? ' <a class="btn ghost" href="/register">Sign up to buy</a>' : ''}</p>
     <p class="small muted">Already approved as a beta seller? Log in and your seller dashboard opens automatically.</p></div>`;
 }
@@ -50,7 +50,7 @@ function header(user, path, counts, wide) {
   const link = (href, label, match) => `<a href="${href}"${path === match || (match !== '/' && path.startsWith(match)) ? ' aria-current="page"' : ''}>${label}</a>`;
   return `<header class="site-header">
   <div class="wrap${wide ? ' wide' : ''} bar">
-    <a class="wordmark" href="/" aria-label="PairPlug home">PairPlug</a>
+    <a class="wordmark" href="/" aria-label="Grailedside home">Grailedside</a>
     <nav class="nav" aria-label="Main">
       ${link('/', 'Home', '/')}${link('/shop', 'Shop', '/shop')}${link('/sellers', 'Sellers', '/sellers')}${link('/contact', 'Contact', '/contact')}
       <details class="dd"><summary>Categories</summary><div class="dd-menu">${cats}</div></details>
@@ -90,12 +90,12 @@ async function layout({ title, body, user, path = '/', description = '', wide = 
   const sandbox = config.paymentsMode === 'sandbox' && !config.stripe.secretKey && config.checkoutMode === 'platform'
     ? '<div class="banner">Sandbox mode — payments are simulated and no money moves.</div>' : '';
   const testData = config.sandbox ? '<div class="banner warn-banner" role="status"><strong>SHIPPING SANDBOX — TEST DATA ONLY.</strong> Nothing here is a real customer, payment or order. Labels are Shippo test labels and are not valid postage.</div>' : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="pp-max-image-bytes" content="${config.limits.imageBytes}"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"><meta name="theme-color" content="#faf9f6"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%231f4d36%27/%3E%3Ctext x=%2716%27 y=%2722.5%27 font-family=%27Arial,sans-serif%27 font-size=%2719%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EP%3C/text%3E%3C/svg%3E">
-<title>${esc(title)} · PairPlug</title><meta name="description" content="${esc(description || 'PairPlug — The Clothing Marketplace. Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.')}">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="pp-max-image-bytes" content="${config.limits.imageBytes}"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"><meta name="theme-color" content="#faf9f6"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%231f4d36%27/%3E%3Ctext x=%2716%27 y=%2722.5%27 font-family=%27Arial,sans-serif%27 font-size=%2719%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EG%3C/text%3E%3C/svg%3E">
+<title>${esc(title)} · Grailedside</title><meta name="description" content="${esc(description || 'Grailedside — The Clothing Marketplace. Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.')}">
 <link rel="stylesheet" href="/app.css">${head}</head><body>
-<a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.selling_restricted_at ? `<div class="banner warn-banner" role="alert"><strong>Selling is paused on your account</strong>${user.selling_restricted_until ? ` until ${new Date(user.selling_restricted_until * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ' while PairPlug reviews a report'}. You can still log in, reply to PairPlug and handle existing orders. <a href="/dashboard/appeal">Appeal this decision</a> · <a href="/support">Help &amp; reporting</a></div>` : ''}${header(user, path, counts, wide)}
+<a class="skip" href="#main">Skip to content</a>${sandbox}${testData}${user && user.selling_restricted_at ? `<div class="banner warn-banner" role="alert"><strong>Selling is paused on your account</strong>${user.selling_restricted_until ? ` until ${new Date(user.selling_restricted_until * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ' while Grailedside reviews a report'}. You can still log in, reply to Grailedside and handle existing orders. <a href="/dashboard/appeal">Appeal this decision</a> · <a href="/support">Help &amp; reporting</a></div>` : ''}${header(user, path, counts, wide)}
 <main id="main" class="wrap${wide ? ' wide' : ''}">${body}</main>
-<footer class="site-footer"><div class="wrap"><span>PairPlug · The Clothing Marketplace</span>
+<footer class="site-footer"><div class="wrap"><span>Grailedside · The Clothing Marketplace</span>
 <span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a> · ${contactPageLink('Contact')}</span>
 <nav class="legal-links" aria-label="Legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/payments">Payments &amp; refunds</a> · <a href="/rules">Seller rules</a></nav></div></footer>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>

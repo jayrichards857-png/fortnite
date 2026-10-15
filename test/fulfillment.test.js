@@ -35,7 +35,7 @@ test('checkout persists the address; both users see the order; payment stays unc
   const page = await sellerOrder(seller, o);
   for (const t of ['Ship this order', 'Buyer Person', '1 Main St', 'Apt 4B', 'Austin, TX 78701', 'US', 'Carrier', 'Tracking number', 'Message to the buyer', 'Mark shipped']) assert.ok(page.includes(t), t);
   for (const c of ['USPS', 'UPS', 'FedEx', 'Canada Post', 'DHL', 'Other']) assert.ok(page.includes(`<option>${c}</option>`), c);
-  assert.match(page, /not<\/em> a prepaid label/); assert.match(page, /PairPlug does not buy labels or pay postage/);
+  assert.match(page, /not<\/em> a prepaid label/); assert.match(page, /Grailedside does not buy labels or pay postage/);
   const free = await scene({ payer: 'seller' }); assert.match(await sellerOrder(free.seller, free.o), /you pay the postage yourself/); assert.match(await buyerOrder(free.buyer, free.o), /the seller covers postage/);
   assert.match(await buyerOrder(buyer, o), /not prepaid postage/);
 });

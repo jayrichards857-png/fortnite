@@ -202,7 +202,7 @@ test('a ban is enforced on the server across login, sessions, listings, purchase
   assert.equal((await seller.get('/dashboard')).status, 302, 'old session is dead'); assert.equal((await seller.post('/api/seller/listings', { title: 'x' })).status, 401); assert.equal((await seller.get('/api/chat/sync')).status, 401);
   assert.equal((await new H.Client().post('/api/login', { email: seller.email, password: 'correct-horse-9' })).status, 403, 'cannot log in again');
   const fresh = await H.newUser('Cust'); assert.equal((await fresh.post('/api/purchases', { listingId: second, acknowledged: true, address: H.address })).status >= 400, true, 'no new purchases');
-  assert.notEqual((await buyer.get(`/orders/${oid}/pay`)).status, 302, 'PairPlug stops sending buyers to the banned seller\'s payment link'); assert.equal((await q.get('SELECT status FROM orders WHERE id = ?', oid)).status, 'pending_payment');
+  assert.notEqual((await buyer.get(`/orders/${oid}/pay`)).status, 302, 'Grailedside stops sending buyers to the banned seller\'s payment link'); assert.equal((await q.get('SELECT status FROM orders WHERE id = ?', oid)).status, 'pending_payment');
   assert.equal((await fresh.post('/api/chat/conversations', { listingId: second })).status >= 400, true, 'cannot start a conversation about a banned seller\'s listing');
   assert.equal((await new H.Client().get(`/s/${seller.handle}`)).status, 404); assert.equal((await fresh.post(`/api/sellers/${seller.handle}/follow`)).status, 404);
   assert.equal((await q.get("SELECT COUNT(*) n FROM listings WHERE seller_id = ? AND status = 'active'", await uid(seller.email))).n, 0);

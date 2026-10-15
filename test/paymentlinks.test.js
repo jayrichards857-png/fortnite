@@ -57,14 +57,14 @@ test('the seller form shows the Stripe-only policy, the exact notice, and says t
   const seller = await H.newSeller('Form'), page = await get(seller, '/dashboard/listings/new'), t = text(page);
   assert.match(t, /Stripe checkout links only/); assert.ok(t.includes(PP.SELLER_NOTICE), 'exact notice text'); assert.ok(t.includes(PP.SELLER_ACK)); assert.ok(t.includes(PP.SELLER_ACK_FOOT));
   assert.match(page, /role="note"/); assert.match(page, /aria-describedby="purl-notice purl-hint"/); assert.match(page, /name="payment_ack_total_cents"/); assert.match(page, /name="payment_ack_url"/); assert.match(t, /buy\.stripe\.com/);
-  assert.match(t, /does not verify the amount charged at Stripe/); assert.match(t, /not automatically correct or safe/); assert.doesNotMatch(t, /verified by PairPlug|PairPlug verifies/i);
+  assert.match(t, /does not verify the amount charged at Stripe/); assert.match(t, /not automatically correct or safe/); assert.doesNotMatch(t, /verified by Grailedside|Grailedside verifies/i);
   const js = await get(seller, '/editor.js'); assert.match(js, /pack\.checked = false/, 'the editor un-ticks the box when price, shipping or link change');
 });
 
 test('the seller\'s confirmation is cleared by any price, shipping, payer or link change; re-confirming needs proof of the new total; everything is audited', async () => {
   const seller = await H.newSeller('Ack'), s = await seller.post('/api/seller/listings', await body(seller)), id = s.json.id;
   assert.equal((await row(id)).payment_total_ack_cents, 4800); assert.ok((await row(id)).payment_ack_at); assert.equal((await row(id)).payment_ack_policy, PP.VERSION);
-  assert.equal((await audits('listing_payment_total_acknowledged', `%"listing":%`)).length >= 0, true); assert.ok((await audits('listing_payment_link_changed')).some((a) => a.target_id === String(id)), 'creating a link is audited'); assert.ok((await audits('listing_payment_total_acknowledged')).some((a) => a.target_id === String(id) && /seller statement; not verified by PairPlug/.test(a.detail) && a.detail.includes(PP.VERSION)));
+  assert.equal((await audits('listing_payment_total_acknowledged', `%"listing":%`)).length >= 0, true); assert.ok((await audits('listing_payment_link_changed')).some((a) => a.target_id === String(id)), 'creating a link is audited'); assert.ok((await audits('listing_payment_total_acknowledged')).some((a) => a.target_id === String(id) && /seller statement; not verified by Grailedside/.test(a.detail) && a.detail.includes(PP.VERSION)));
   const edit = async (over, extra = {}) => seller.put(`/api/seller/listings/${id}`, { ...(await body(seller, over)), ...extra });
   const proof = (total, url = LINK) => ({ payment_ack_total_cents: total, payment_ack_url: url });
   // silence about the box keeps an unchanged confirmation; other fields do not matter
@@ -117,10 +117,10 @@ test('the "Before you pay" warning, expected total and mismatch link appear besi
   assert.match(lt, /Item price \$100\.00/); assert.match(lt, /Shipping \$7\.85/); assert.match(lt, /Expected total \$107\.85/); assert.ok(lt.includes(PP.BUYER_FOOT)); assert.match(listing, /<dl class="byp-total" aria-label="Expected total">/);
   assert.match(listing, /href="\/support#payment-mismatch">Report a payment mismatch<\/a>/);
   assert.ok(listing.indexOf('Before you pay') < listing.indexOf('>Buy now<'), 'the warning sits above the Buy now button');
-  assert.doesNotMatch(lt, /PairPlug (has )?verified (the|that) (price|amount)|verified by PairPlug|guarantees? (the|that) (amount|price)/i);
+  assert.doesNotMatch(lt, /Grailedside (has )?verified (the|that) (price|amount)|verified by Grailedside|guarantees? (the|that) (amount|price)/i);
   const buyPage = await get(buyer, `/buy/${id}`); assert.ok(text(buyPage).includes(PP.BUYER_TEXT)); assert.match(text(buyPage), /Expected total \$107\.85/);
   const o = oid(await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })), order = await get(buyer, `/orders/${o}`);
-  assert.ok(text(order).includes(PP.BUYER_TEXT)); assert.match(text(order), /Expected total \$107\.85/); assert.match(order, new RegExp(`href="/support\\?order=${o}#payment-mismatch"`)); assert.ok(order.indexOf('Before you pay') < order.indexOf('Go to seller checkout'), 'repeated right before leaving PairPlug');
+  assert.ok(text(order).includes(PP.BUYER_TEXT)); assert.match(text(order), /Expected total \$107\.85/); assert.match(order, new RegExp(`href="/support\\?order=${o}#payment-mismatch"`)); assert.ok(order.indexOf('Before you pay') < order.indexOf('Go to seller checkout'), 'repeated right before leaving Grailedside');
   const css = await get(buyer, '/app.css'); assert.match(css, /\.byp\{/); assert.match(css, /@media \(max-width:480px\)\{\.byp\{/);
   assert.equal((await buyer.get(`/orders/${o}/pay`)).status, 302);
   // an unbuyable listing shows the plain totals, not a warning that implies checkout
@@ -130,12 +130,12 @@ test('the "Before you pay" warning, expected total and mismatch link appear besi
 test('reporting a payment mismatch opens a flagged case for staff and never changes payment state', async () => {
   const adm = await mkAdmin(), mod = await newMod(adm), seller = await H.newSeller('Mis'), buyer = await H.newUser('Mis'), other = await H.newUser('Other');
   const id = (await seller.post('/api/seller/listings', await body(seller, { price: '100.00', shipping: '7.85' }))).json.id, o = oid(await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }));
-  const sup = await get(buyer, `/support?order=${o}`); assert.match(sup, /id="payment-mismatch"/); assert.match(sup, new RegExp(`<option value="${o}" selected>`)); assert.match(text(sup), /Do not complete that payment/); assert.match(text(sup), /PairPlug has not verified the amount at Stripe and cannot see it/);
+  const sup = await get(buyer, `/support?order=${o}`); assert.match(sup, /id="payment-mismatch"/); assert.match(sup, new RegExp(`<option value="${o}" selected>`)); assert.match(text(sup), /Do not complete that payment/); assert.match(text(sup), /Grailedside has not verified the amount at Stripe and cannot see it/);
   assert.equal((await new H.Client().post('/api/cases/payment-mismatch', { orderId: o })).status, 401); assert.equal((await other.post('/api/cases/payment-mismatch', { orderId: o, reason: 'not mine' })).status, 404);
   assert.equal((await buyer.post('/api/cases/payment-mismatch', { orderId: o, seenAmount: 'abc' })).status, 422);
   const before = { ...await q.get('SELECT status, payment_confirmed_at, payment_confirmed_by, buyer_claimed_paid_at, total_cents FROM orders WHERE id = ?', o) };
   const r = await buyer.post('/api/cases/payment-mismatch', { orderId: o, seenAmount: '21.00', reason: 'Stripe showed a different product and amount.', evidence_json: JSON.stringify([await H.upload(buyer)]) }); assert.equal(r.status, 200, r.text);
-  const c = await q.get('SELECT * FROM cases WHERE id = ?', r.json.id); assert.equal(c.payment_mismatch, 1); assert.equal(c.order_id, o); assert.equal(c.subject_user_id, await uid(seller.email)); assert.match(c.reason, /PairPlug expected \$107\.85; the buyer says the checkout page showed \$21\.00/);
+  const c = await q.get('SELECT * FROM cases WHERE id = ?', r.json.id); assert.equal(c.payment_mismatch, 1); assert.equal(c.order_id, o); assert.equal(c.subject_user_id, await uid(seller.email)); assert.match(c.reason, /Grailedside expected \$107\.85; the buyer says the checkout page showed \$21\.00/);
   assert.deepEqual({ ...await q.get('SELECT status, payment_confirmed_at, payment_confirmed_by, buyer_claimed_paid_at, total_cents FROM orders WHERE id = ?', o) }, before, 'payment state untouched: not paid, not confirmed, not refunded');
   assert.equal((await q.get('SELECT COUNT(*) n FROM refund_requests WHERE order_id = ?', o)).n, 0); assert.ok(await q.get("SELECT 1 x FROM notifications WHERE title = 'A buyer says your checkout amount did not match' AND user_id = ?", await uid(seller.email)));
   assert.equal((await buyer.post('/api/cases/payment-mismatch', { orderId: o, reason: 'again' })).status, 409, 'one open report per order');

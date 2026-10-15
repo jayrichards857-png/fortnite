@@ -1,8 +1,8 @@
 'use strict';
 // Direct ("external") checkout — the private-beta payment model.
 //
-//   PairPlug does NOT collect, hold, escrow, split or refund money in this mode. The buyer pays the seller through the
-//   seller's own payment link. PairPlug records the purchase attempt and the seller's confirmation, nothing more.
+//   Grailedside does NOT collect, hold, escrow, split or refund money in this mode. The buyer pays the seller through the
+//   seller's own payment link. Grailedside records the purchase attempt and the seller's confirmation, nothing more.
 //
 // Order lifecycle (existing state machine, reused):
 //   pending_payment  buyer started checkout; item reserved; NOT paid
@@ -10,7 +10,7 @@
 //   shipped          seller recorded carrier + tracking
 //   delivered        buyer (or seller) marked it received
 //   cancelled        abandoned/expired/rejected before payment was confirmed; item released
-//   refunded         seller declares they refunded the buyer in their own provider (PairPlug moves no money)
+//   refunded         seller declares they refunded the buyer in their own provider (Grailedside moves no money)
 const config = require('./config');
 const { q, tx, now, getSettings, isUnique } = require('./db');
 const { HttpError, cleanLine } = require('./util');
@@ -40,7 +40,7 @@ async function purchasable(listing) {
   if (seller.selling_restricted_at) return { ok: false, reason: 'This seller is temporarily unavailable.' };
   const link = resolveLink(listing);
   // Beta rule: only the listing's OWN Stripe link, and only after the seller confirmed it charges exactly the current item + shipping total. The confirmation is the seller's statement;
-  // PairPlug cannot read the amount at Stripe. Any change to price, shipping or link clears it (see saveListing and the listings_ack_follows_total trigger).
+  // Grailedside cannot read the amount at Stripe. Any change to price, shipping or link clears it (see saveListing and the listings_ack_follows_total trigger).
   if (!link) return { ok: false, reason: "This seller hasn't added a Stripe checkout link to this listing yet." };
   if (listing.payment_total_ack_cents !== terms(listing).totalCents) return { ok: false, reason: "This seller still needs to confirm that their Stripe link charges the current total (item price plus shipping), so online checkout is paused. You can message them." };
   try { validatePaymentUrl(link.url); } catch { return { ok: false, reason: "This seller's checkout link is no longer accepted, so online checkout is paused. You can message them." }; }
@@ -88,14 +88,14 @@ async function startPurchase(user, { listingId, address, acknowledged }) {
     const checkoutId = ck;
     // Reservation = conditional decrement of the listing's quantity inside a BEGIN IMMEDIATE transaction: exactly one buyer can win the last unit.
     if (!await INV.holdUnit(l.id)) throw new HttpError(409, 'This item was just taken by another buyer.');
-    // PairPlug takes no fees and moves no money in this mode: fee/payout columns are zero by definition.
+    // Grailedside takes no fees and moves no money in this mode: fee/payout columns are zero by definition.
     const o = await q.insert(`INSERT INTO orders(checkout_id, buyer_id, seller_id, payment_mode, shipping_payer, subtotal_cents, shipping_cents, tax_cents, total_cents, fee_bps, platform_fee_cents, processing_fee_cents, seller_payout_cents, snapshot_json, created_at, updated_at)
       VALUES(?,?,?, 'external', ?, ?,?,0,?, 0,0,0,0, ?, ?,?)`, checkoutId, user.id, seller.id, t.shippingPayer, t.itemCents, t.shippingCents, t.totalCents, await snapshotOf(l, seller, link, t), tNow, tNow);
     const orderId = o;
     await q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?, NULL, 'pending_payment', ?, 'Buyer started seller checkout (not paid)', ?)", orderId, `buyer:${user.id}`, tNow);
     await q.run('INSERT INTO order_items(order_id, listing_id, title, price_cents, cost_cents, image) SELECT ?, id, title, price_cents, cost_cents, (SELECT file FROM listing_images WHERE listing_id = listings.id ORDER BY position LIMIT 1) FROM listings WHERE id = ?', orderId, l.id);
     await INV.sync(l.id);                                                                  // now that the order exists, the legacy reserved_* markers can point at it
-    await notify(seller.id, `order:${orderId}:initiated`, 'Someone started checkout', `Order #${orderId}: "${l.title}" is reserved. Watch for the payment in your Stripe dashboard (reference PP-${orderId}), then confirm it in PairPlug.`, `/dashboard/orders/${orderId}`);
+    await notify(seller.id, `order:${orderId}:initiated`, 'Someone started checkout', `Order #${orderId}: "${l.title}" is reserved. Watch for the payment in your Stripe dashboard (reference PP-${orderId}), then confirm it in Grailedside.`, `/dashboard/orders/${orderId}`);
     return { orderId, existing: false };
   });
   // The response is only built after the transaction committed; read the row back so we never report an order that is not durably stored.
@@ -123,7 +123,7 @@ const releaseListing = async (checkoutId) => await INV.releaseCheckout(checkoutI
 async function payRedirect(user, orderId) {
   const o = await buyerOrder(user, orderId);
   if (o.status !== 'pending_payment') throw new HttpError(409, 'This order is no longer waiting for payment.');
-  if (await require('./fraud').sellerHeld(o.seller_id)) throw new HttpError(409, 'PairPlug is reviewing a report about this seller, so we are not sending buyers to their payment link right now. Please do not pay yet; message support if you have questions.');
+  if (await require('./fraud').sellerHeld(o.seller_id)) throw new HttpError(409, 'Grailedside is reviewing a report about this seller, so we are not sending buyers to their payment link right now. Please do not pay yet; message support if you have questions.');
   const snap = JSON.parse(o.snapshot_json);
   let url;
   try { url = buyerUrl(snap.paymentLink.url, o.id); }
@@ -143,7 +143,7 @@ async function buyerClaimPaid(user, orderId) {
       await q.run('UPDATE checkouts SET expires_at = ? WHERE id = ?', until, o.checkout_id);
       await INV.sync((await q.get('SELECT listing_id FROM order_items WHERE order_id = ?', o.id)).listing_id);
       await q.run("INSERT INTO order_events(order_id, from_status, to_status, actor, note, created_at) VALUES(?, 'pending_payment', 'pending_payment', ?, 'Buyer says they paid (unverified)', ?)", o.id, `buyer:${user.id}`, now());
-      await notify(o.seller_id, `order:${o.id}:claimed`, 'Buyer says they paid', `Order #${o.id}: check your payment dashboard for reference PP-${o.id}, then confirm the payment in PairPlug.`, `/dashboard/orders/${o.id}`);
+      await notify(o.seller_id, `order:${o.id}:claimed`, 'Buyer says they paid', `Order #${o.id}: check your payment dashboard for reference PP-${o.id}, then confirm the payment in Grailedside.`, `/dashboard/orders/${o.id}`);
     }
     return { ok: true };
   });
@@ -188,7 +188,7 @@ async function sellerRejectPayment(user, orderId) {
   });
 }
 
-/** Seller records that THEY refunded the buyer in their payment provider. PairPlug moves no money and verifies nothing. */
+/** Seller records that THEY refunded the buyer in their payment provider. Grailedside moves no money and verifies nothing. */
 /** A refunded unit: back in stock when the seller relists it; otherwise the listing is archived only if nothing else is left to sell. */
 async function afterRefund(orderId, relist) {
   for (const it of await q.all('SELECT listing_id FROM order_items WHERE order_id = ?', orderId)) {
@@ -201,7 +201,7 @@ async function sellerDeclareRefund(user, orderId, { relist }) {
   return await tx(async () => {
     const o = await sellerOrder(user, orderId);
     if (!['paid', 'shipped', 'delivered'].includes(o.status)) throw new HttpError(409, 'Only confirmed orders can be marked refunded.');
-    await transition(o.id, 'refunded', { actor: `seller:${user.id}`, note: 'Seller states they refunded the buyer outside PairPlug', set: { refunded_cents: o.total_cents } });
+    await transition(o.id, 'refunded', { actor: `seller:${user.id}`, note: 'Seller states they refunded the buyer outside Grailedside', set: { refunded_cents: o.total_cents } });
     await afterRefund(o.id, relist);
     await notify(o.buyer_id, `order:${o.id}:refund-declared`, 'Seller marked your order refunded', `Order #${o.id}: the seller says a refund was issued through their payment provider.`, `/orders/${o.id}`);
     return { ok: true };
@@ -235,7 +235,7 @@ async function sellerRequestAddress(user, orderId) {
   return { ok: true, message: 'The buyer was sent an in-app notification asking for their address. (No email is sent.)' };
 }
 
-// ---------------------------------------------------------------- shipping (seller-entered carrier + tracking; PairPlug buys no postage)
+// ---------------------------------------------------------------- shipping (seller-entered carrier + tracking; Grailedside buys no postage)
 const TRACKING_RE = /^[A-Za-z0-9-]{6,40}$/;
 function shipInput(body) {
   const carrier = config.carriers.includes(body.carrier) ? body.carrier : '', tracking = cleanLine(body.tracking, 60).replace(/\s/g, ''), note = cleanLine(body.note, 200) || null, f = {};

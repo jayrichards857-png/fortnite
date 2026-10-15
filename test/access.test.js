@@ -37,7 +37,7 @@ test('visitors can browse home, shop, categories and listings without logging in
 test('the Sell page lets any signed-in account open a store immediately; anonymous visitors are asked to sign in first', async () => {
   const anon = new H.Client(), buyer = await H.newUser('Plain'), adm = await admin();
   assert.match((await anon.get('/')).text, /href="\/sell"/, 'the Sell link is in the navigation');
-  const a = (await anon.get('/sell')).text; assert.match(a, /Sell on PairPlug/); assert.match(a, /href="\/register\?next=\/sell"/); assert.match(a, /href="\/login\?next=\/sell"/); assert.doesNotMatch(a, /Coming Soon!|name="store_name"/);
+  const a = (await anon.get('/sell')).text; assert.match(a, /Sell on Grailedside/); assert.match(a, /href="\/register\?next=\/sell"/); assert.match(a, /href="\/login\?next=\/sell"/); assert.doesNotMatch(a, /Coming Soon!|name="store_name"/);
   for (const who of [buyer, adm]) { const r = (await who.get('/sell')).text; assert.match(r, /name="store_name"/); assert.match(r, /Start selling/); assert.match(r, /free|no fee/i); assert.doesNotMatch(r, /Coming Soon!|Request seller access|waitlist|approval needed/i); }
   const body = (h) => ({ store_name: 'X', handle: h, country: 'US', region: 'NY', city: 'B', agree: true, terms: true });
   assert.equal((await anon.post('/api/sell/onboard', body('sneaky1'))).status, 401, 'anonymous visitors cannot sell');

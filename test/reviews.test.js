@@ -140,7 +140,7 @@ test('policies and help disclose reviews, order-linked labels, unverified paymen
   assert.match(t['/terms'], /order-linked/); assert.match(t['/terms'], /does not independently verify those payments/); assert.match(t['/terms'], /moderators can hide or restore a review with a recorded reason, but cannot edit/);
   assert.match(t['/privacy'], /Reviews: your thumbs-up/); assert.match(t['/privacy'], /first name/); assert.match(t['/rules'], /fake or incentivised reviews/); assert.match(t['/support'], /Report this review/);
   assert.match(t['/payments'], /cannot set, read or verify/); assert.match(t['/payments'], /make sure the seller's page shows the same total/i); assert.match(t['/payments'], /sellers may only use Stripe-hosted Payment Links, must confirm that their link charges exactly item price plus shipping/);
-  assert.match(t['/'], /PairPlug\s*The Clothing Marketplace\./); assert.match(t['/'], /Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops\./); assert.match(t['/'], /PairPlug · The Clothing Marketplace/);
+  assert.match(t['/'], /Grailedside\s*The Clothing Marketplace\./); assert.match(t['/'], /Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops\./); assert.match(t['/'], /Grailedside · The Clothing Marketplace/);
   const all = Object.values(t).join(' '); assert.doesNotMatch(all, /North American secondhand|exclusively secondhand/i); assert.doesNotMatch(all, /verified purchase|buyer protection (program|guarantee)|guaranteed refund|biggest|most popular|safest marketplace/i);
   assert.match(await get(anon, '/'), /<title>[^<]*The Clothing Marketplace/);
 });

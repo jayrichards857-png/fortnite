@@ -23,7 +23,7 @@ process.env.PAYMENTS_MODE = process.env.PAYMENTS_MODE ?? 'sandbox';
 process.env.CARRIER_WEBHOOK_SECRET = 'carrier-secret';
 // Test sellers are created through the dev/test-only open onboarding path; invitation-only behaviour is tested by flipping config explicitly.
 process.env.SELLER_ONBOARDING = process.env.SELLER_ONBOARDING ?? 'open';
-// legacy tests exercise the PairPlug-held (platform) flow; direct-checkout tests set CHECKOUT_MODE=external before requiring this file
+// legacy tests exercise the Grailedside-held (platform) flow; direct-checkout tests set CHECKOUT_MODE=external before requiring this file
 process.env.CHECKOUT_MODE = process.env.CHECKOUT_MODE ?? 'platform';
 process.env.TAX_RATE_BPS = process.env.TAX_RATE_BPS ?? '0';
 

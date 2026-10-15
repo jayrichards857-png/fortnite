@@ -1,5 +1,5 @@
 'use strict';
-// Free listing, 0% PairPlug commission: nothing in the publish path asks for money, orders carry no PairPlug fee, the UI says so (without claiming
+// Free listing, 0% Grailedside commission: nothing in the publish path asks for money, orders carry no Grailedside fee, the UI says so (without claiming
 // Stripe is free), no upgrade/plan prompts remain, and the seller-owned Stripe Payment Link model is untouched.
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
@@ -36,13 +36,13 @@ test('a seller publishes and manages listings for $0: no payment step, no paymen
   assert.doesNotMatch(form, /card number|billing|subscribe|upgrade|listing fee of|insertion fee/i, 'no payment information is asked for to list');
 });
 
-test('orders carry 0% PairPlug commission and the seller-owned Stripe link model is unchanged', async () => {
+test('orders carry 0% Grailedside commission and the seller-owned Stripe link model is unchanged', async () => {
   const seller = await H.newSeller('Direct'), buyer = await H.newUser('Buyer'), id = await H.makeListing(seller, { payment_url: LINK, price: '40.00', shipping: '6.00', shipping_payer: 'buyer' });
   const page = strip((await buyer.get(`/listing/${id}`)).text); assert.match(page, /Buy now/); assert.match(page, /\$40\.00/); assert.match(page, /\$6\.00/);   // browse + price + shipping as set by the seller
   assert.equal((await buyer.get('/shop')).status, 200); assert.match((await buyer.get('/shop')).text, /Test jacket/);
   const r = await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(r.status, 200, r.text);
   const o = await q.get('SELECT * FROM orders WHERE id = ?', oid(r));
-  assert.equal(o.payment_mode, 'external'); assert.equal(o.platform_fee_cents, 0); assert.equal(o.seller_payout_cents, 0, 'PairPlug holds no funds and computes no payout');
+  assert.equal(o.payment_mode, 'external'); assert.equal(o.platform_fee_cents, 0); assert.equal(o.seller_payout_cents, 0, 'Grailedside holds no funds and computes no payout');
   assert.equal(o.subtotal_cents, 4000); assert.equal(o.shipping_cents, 600, 'seller-defined price and shipping are untouched');
   assert.match(String(r.json.redirect), /buy\.stripe\.com|\/orders\//, 'the buyer pays on the seller\'s own Stripe link');
   assert.match(strip((await seller.get('/dashboard')).text), /0% commission/);
@@ -54,8 +54,8 @@ test('UI: free-to-list and 0% commission are stated; Stripe fees are never calle
   const pages = { dashboard: '/dashboard', newListing: '/dashboard/listings/new', finance: '/dashboard/finance', terms: '/terms', payments: '/payments' };
   const text = {}; for (const [k, u] of Object.entries(pages)) { const r = await (k === 'terms' || k === 'payments' ? new H.Client() : seller).get(u); assert.equal(r.status, 200, u); text[k] = strip(r.text); }
   for (const k of ['dashboard', 'newListing']) assert.match(text[k], /Free to list/);
-  assert.match(text.finance, /Listing is free and PairPlug takes 0% commission/);
-  assert.match(text.terms, /Listing on PairPlug is free/); assert.match(text.payments, /takes no commission \(0%\)/);
+  assert.match(text.finance, /Listing is free and Grailedside takes 0% commission/);
+  assert.match(text.terms, /Listing on Grailedside is free/); assert.match(text.payments, /takes no commission \(0%\)/);
   for (const [k, t] of Object.entries(text)) {
     assert.doesNotMatch(t, /Stripe[^.]{0,40}\bis free|free[^.]{0,30}Stripe processing/i, `${k}: never claims Stripe is free`);
     assert.doesNotMatch(t, /10% transaction fee|6% for Pro|Pro sellers pay|plan billing|Upgrade to Pro|Standard plan|Plan:\s*<strong>/i, `${k}: outdated pricing text`);

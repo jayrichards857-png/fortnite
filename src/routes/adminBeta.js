@@ -39,7 +39,7 @@ r.get('/admin/invitations', A, async (req, res) => {
   const status = (i) => (i.used_at ? 'accepted' : i.revoked_at ? 'revoked' : i.expires_at <= now() ? 'expired' : 'pending');
   await page(req, res, { title: 'Invitations', body: `<h1>Invitations</h1>
     <div class="stats">${stat('Sellers', sl.used)}${stat('Pending seller invitations', sl.liveInvites, 'single-use links not yet used, revoked or expired')}</div>
-    <div class="panel form-wide" style="margin-top:16px"><h3>Invite someone</h3><p class="small muted">The link is shown <strong>once</strong>; PairPlug stores only a hash. Invitations are single-use, bound to the email address, and expire after ${config.inviteTtlHours / 24} days. Buyers and sellers cannot create accounts any other way while sign-ups are closed.</p>
+    <div class="panel form-wide" style="margin-top:16px"><h3>Invite someone</h3><p class="small muted">The link is shown <strong>once</strong>; Grailedside stores only a hash. Invitations are single-use, bound to the email address, and expire after ${config.inviteTtlHours / 24} days. Buyers and sellers cannot create accounts any other way while sign-ups are closed.</p>
       <form id="invform" class="row" style="align-items:end"><div><label for="ie">Email</label><input id="ie" name="email" type="email" required></div>
         <div><label for="ik">Role</label><select id="ik" name="kind"><option value="buyer">Buyer</option><option value="seller">Seller</option></select></div><div><label for="in">Note <span class="opt">(private)</span></label><input id="in" name="note" maxlength="200"></div><div><button class="btn" type="submit">Create invitation</button></div></form>
       <div id="invout" aria-live="polite"></div></div>

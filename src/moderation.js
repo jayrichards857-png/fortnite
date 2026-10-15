@@ -153,7 +153,7 @@ async function restrictSelling(actor, targetId, reason, caseId) {
     await q.run('UPDATE users SET selling_restricted_at = ?, selling_restricted_until = NULL, selling_restricted_reason = ?, selling_restricted_case = ? WHERE id = ?', now(), why, caseId ? Number(caseId) : null, t.id);
     const paused = (await q.run("UPDATE listings SET status = 'archived', updated_at = ? WHERE seller_id = ? AND status IN ('active','draft')", now(), t.id)).changes;
     const warned = await F.warnPendingBuyers(t.id, 'selling is paused');
-    await notify(t.id, `restrict:${t.id}:${now()}`, 'Selling is paused on your account', `PairPlug is reviewing a report. Your listings are paused and you cannot publish or take new orders for now. You can still log in, handle existing orders and reply to PairPlug. Email ${config.supportEmail} if you have questions.`, '/support');
+    await notify(t.id, `restrict:${t.id}:${now()}`, 'Selling is paused on your account', `Grailedside is reviewing a report. Your listings are paused and you cannot publish or take new orders for now. You can still log in, handle existing orders and reply to Grailedside. Email ${config.supportEmail} if you have questions.`, '/support');
     await record(actor, t, 'restrict_selling', why, caseId);
     return { paused, warned };
   });
@@ -202,7 +202,7 @@ async function liftRestriction(actor, targetId, reason, caseId) {
     const t = await target(actor, targetId);
     if (!t.selling_restricted_at) throw new HttpError(409, 'Selling is not restricted for this seller.');
     await q.run('UPDATE users SET selling_restricted_at = NULL, selling_restricted_until = NULL, selling_restricted_reason = NULL, selling_restricted_case = NULL WHERE id = ?', t.id);
-    await notify(t.id, `unrestrict:${t.id}:${now()}`, 'Selling is available again', 'PairPlug lifted the restriction. Your paused listings stay paused until you publish them again.', '/dashboard/inventory');
+    await notify(t.id, `unrestrict:${t.id}:${now()}`, 'Selling is available again', 'Grailedside lifted the restriction. Your paused listings stay paused until you publish them again.', '/dashboard/inventory');
     await record(actor, t, 'lift_restriction', why, caseId);
   });
 }

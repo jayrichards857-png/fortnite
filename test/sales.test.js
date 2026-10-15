@@ -1,5 +1,5 @@
 'use strict';
-// Unified "Record sale": origin, payment attestation, fulfilment (ship / pickup), recipient privacy, corrections, voids, and clear separation from PairPlug checkout orders.
+// Unified "Record sale": origin, payment attestation, fulfilment (ship / pickup), recipient privacy, corrections, voids, and clear separation from Grailedside checkout orders.
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,18 +20,18 @@ const rec = (s, id, body) => s.post(`/api/seller/listings/${id}/record-sale`, bo
 const page = async (c) => (await c.get('/dashboard/orders')).text;
 const full = { origin: 'other_marketplace', channel: 'Depop', reference: 'DP-1001', sold_on: '2026-10-01', price: '85.00', fulfillment: 'ship', payment_status: 'unconfirmed', name: 'Casey Buyer', ...REC };
 
-test('wording: the general action is "Record sale", the origin is a form field, no blanket "outside PairPlug" claim, and no payment verification claim', async () => {
+test('wording: the general action is "Record sale", the origin is a form field, no blanket "outside Grailedside" claim, and no payment verification claim', async () => {
   const { s, id } = await seller('Wording hoodie');
-  const inv = (await s.get('/dashboard/inventory')).text; assert.match(inv, />Record sale</); assert.doesNotMatch(inv, /Sold outside PairPlug|Record external sale/);
+  const inv = (await s.get('/dashboard/inventory')).text; assert.match(inv, />Record sale</); assert.doesNotMatch(inv, /Sold outside Grailedside|Record external sale/);
   const f = (await s.get(`/dashboard/listings/${id}/record-sale`)).text;
-  assert.match(f, /<h1>Record sale<\/h1>/); assert.match(f, /Where did this sale originate\?/); assert.doesNotMatch(f, /Record external sale|sold outside PairPlug|outside PairPlug/i);
-  for (const o of ['PairPlug', 'In person', 'Another marketplace', 'Social media or direct message', 'Other']) assert.ok(f.includes(`>${o}</option>`), o);
+  assert.match(f, /<h1>Record sale<\/h1>/); assert.match(f, /Where did this sale originate\?/); assert.doesNotMatch(f, /Record external sale|sold outside Grailedside|outside Grailedside/i);
+  for (const o of ['Grailedside', 'In person', 'Another marketplace', 'Social media or direct message', 'Other']) assert.ok(f.includes(`>${o}</option>`), o);
   assert.match(f, /does <strong>not<\/strong> independently verify any payment/); assert.match(f, /Stripe, PayPal or other payment link/); assert.match(f, /Local pickup \/ no shipping required/);
   assert.equal((await s.get(`/dashboard/listings/${id}/external-sale`)).status, 301, 'the old URL redirects');
   for (const c of ['USPS', 'UPS', 'FedEx', 'Canada Post', 'DHL', 'Other']) assert.ok((await s.get(`/dashboard/listings/${id}/record-sale`)).text.length > 0, c);
 });
 
-test('origin is required and valid; PairPlug-originated sales paid through the seller\'s own link are recorded as PairPlug, not "external"', async () => {
+test('origin is required and valid; Grailedside-originated sales paid through the seller\'s own link are recorded as Grailedside, not "external"', async () => {
   const { s, id } = await seller('Origin hoodie');
   assert.equal((await rec(s, id, { fulfillment: 'pickup' })).status, 422); assert.equal((await rec(s, id, { origin: 'carrier-pigeon', fulfillment: 'pickup' })).status, 422); assert.equal((await rec(s, id, { origin: 'pairplug' })).status, 422, 'fulfillment is required too');
   assert.equal((await listing(id)).status, 'active', 'rejected requests change nothing');
@@ -39,7 +39,7 @@ test('origin is required and valid; PairPlug-originated sales paid through the s
   const r = await rec(s, id, { origin: 'pairplug', fulfillment: 'ship', payment_status: 'unconfirmed', reference: 'stripe pi_123', price: '60', name: 'Pat Pay', ...REC }); assert.equal(r.status, 200, r.text);
   const x = await sale(id); assert.equal(x.origin, 'pairplug'); assert.equal(x.payment_status, 'unconfirmed'); assert.equal(x.payment_confirmed_at, null); assert.equal(x.reference, 'stripe pi_123');
   assert.deepEqual(await counts(), before, 'no buyer account, checkout, order or notification was fabricated');
-  const t = await page(s); assert.match(t, /Recorded sales/); assert.match(t, />PairPlug</); assert.match(t, /Not confirmed/); assert.doesNotMatch(t, /Confirmed by you|verified payment|Paid — ready to ship/);
+  const t = await page(s); assert.match(t, /Recorded sales/); assert.match(t, />Grailedside</); assert.match(t, /Not confirmed/); assert.doesNotMatch(t, /Confirmed by you|verified payment|Paid — ready to ship/);
   assert.equal((await listing(id)).status, 'sold'); assert.equal((await (await H.newUser('Late')).post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).status, 409, 'unavailable for purchase immediately');
 });
 
@@ -75,18 +75,18 @@ test('payment stays unconfirmed until the seller explicitly attests it; it is ne
   const x = await sale(id); assert.equal(x.payment_status, 'unconfirmed'); assert.match((await s.get(`/dashboard/sales/${x.id}`)).text, /Not confirmed/);
   assert.equal((await s.post(`/api/seller/sales/${x.id}/confirm-payment`)).status, 200); assert.equal((await s.post(`/api/seller/sales/${x.id}/confirm-payment`)).json.alreadyConfirmed, true);
   const y = await sale(id); assert.equal(y.payment_status, 'confirmed_by_seller'); assert.ok(y.payment_confirmed_at);
-  const d = (await s.get(`/dashboard/sales/${x.id}`)).text; assert.match(d, /Confirmed by you · not verified by PairPlug/); assert.doesNotMatch(d, /verified by PairPlug automatically|PairPlug verified/);
+  const d = (await s.get(`/dashboard/sales/${x.id}`)).text; assert.match(d, /Confirmed by you · not verified by Grailedside/); assert.doesNotMatch(d, /verified by Grailedside automatically|Grailedside verified/);
   assert.equal((await q.get("SELECT COUNT(*) n FROM sale_events WHERE sale_id = ? AND action = 'payment_confirmed_by_seller'", x.id)).n, 1);
   const b = await seller('Attested at record'); await rec(b.s, b.id, { origin: 'in_person', fulfillment: 'pickup', payment_status: 'confirmed_by_seller' }); assert.equal((await sale(b.id)).payment_status, 'confirmed_by_seller');
 });
 
-test('genuine PairPlug checkout orders keep their own workflow: no duplicate sale record, and a recorded sale never marks anything paid', async () => {
+test('genuine Grailedside checkout orders keep their own workflow: no duplicate sale record, and a recorded sale never marks anything paid', async () => {
   const { s, id } = await seller('Checkout hoodie'), buyer = await H.newUser('Real Buyer');
   const o = (await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address })).json.orderId;
   assert.equal((await rec(s, id, { origin: 'pairplug', fulfillment: 'pickup' })).status, 409, 'a reserved item cannot be recorded');
   assert.equal((await q.get('SELECT status FROM orders WHERE id = ?', o)).status, 'pending_payment');
-  await s.post(`/api/seller/orders/${o}/confirm-payment`); const dup = await rec(s, id, { origin: 'pairplug', fulfillment: 'pickup' }); assert.equal(dup.status, 409); assert.match(dup.json.error, /already has a PairPlug order/);
-  assert.equal((await q.get('SELECT COUNT(*) n FROM external_sales WHERE listing_id = ?', id)).n, 0); assert.match((await s.get(`/dashboard/listings/${id}/record-sale`)).text, /already has a PairPlug order/);
+  await s.post(`/api/seller/orders/${o}/confirm-payment`); const dup = await rec(s, id, { origin: 'pairplug', fulfillment: 'pickup' }); assert.equal(dup.status, 409); assert.match(dup.json.error, /already has a Grailedside order/);
+  assert.equal((await q.get('SELECT COUNT(*) n FROM external_sales WHERE listing_id = ?', id)).n, 0); assert.match((await s.get(`/dashboard/listings/${id}/record-sale`)).text, /already has a Grailedside order/);
   const t = await page(s); assert.match(t, /Paid — ready to ship/); assert.doesNotMatch(t, /Sold items with no sales record/);
   const x = await seller('Recorded only'), ordersBefore = (await q.get("SELECT COUNT(*) n FROM orders WHERE status = 'paid'")).n; await rec(x.s, x.id, { origin: 'pairplug', fulfillment: 'pickup', payment_status: 'confirmed_by_seller' });
   assert.equal((await q.get("SELECT COUNT(*) n FROM orders WHERE status = 'paid'")).n, ordersBefore, 'recording never creates or pays an order');

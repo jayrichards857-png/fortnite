@@ -70,7 +70,7 @@ module.exports = {
   publicUrl: env.PUBLIC_URL || `http://localhost:${env.PORT || 3000}`,
   // Platform defaults. Admins can override fees at runtime (settings table).
   defaults: {
-    fee_bps_standard: 0, // PairPlug takes 0% commission (listing is free). Enforced in getSettings(); the fee engine stays so historic orders still read correctly.
+    fee_bps_standard: 0, // Grailedside takes 0% commission (listing is free). Enforced in getSettings(); the fee engine stays so historic orders still read correctly.
     fee_bps_pro: 0,
     processing_bps: 290, // 2.9% estimated card processing, passed through to seller
     processing_fixed_cents: 30, // + $0.30
@@ -82,9 +82,9 @@ module.exports = {
     external_claim_hold_hours: 72, // extended hold once the buyer says they've paid, so the seller can verify
   },
   // --- Private-beta model ---------------------------------------------------------------------------------
-  // 'external': the seller is paid directly through THEIR OWN payment link (Stripe Payment Link). PairPlug never holds or
+  // 'external': the seller is paid directly through THEIR OWN payment link (Stripe Payment Link). Grailedside never holds or
   //             moves buyer money: no escrow, wallet credit, fees or provider refunds for new orders.
-  // 'platform': the original cart + PairPlug-held escrow flow (kept for history/tests; needs a payment provider).
+  // 'platform': the original cart + Grailedside-held escrow flow (kept for history/tests; needs a payment provider).
   checkoutMode: modeRaw === 'platform' ? 'platform' : 'external',
   // Only HTTPS links on these exact hostnames may be saved as a seller checkout link. Extend deliberately, one host at a time.
   paymentLinkHosts: String(env.PAYMENT_LINK_HOSTS || 'buy.stripe.com').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),

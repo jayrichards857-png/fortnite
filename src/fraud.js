@@ -1,6 +1,6 @@
 'use strict';
-// Scam-report tooling for the operator. PairPlug moves no money and has NO provider integration, so nothing here can freeze, hold, reverse or refund
-// funds in a seller's Stripe/PayPal account. What it can do is act on PairPlug itself (restrict selling, pause listings, suspend), keep an auditable
+// Scam-report tooling for the operator. Grailedside moves no money and has NO provider integration, so nothing here can freeze, hold, reverse or refund
+// funds in a seller's Stripe/PayPal account. What it can do is act on Grailedside itself (restrict selling, pause listings, suspend), keep an auditable
 // evidence trail, and prepare a factual packet the operator submits to the payment provider BY HAND (and then records that they did).
 const config = require('./config');
 const { q, tx, now } = require('./db');
@@ -20,14 +20,14 @@ const CATEGORIES = {
 };
 const category = (v) => { if (v === undefined || v === null || v === '') return 'suspected_scam'; if (!Object.hasOwn(CATEGORIES, v)) throw new HttpError(422, 'Please fix the highlighted fields.', { category: 'Choose what happened.' }); return v; };
 
-/** Is selling currently blocked for this seller by PairPlug (restriction or suspension)? Account restrictions are not financial holds. */
+/** Is selling currently blocked for this seller by Grailedside (restriction or suspension)? Account restrictions are not financial holds. */
 const sellerHeld = async (sellerId) => { const u = await q.get('SELECT banned, selling_restricted_at r FROM users WHERE id = ?', Number(sellerId)); return Boolean(u && (u.banned || u.r)); };
 
-/** Buyers with an unconfirmed order from this seller are warned, because the payment link itself is outside PairPlug and keeps working. */
+/** Buyers with an unconfirmed order from this seller are warned, because the payment link itself is outside Grailedside and keeps working. */
 async function warnPendingBuyers(sellerId, why) {
   let n = 0;
   for (const o of await q.all("SELECT id, buyer_id FROM orders WHERE seller_id = ? AND payment_mode = 'external' AND status = 'pending_payment'", sellerId)) {
-    await notify(o.buyer_id, `order:${o.id}:seller-held`, 'Please do not pay for this order yet', `Order #${o.id}: PairPlug is reviewing a report about this seller (${why}). If you already paid, keep your receipt and contact your payment provider if needed.`, `/orders/${o.id}`); n++;
+    await notify(o.buyer_id, `order:${o.id}:seller-held`, 'Please do not pay for this order yet', `Order #${o.id}: Grailedside is reviewing a report about this seller (${why}). If you already paid, keep your receipt and contact your payment provider if needed.`, `/orders/${o.id}`); n++;
   }
   return n;
 }
@@ -69,26 +69,26 @@ async function buildPacket(caseRow, provider, host) {
   const orders = caseRow.order_id ? await q.all('SELECT * FROM orders WHERE id = ?', caseRow.order_id) : await q.all("SELECT * FROM orders WHERE seller_id = ? AND payment_mode = 'external' AND status <> 'cancelled' ORDER BY id DESC LIMIT 20", caseRow.subject_user_id);
   const events = await q.all('SELECT e.*, u.display_name FROM case_events e JOIN users u ON u.id = e.actor_id WHERE e.case_id = ? AND e.internal = 0 ORDER BY e.id', caseRow.id);
   const L = [];
-  L.push(`PairPlug report of suspected fraud — case #${caseRow.id}`, `Prepared ${ts(now())} for ${PROVIDER_NAME[provider]}${host ? ` (seller's payment link host: ${host})` : ''}`, '',
-    'WHAT THIS IS: a report from PairPlug, an online marketplace. PairPlug does not process, hold or see these payments; the payments were made through the seller\'s own payment link.',
-    'Statements below are labelled by who made them. PairPlug has NOT independently verified any payment, shipment or delivery.', '',
-    `SELLER (PairPlug account): ${subject.store_name || subject.handle} (@${subject.handle}), PairPlug account created ${ts(subject.created_at)}`,
+  L.push(`Grailedside report of suspected fraud — case #${caseRow.id}`, `Prepared ${ts(now())} for ${PROVIDER_NAME[provider]}${host ? ` (seller's payment link host: ${host})` : ''}`, '',
+    'WHAT THIS IS: a report from Grailedside, an online marketplace. Grailedside does not process, hold or see these payments; the payments were made through the seller\'s own payment link.',
+    'Statements below are labelled by who made them. Grailedside has NOT independently verified any payment, shipment or delivery.', '',
+    `SELLER (Grailedside account): ${subject.store_name || subject.handle} (@${subject.handle}), Grailedside account created ${ts(subject.created_at)}`,
     `REPORTER: ${reporter.display_name} (buyer)  ·  report category (reporter's choice): ${CATEGORIES[caseRow.category || 'suspected_scam']}  ·  opened ${ts(caseRow.created_at)}`, '');
   if (orders.length) {
     L.push('ORDERS (reference shown to the buyer as "PP-<number>" on the payment link):');
     for (const o of orders) {
       const claim = o.buyer_claimed_paid_at ? `buyer said they paid ${ts(o.buyer_claimed_paid_at)}` : 'buyer has not said they paid';
       const conf = o.payment_confirmed_at ? `seller said payment received ${ts(o.payment_confirmed_at)} (seller statement, unverified)` : 'seller has not confirmed payment';
-      L.push(`  - PP-${o.id}: ${usd(o.total_cents)}, created ${ts(o.created_at)}, PairPlug status "${o.status}"; ${claim}; ${conf}${o.tracking_number ? `; seller-entered tracking ${o.carrier || ''} ${o.tracking_number}` : '; no tracking entered'}`);
+      L.push(`  - PP-${o.id}: ${usd(o.total_cents)}, created ${ts(o.created_at)}, Grailedside status "${o.status}"; ${claim}; ${conf}${o.tracking_number ? `; seller-entered tracking ${o.carrier || ''} ${o.tracking_number}` : '; no tracking entered'}`);
     }
     L.push('');
   }
-  L.push('TIMELINE (as written by each party; internal PairPlug notes are not included):');
-  for (const e of events) L.push(`  [${ts(e.created_at)}] ${e.actor_role === 'admin' ? 'PairPlug support' : `${e.display_name} (${e.actor_role})`} — ${e.kind}${e.image ? `: photo attached (file ${e.image})` : e.body ? `: ${String(e.body).replace(/\s+/g, ' ').slice(0, 1000)}` : ''}`);
+  L.push('TIMELINE (as written by each party; internal Grailedside notes are not included):');
+  for (const e of events) L.push(`  [${ts(e.created_at)}] ${e.actor_role === 'admin' ? 'Grailedside support' : `${e.display_name} (${e.actor_role})`} — ${e.kind}${e.image ? `: photo attached (file ${e.image})` : e.body ? `: ${String(e.body).replace(/\s+/g, ' ').slice(0, 1000)}` : ''}`);
   const other = (await q.get("SELECT COUNT(DISTINCT reporter_id) n FROM cases WHERE subject_user_id = ? AND kind <> 'message_report' AND id <> ?", caseRow.subject_user_id, caseRow.id)).n;
-  L.push('', `OTHER REPORTS: ${other} other buyer(s) have reported this seller to PairPlug (counts only; not verified findings).`,
-    'PAIRPLUG ACTIONS TO DATE: see the timeline; account restrictions are PairPlug-side only and do not affect any payment account.',
-    'Evidence photos are held by PairPlug and can be supplied on request through the channel you use.');
+  L.push('', `OTHER REPORTS: ${other} other buyer(s) have reported this seller to Grailedside (counts only; not verified findings).`,
+    'GRAILEDSIDE ACTIONS TO DATE: see the timeline; account restrictions are Grailedside-side only and do not affect any payment account.',
+    'Evidence photos are held by Grailedside and can be supplied on request through the channel you use.');
   return L.join('\n');
 }
 
@@ -109,14 +109,14 @@ async function preparePacket(admin, caseRow, provider, host) {
     return Number(id);
   });
 }
-/** The operator records that THEY submitted the packet through the provider's own channel. PairPlug did not send anything. */
+/** The operator records that THEY submitted the packet through the provider's own channel. Grailedside did not send anything. */
 async function markSubmitted(admin, id, { channel, reference, note }) {
   const ch = clean(channel, 120); if (ch.length < 3) throw new HttpError(422, 'Please fix the highlighted fields.', { channel: 'Say how you submitted it (for example the provider\'s abuse/fraud report form or support email).' });
   return await tx(async () => {
     const p = await q.get('SELECT * FROM processor_reports WHERE id = ?', Number(id)); if (!p) throw new HttpError(404, 'Packet not found');
     if (p.status !== 'prepared') throw new HttpError(409, 'This packet was already recorded as submitted.');
     await q.run("UPDATE processor_reports SET status = 'submitted', submitted_by = ?, submitted_at = ?, channel = ?, reference = ?, note = ? WHERE id = ?", admin.id, now(), ch, clean(reference, 120) || null, clean(note, 500) || null, p.id);
-    await q.run("INSERT INTO case_events(case_id, actor_id, actor_role, kind, body, internal, created_at) VALUES(?,?,?,?,?,1,?)", p.case_id, admin.id, 'admin', 'action', `Operator recorded submitting packet #${p.id} to ${PROVIDER_NAME[p.provider]} via "${ch}"${reference ? ` (their reference: ${clean(reference, 120)})` : ''}. PairPlug did not send it automatically and cannot see the provider's response.`, now());
+    await q.run("INSERT INTO case_events(case_id, actor_id, actor_role, kind, body, internal, created_at) VALUES(?,?,?,?,?,1,?)", p.case_id, admin.id, 'admin', 'action', `Operator recorded submitting packet #${p.id} to ${PROVIDER_NAME[p.provider]} via "${ch}"${reference ? ` (their reference: ${clean(reference, 120)})` : ''}. Grailedside did not send it automatically and cannot see the provider's response.`, now());
     await audit(admin, 'processor_packet_submitted', { type: 'case', id: p.case_id, detail: { packet: p.id, provider: p.provider } });
   });
 }
@@ -135,7 +135,7 @@ async function preserveOrderRecord(caseId, orderId) {
       buyer_said_paid_at: ts(o.buyer_claimed_paid_at), seller_said_payment_received_at: ts(o.payment_confirmed_at), payment_reference_entered_by_seller: o.payment_reference || null, payment_independently_verified: false,
       carrier_entered_by_seller: o.carrier || null, tracking_entered_by_seller: o.tracking_number || null, shipped_at: ts(o.shipped_at), delivered_at: ts(o.delivered_at) },
     conversation: { messages: msgs.length, first_id: msgs[0]?.id || null, last_id: msgs.length ? msgs[msgs.length - 1].id : null, sha256: msgs.length ? h.digest('hex') : null },
-    note: 'Frozen when the order was reported. Payment figures are what the parties stated; PairPlug has not verified any external payment.' }, null, 1);
+    note: 'Frozen when the order was reported. Payment figures are what the parties stated; Grailedside has not verified any external payment.' }, null, 1);
   await q.run('INSERT INTO case_records(case_id, kind, content, sha256, created_at) VALUES(?,?,?,?,?)', Number(caseId), 'order_snapshot', content, crypto.createHash('sha256').update(content).digest('hex'), now());
   return content;
 }

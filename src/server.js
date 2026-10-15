@@ -38,7 +38,7 @@ if (config.onVercel) {
   app.use((req, res, next) => {
     if (!problems) { problems = assertProductionConfig(); if (config.email.provider !== 'resend') console.warn('EMAIL_PROVIDER is not resend: verification/reset emails are only recorded in the admin Email outbox (/admin/outbox) and must be handed over manually.'); if (problems.length) console.error('Refusing to serve - fix these environment settings:\n - ' + problems.join('\n - ')); }
     if (!problems.length) return next();
-    res.status(503).type('text/plain').send('PairPlug is not configured for production yet. See the deployment logs.');
+    res.status(503).type('text/plain').send('Grailedside is not configured for production yet. See the deployment logs.');
   });
 }
 
@@ -107,7 +107,7 @@ app.use(require('./routes/discovery').router);   // seller discovery + following
 app.use(require('./routes/support').router);  // cases, refunds, reports, admin case tools
 app.use(require('./routes/direct').router);   // direct (seller-owned) checkout; must precede the legacy routers
 app.use(require('./routes/buyer').router);
-app.use(require('./routes/externalSales').router);   // seller's own records of sales made outside PairPlug
+app.use(require('./routes/externalSales').router);   // seller's own records of sales made outside Grailedside
 app.use(require('./routes/seller').router);
 app.use(require('./routes/admin').router);
 app.use(require('./routes/adminBeta').router);
@@ -179,13 +179,13 @@ if (require.main === module) {
     const problems = assertProductionConfig();
     if (problems.length) { console.error('Refusing to start:\n - ' + problems.join('\n - ')); process.exit(1); }
   }
-  if (config.supportEmailOverridden) console.warn(`NOTE: SUPPORT_EMAIL is set to ${config.supportEmail}, which overrides the official PairPlug address (${config.officialSupportEmail}). Make sure that is intended.`);
+  if (config.supportEmailOverridden) console.warn(`NOTE: SUPPORT_EMAIL is set to ${config.supportEmail}, which overrides the official Grailedside address (${config.officialSupportEmail}). Make sure that is intended.`);
   dbReady().then(() => {
   const server = createServer();
   server.listen(config.port, config.host, async () => {
     try { await startJobs(); } catch (e) { console.error('startup jobs failed', e); process.exit(1); }
     const p = payments.getProvider();
-    console.log(`PairPlug listening on ${config.publicUrl} [bound to ${config.host}:${config.port}]  (checkout: ${config.checkoutMode}${config.checkoutMode === 'platform' ? `, payments: ${p ? p.name : 'DISABLED'}` : ', sellers are paid directly'})`);
+    console.log(`Grailedside listening on ${config.publicUrl} [bound to ${config.host}:${config.port}]  (checkout: ${config.checkoutMode}${config.checkoutMode === 'platform' ? `, payments: ${p ? p.name : 'DISABLED'}` : ', sellers are paid directly'})`);
   });
   }, (e) => { console.error('Cannot start: ' + e.message); process.exit(1); });
 }

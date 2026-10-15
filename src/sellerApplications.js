@@ -93,7 +93,7 @@ async function approve(admin, id) {
     await q.run('UPDATE users SET is_seller = 1, store_name = ?, handle = ?, country = ?, region = ?, city = ?, bio = ? WHERE id = ? AND is_seller = 0', store.store, store.handle, store.country, store.region, store.city, store.bio, a.user_id);
     await q.run("UPDATE seller_applications SET status = 'approved', decided_by = ?, decided_at = ? WHERE id = ?", admin.id, now(), a.id);
     await audit(admin, 'seller_application_approved', { type: 'seller_application', id: a.id, detail: { user: a.user_id, handle: store.handle } });
-    await notify(a.user_id, `seller-app:${a.id}:approved`, 'You can sell on PairPlug', 'Your seller request was approved. Open your seller dashboard to list your first item. Listing is free.', '/dashboard');
+    await notify(a.user_id, `seller-app:${a.id}:approved`, 'You can sell on Grailedside', 'Your seller request was approved. Open your seller dashboard to list your first item. Listing is free.', '/dashboard');
   });
 }
 

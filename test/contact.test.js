@@ -44,12 +44,12 @@ test('no page leaks template syntax, [object Object], undefined or NaN (public, 
 
 test('the Contact page: email, Email us (mailto), Open Gmail (encoded compose URL), plain address for any client, shopping link', async () => {
   const anon = new H.Client(), r = await anon.get('/contact'); assert.equal(r.status, 200); const html = r.text;
-  assert.match(html, /<h1>Contact PairPlug<\/h1>/); assert.match(html, /account access, orders, seller issues, scam and safety reports/);
-  assert.match(html, new RegExp(`<a class="btn" href="mailto:${EMAIL}\\?subject=PairPlug%20Support">Email us</a>`));
-  assert.match(html, new RegExp(`<a href="mailto:${EMAIL}\\?subject=PairPlug%20Support">${EMAIL}</a>`), 'the address itself is a normal clickable link');
+  assert.match(html, /<h1>Contact Grailedside<\/h1>/); assert.match(html, /account access, orders, seller issues, scam and safety reports/);
+  assert.match(html, new RegExp(`<a class="btn" href="mailto:${EMAIL}\\?subject=Grailedside%20Support">Email us</a>`));
+  assert.match(html, new RegExp(`<a href="mailto:${EMAIL}\\?subject=Grailedside%20Support">${EMAIL}</a>`), 'the address itself is a normal clickable link');
   const gmail = html.match(/href="(https:\/\/mail\.google\.com[^"]+)"[^>]*>Open Gmail/)[1].replaceAll('&amp;', '&'); const u = new URL(gmail);
-  assert.equal(u.origin + u.pathname, 'https://mail.google.com/mail/'); assert.equal(u.searchParams.get('view'), 'cm'); assert.equal(u.searchParams.get('fs'), '1'); assert.equal(u.searchParams.get('to'), EMAIL); assert.equal(u.searchParams.get('su'), 'PairPlug Support');
-  assert.match(gmail, /to=pairplugservice%40gmail\.com/, 'the @ is URL-encoded'); assert.match(gmail, /su=PairPlug%20Support/);
+  assert.equal(u.origin + u.pathname, 'https://mail.google.com/mail/'); assert.equal(u.searchParams.get('view'), 'cm'); assert.equal(u.searchParams.get('fs'), '1'); assert.equal(u.searchParams.get('to'), EMAIL); assert.equal(u.searchParams.get('su'), 'Grailedside Support');
+  assert.match(gmail, /to=pairplugservice%40gmail\.com/, 'the @ is URL-encoded'); assert.match(gmail, /su=Grailedside%20Support/);
   assert.match(html, /target="_blank" rel="noopener noreferrer"[^>]*>Open Gmail|rel="noopener noreferrer"[^>]*target="_blank"|target="_blank"[^>]*rel="noopener noreferrer"/);
   assert.match(html, /Don't use either of those\? Copy the address/); assert.match(html, /class="email-copy">pairplugservice@gmail\.com</, 'works without a configured email app: the address is plain text too');
   assert.match(html, /href="\/shop"[^>]*>← Back to shopping/); assert.match(html, /only open an email draft/); assert.match(html, /does not create a case or ticket automatically/); assert.doesNotMatch(html, /we (have )?sent|message sent|thank you for contacting/i);

@@ -61,6 +61,6 @@ class PricingEngine {
 }
 
 /** The one place the "free listing / 0% commission" wording lives. Stripe's processing fee is the seller's own cost and is never described as free. */
-const FREE_LISTING = 'Listing on PairPlug is free and PairPlug takes 0% commission. Buyers pay you directly through your own Stripe checkout link; Stripe may charge you its own processing fees.';
+const FREE_LISTING = 'Listing on Grailedside is free and Grailedside takes 0% commission. Buyers pay you directly through your own Stripe checkout link; Stripe may charge you its own processing fees.';
 
 module.exports = { PricingEngine, isLocalShip, pct, FREE_LISTING };

@@ -50,7 +50,7 @@ const stripe = {
       'line_items[0][quantity]': '1',
       'line_items[0][price_data][currency]': 'usd',
       'line_items[0][price_data][unit_amount]': String(checkout.total_cents),
-      'line_items[0][price_data][product_data][name]': `PairPlug order #${checkout.id}`,
+      'line_items[0][price_data][product_data][name]': `Grailedside order #${checkout.id}`,
       client_reference_id: String(checkout.id),
       'metadata[checkout_id]': String(checkout.id),
       success_url: `${config.publicUrl}/checkout/${checkout.id}`,

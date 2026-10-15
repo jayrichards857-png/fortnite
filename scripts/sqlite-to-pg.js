@@ -1,5 +1,5 @@
 'use strict';
-// One-off, repeatable import of a PairPlug SQLite database (from the node:sqlite era) into PostgreSQL.
+// One-off, repeatable import of a Grailedside SQLite database (from the node:sqlite era) into PostgreSQL.
 //
 //   node scripts/sqlite-to-pg.js --source <sqlite file> --target <postgres url> [--uploads <dir>] [--report <file.json>]
 //                                [--dry-run] [--replace --confirm-erase <target database name>]
@@ -119,7 +119,7 @@ async function importSqlite({ source, target, uploadDir, replace = false, confir
     let version = src.prepare('PRAGMA user_version').get().user_version;
     report.sourceSchemaVersion = version;
     if (version > LEGACY.length) throw new Error(`source schema v${version} is newer than this tool understands (v${LEGACY.length})`);
-    if (version < 1) throw new Error('source has no PairPlug schema (user_version 0)');
+    if (version < 1) throw new Error('source has no Grailedside schema (user_version 0)');
     if (version < LEGACY.length) {                                   // upgrade the PRIVATE COPY with the frozen additive migrations
       report.upgradedCopyFrom = version; log(`source is schema v${version}; upgrading the private copy to v${LEGACY.length}`);
       for (; version < LEGACY.length; version++) { src.exec('BEGIN'); try { src.exec(LEGACY[version]); src.exec(`PRAGMA user_version = ${version + 1}`); src.exec('COMMIT'); } catch (e) { src.exec('ROLLBACK'); throw e; } }

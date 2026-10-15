@@ -1,9 +1,9 @@
 'use strict';
-// Moderator provisioning for the operator, on the machine that runs PairPlug (reads the same database as the server).
+// Moderator provisioning for the operator, on the machine that runs Grailedside (reads the same database as the server).
 //   node scripts/moderator.js status                              slots used, active moderators, setup links (emails only)
 //   node scripts/moderator.js invite --email person@example.com   create ONE individual, single-use setup link (72 h) and print it once
 //   node scripts/moderator.js revoke --id 3                       revoke an unused setup link
-// The link is the only secret: PairPlug stores just its SHA-256, nothing is emailed, there is no shared password, and the person chooses their own.
+// The link is the only secret: Grailedside stores just its SHA-256, nothing is emailed, there is no shared password, and the person chooses their own.
 // Capacity is five slots in total (active moderators + unused links); the database refuses a sixth. Administrators can do the same from /admin/moderators.
 const M = require('../src/moderation');
 const { q, now } = require('../src/db');

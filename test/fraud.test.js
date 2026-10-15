@@ -1,5 +1,5 @@
 'use strict';
-// Scam reporting: evidence, duplicate prevention, operator tools, restriction (a PairPlug-side measure only), provider packets, and honest payment states.
+// Scam reporting: evidence, duplicate prevention, operator tools, restriction (a Grailedside-side measure only), provider packets, and honest payment states.
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,7 +30,7 @@ test('order reports: only for orders the buyer engaged with; evidence persists; 
   const reason = 'I paid through the link but the seller will not answer.';
   let r = await buyer.post('/api/cases/order', { orderId, reason }); assert.equal(r.status, 409, 'nothing to report before the buyer has opened the payment link or said they paid');
   assert.equal((await buyer.get(`/orders/${orderId}/pay`)).status, 302, 'buyer opens the seller\'s external link');
-  assert.match(await get(buyer, `/orders/${orderId}`), /Report a problem to PairPlug support/, 'the report form is offered on an unconfirmed order');
+  assert.match(await get(buyer, `/orders/${orderId}`), /Report a problem to Grailedside support/, 'the report form is offered on an unconfirmed order');
   const shot = await H.upload(buyer);
   assert.equal((await buyer.post('/api/cases/order', { orderId, reason, category: 'bogus' })).status, 422);
   r = await buyer.post('/api/cases/order', { orderId, reason, category: 'payment_not_confirmed', evidence_json: JSON.stringify([shot]) }); assert.equal(r.status, 200, r.text);
@@ -69,11 +69,11 @@ test('seller reports: evidence, category, optional own order, duplicate preventi
   r = await buyer2.post('/api/cases/seller', { handle, reason: 'Same thing happened to me, never shipped.', category: 'suspected_scam' }); assert.equal(r.status, 200);
   const rep = (await F.repeatReported()).find((s) => s.handle === handle); assert.equal(rep.reporters, 2); assert.equal(rep.open, 2);
   assert.match(await get(adm, '/admin/risk'), new RegExp('@' + handle)); assert.equal((await buyer.get('/admin/risk')).status === 200, false, 'operator-only');
-  const page = await get(adm, `/admin/cases/${c1.id}`); assert.match(page, /<strong>2<\/strong> different buyer\(s\) have reported/); assert.match(page, /PairPlug has not verified any of these payments/); assert.match(page, /Counts of reports, not findings/);
+  const page = await get(adm, `/admin/cases/${c1.id}`); assert.match(page, /<strong>2<\/strong> different buyer\(s\) have reported/); assert.match(page, /Grailedside has not verified any of these payments/); assert.match(page, /Counts of reports, not findings/);
   assert.match(page, /reporter says: I paid and never received/);
 });
 
-test('restricting selling is a PairPlug-side measure: blocks publishing, new orders and the payment redirect, hides the store, warns buyers, is reversible and audited', async () => {
+test('restricting selling is a Grailedside-side measure: blocks publishing, new orders and the payment redirect, hides the store, warns buyers, is reversible and audited', async () => {
   const { seller, buyer, id, orderId } = await scene('Restrict'), adm = await admin(), cust = await H.newUser('Cust');
   const spare = await H.makeListing(seller, { payment_url: LINK, title: 'Second item' });
   await cust.post('/api/sellers/' + seller.handle + '/follow');
@@ -134,7 +134,7 @@ test('payment-provider packet: factual, labelled by who said what, no internal n
   assert.doesNotMatch(t, /INTERNAL-SECRET-NOTE/); assert.doesNotMatch(t, new RegExp(H.address.line1)); assert.doesNotMatch(t, new RegExp(buyer.email.replace(/[.+]/g, '\\$&'))); assert.doesNotMatch(t, new RegExp(seller.email.replace(/[.+]/g, '\\$&')));
   assert.doesNotMatch(t, /verified payment|payment verified/i);
   assert.equal((await buyer.get(`/admin/processor-packets/${pid}`)).status >= 400, true);
-  // recording submission needs a channel; PairPlug sends nothing itself
+  // recording submission needs a channel; Grailedside sends nothing itself
   assert.equal((await adm.post(`/api/admin/processor-packets/${pid}/submitted`, { channel: '' })).status, 422);
   assert.equal((await adm.post(`/api/admin/processor-packets/${pid}/submitted`, { channel: 'Stripe fraud report form', reference: 'ST-123' })).status, 200);
   const row = await q.get('SELECT * FROM processor_reports WHERE id = ?', pid); assert.equal(row.status, 'submitted'); assert.equal(row.reference, 'ST-123'); assert.ok(row.submitted_at);
@@ -144,7 +144,7 @@ test('payment-provider packet: factual, labelled by who said what, no internal n
   await buyer.post(`/api/cases/${cid}/respond`, { body: 'Seller still has not answered after two more days.' });
   assert.equal((await adm.post(`/api/admin/cases/${cid}/processor-packet`, { provider: 'stripe' })).status, 200, 'new evidence allows a follow-up packet');
   assert.ok(await q.get("SELECT 1 x FROM case_events WHERE case_id = ? AND internal = 1 AND body LIKE '%did not send it automatically%'", cid));
-  assert.ok(await q.get("SELECT 1 x FROM audit_log WHERE action = 'processor_packet_submitted'")); assert.match(await get(adm, `/admin/cases/${cid}`), /PairPlug has no integration with Stripe or PayPal/);
+  assert.ok(await q.get("SELECT 1 x FROM audit_log WHERE action = 'processor_packet_submitted'")); assert.match(await get(adm, `/admin/cases/${cid}`), /Grailedside has no integration with Stripe or PayPal/);
   // still nothing about the payment changed
   const o = await order(orderId); assert.equal(o.status, 'pending_payment'); assert.equal(o.payment_confirmed_at, null);
   assert.ok(o.buyer_claimed_paid_at, 'the buyer\'s claim is recorded as a claim');
@@ -157,20 +157,20 @@ test('only the seller can confirm payment; their confirmation stays labelled as 
   assert.equal((await seller.post(`/api/seller/orders/${orderId}/confirm-payment`, { reference: 'abc123' })).status, 200);
   const o = await order(orderId); assert.equal(o.status, 'paid'); assert.equal(o.payment_confirmed_by, (await q.get('SELECT id FROM users WHERE handle = ?', seller.handle)).id);
   const cid = (await buyer.post('/api/cases/order', { orderId, reason: 'Item never arrived after weeks.', category: 'non_delivery' })).json.id;
-  const view = await get(adm, `/admin/cases/${cid}`); assert.match(view, /the seller says were paid/); assert.match(view, /PairPlug has not verified/);
+  const view = await get(adm, `/admin/cases/${cid}`); assert.match(view, /the seller says were paid/); assert.match(view, /Grailedside has not verified/);
   assert.match(await get(buyer, `/orders/${orderId}`), /Payment confirmed/i);
 });
 
 test('legal and help pages describe the real scam-reporting role and its limits, without overpromising', async () => {
   const anon = new H.Client(), pages = {}; for (const p of ['/terms', '/privacy', '/payments', '/rules', '/support']) pages[p] = (await get(anon, p)).replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
   const all = Object.values(pages).join(' ');
-  assert.match(pages['/payments'], /PairPlug accepts and investigates reports/); assert.match(pages['/payments'], /restrict a seller's ability to sell/); assert.match(pages['/payments'], /report to payment providers|send the relevant payment provider a factual report/i);
+  assert.match(pages['/payments'], /Grailedside accepts and investigates reports/); assert.match(pages['/payments'], /restrict a seller's ability to sell/); assert.match(pages['/payments'], /report to payment providers|send the relevant payment provider a factual report/i);
   assert.match(pages['/payments'], /cannot freeze, hold, reverse or refund money/); assert.match(pages['/payments'], /not a financial hold/); assert.match(pages['/payments'], /contact your payment provider or card issuer/i);
   assert.match(pages['/payments'], /no guaranteed response time/i); assert.match(pages['/payments'], /no buyer-protection programme or insurance/i); assert.match(pages['/payments'], /not automatic/i);
   assert.match(pages['/terms'], /report it/i); assert.match(pages['/rules'], /restrict selling while we investigate/); assert.match(pages['/privacy'], /Payment providers \(fraud reports\)/); assert.match(pages['/privacy'], /not told who reported them|not told who reported/i);
   assert.match(pages['/support'], /Suspect a scam\? Report it/); assert.match(pages['/support'], /does not currently hold or directly control those funds/);
-  assert.doesNotMatch(all, /we (will )?(freeze|recover|reverse) (your|the) (money|funds|payment)/i); assert.doesNotMatch(all, /guarantee[sd]? (a )?refund|you will be refunded|within \d+ (hours|days) we will|insured|covered by PairPlug/i);
-  assert.doesNotMatch(all, /PairPlug (does not|doesn't) (investigate|review) (reports|scams)|no role in (resolving )?(disputes|scams)/i);
+  assert.doesNotMatch(all, /we (will )?(freeze|recover|reverse) (your|the) (money|funds|payment)/i); assert.doesNotMatch(all, /guarantee[sd]? (a )?refund|you will be refunded|within \d+ (hours|days) we will|insured|covered by Grailedside/i);
+  assert.doesNotMatch(all, /Grailedside (does not|doesn't) (investigate|review) (reports|scams)|no role in (resolving )?(disputes|scams)/i);
 });
 
 test('migration 12 is additive: older cases and users survive with NULL restriction/category', async () => {

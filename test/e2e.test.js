@@ -127,7 +127,7 @@ test('bulk actions: validated server-side; sold items protected; sold cannot be 
   assert.equal(r.json.updated, 0); assert.match(r.json.skipped[0].reason, /sold/);
 });
 
-test('full buyer journey + escrow: checkout → paid → shipped → delivered → released, with 0% PairPlug commission', async () => {
+test('full buyer journey + escrow: checkout → paid → shipped → delivered → released, with 0% Grailedside commission', async () => {
   const s = await H.newSeller('Escrow'), buyer = await H.newUser('Buyer');
   const id = await H.makeListing(s, { price: '100.00', shipping: '8.00', cost: '40.00' });
   assert.equal((await buyer.post('/api/cart', { listingId: id })).status, 200);
@@ -135,7 +135,7 @@ test('full buyer journey + escrow: checkout → paid → shipped → delivered �
   const ck = await H.checkout(buyer); assert.equal(ck.status, 200);
   const o = await q.get('SELECT * FROM orders WHERE checkout_id = ?', ck.json.checkoutId);
   assert.equal(o.status, 'pending_payment');
-  assert.equal(o.total_cents, 10800); assert.equal(o.platform_fee_cents, 0, 'PairPlug takes no commission');
+  assert.equal(o.total_cents, 10800); assert.equal(o.platform_fee_cents, 0, 'Grailedside takes no commission');
   assert.equal(o.seller_payout_cents, 10800 - o.processing_fee_cents, 'payout is only reduced by the processor fee estimate');
   assert.equal((await q.get('SELECT status FROM listings WHERE id = ?', id)).status, 'reserved');
   // reserved items can't be added by others
@@ -306,7 +306,7 @@ test('disputes: evidence from both sides, admin resolves; refund and release pat
   assert.equal((await order(o2.id)).status, 'released'); assert.equal((await bal(s.handle)).availableCents, o2.seller_payout_cents);
 });
 
-test('admin: ban removes sessions & listings; PairPlug commission cannot be raised (settings and old rows ignored); validation', async () => {
+test('admin: ban removes sessions & listings; Grailedside commission cannot be raised (settings and old rows ignored); validation', async () => {
   const admin = await H.newUser('Admin'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', admin.email);
   const s = await H.newSeller('Banned'); const id = await H.makeListing(s);
   const uid = (await q.get('SELECT id FROM users WHERE handle = ?', s.handle)).id;
@@ -320,7 +320,7 @@ test('admin: ban removes sessions & listings; PairPlug commission cannot be rais
   assert.equal((await require('../src/db').getSettings()).fee_bps_standard, 0);
   const s2 = await H.newSeller('Fee'), b = await H.newUser(); const id2 = await H.makeListing(s2, { price: '100.00', shipping: '0' });
   await b.post('/api/cart', { listingId: id2 }); const ck = await H.checkout(b);
-  assert.equal((await q.get('SELECT platform_fee_cents f FROM orders WHERE checkout_id = ?', ck.json.checkoutId)).f, 0, 'PairPlug commission is 0');
+  assert.equal((await q.get('SELECT platform_fee_cents f FROM orders WHERE checkout_id = ?', ck.json.checkoutId)).f, 0, 'Grailedside commission is 0');
   await admin.put('/api/admin/settings', { ...cur });
 });
 

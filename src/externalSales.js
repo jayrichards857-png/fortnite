@@ -1,10 +1,10 @@
 'use strict';
-// Recorded sales: the seller's own record of a sale that did NOT go through a PairPlug checkout order (the table keeps its original name, `external_sales`).
-// A sale can ORIGINATE from PairPlug even though the buyer paid through the seller's own Stripe/PayPal link, so "where did this sale originate?" is a field,
+// Recorded sales: the seller's own record of a sale that did NOT go through a Grailedside checkout order (the table keeps its original name, `external_sales`).
+// A sale can ORIGINATE from Grailedside even though the buyer paid through the seller's own Stripe/PayPal link, so "where did this sale originate?" is a field,
 // not an assumption. Principles:
-//   * It is NOT an order and PairPlug never verifies a payment: the seller may attest "payment confirmed by seller"; nothing says "verified".
-//   * No buyer account, checkout or notification is invented. PairPlug does not message or email the buyer about a recorded sale.
-//   * A listing with a genuine PairPlug order (anything but cancelled) can't get a sale record: the order is the record. One active record per listing.
+//   * It is NOT an order and Grailedside never verifies a payment: the seller may attest "payment confirmed by seller"; nothing says "verified".
+//   * No buyer account, checkout or notification is invented. Grailedside does not message or email the buyer about a recorded sale.
+//   * A listing with a genuine Grailedside order (anything but cancelled) can't get a sale record: the order is the record. One active record per listing.
 //   * Corrections and voids are logged in sale_events (append-only); a void never reopens the listing by itself (it is paused for the seller to resume).
 //   * Rows written before migration 9 keep origin = NULL ("earlier record") and are never relabelled.
 const config = require('./config');
@@ -13,7 +13,7 @@ const { HttpError, clean, cleanLine, dollarsToCents } = require('./util');
 const { rateLimit } = require('./auth');
 const { audit } = require('./audit');
 
-const ORIGINS = { pairplug: 'PairPlug', in_person: 'In person', other_marketplace: 'Another marketplace', social: 'Social media or direct message', other: 'Other' };
+const ORIGINS = { pairplug: 'Grailedside', in_person: 'In person', other_marketplace: 'Another marketplace', social: 'Social media or direct message', other: 'Other' };
 const POSTAL = { US: /^\d{5}(-\d{4})?$/, CA: /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/, MX: /^\d{5}$/ };
 const TRACKING_RE = /^[A-Za-z0-9-]{6,40}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -21,7 +21,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const day = (d) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d + 'T00:00:00Z')) ? d : null);
 const log = async (saleId, userId, action, detail) => await q.run('INSERT INTO sale_events(sale_id, actor_id, action, detail, created_at) VALUES(?,?,?,?,?)', saleId, userId, action, detail == null ? null : String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 1000), now());
 
-/** Does a genuine PairPlug order (anything except a cancelled one) exist for this listing? */
+/** Does a genuine Grailedside order (anything except a cancelled one) exist for this listing? */
 const hasOrder = async (listingId) => Boolean(await q.get("SELECT 1 x FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.listing_id = ? AND o.status <> 'cancelled'", listingId));
 const active = async (listingId) => await q.get('SELECT * FROM external_sales WHERE listing_id = ? AND voided_at IS NULL', listingId);
 
@@ -73,7 +73,7 @@ async function record(user, listingId, body = {}) {
     const l = await q.get('SELECT * FROM listings WHERE id = ? AND seller_id = ? FOR UPDATE', Number(listingId), user.id);      // lock: one sale record per item even if the button is hit twice
     if (!l) throw new HttpError(404, 'Listing not found');
     if (await active(l.id)) throw new HttpError(409, 'A sale is already recorded for this item. If you sold more units elsewhere, lower the quantity in the listing editor.');
-    if (l.quantity === 0 && await hasOrder(l.id)) throw new HttpError(409, 'This item already has a PairPlug order, which is its sale record. Confirm payment and ship from that order; recording it here would duplicate it.');
+    if (l.quantity === 0 && await hasOrder(l.id)) throw new HttpError(409, 'This item already has a Grailedside order, which is its sale record. Confirm payment and ship from that order; recording it here would duplicate it.');
     if (l.status === 'reserved') throw new HttpError(409, 'A buyer is checking out this item right now. Try again after their reservation ends.');
     if (!['active', 'sold'].includes(l.status)) throw new HttpError(409, 'Only items for sale (or already marked sold) can be recorded as sold.');
     const t = now();
@@ -81,7 +81,7 @@ async function record(user, listingId, body = {}) {
       recipient_name, recipient_line1, recipient_line2, recipient_city, recipient_region, recipient_postal, recipient_country, buyer_email) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?)`,
     l.id, user.id, d.sold_on, d.price, d.channel, d.reference, d.note, t, t, origin, payment, payment === 'confirmed_by_seller' ? t : null, fulfillment, fulfillment === 'ship' ? 'not_shipped' : 'not_applicable', ...recipientCols(rec), d.email);
     const id = r;
-    if (l.status === 'active') { await q.run('UPDATE listings SET quantity = GREATEST(0, quantity - 1) WHERE id = ?', l.id); await require('./inventory').sync(l.id); }       // one unit sold outside PairPlug; 'sold' only when none is left
+    if (l.status === 'active') { await q.run('UPDATE listings SET quantity = GREATEST(0, quantity - 1) WHERE id = ?', l.id); await require('./inventory').sync(l.id); }       // one unit sold outside Grailedside; 'sold' only when none is left
     await log(id, user.id, 'recorded', { origin, fulfillment, payment, was: l.status });
     await audit(user, 'sale_recorded', { type: 'listing', id: l.id, detail: { sale: id, origin, price_cents: d.price, was: l.status } });
     return { id, status: 'sold' };
@@ -92,7 +92,7 @@ async function record(user, listingId, body = {}) {
 const mine = async (user, id) => { const s = await q.get('SELECT s.*, l.title FROM external_sales s JOIN listings l ON l.id = s.listing_id WHERE s.id = ? AND s.seller_id = ? FOR UPDATE OF s', Number(id), user.id); if (!s) throw new HttpError(404, 'Sale not found'); return s; };
 const listFor = async (user) => await q.all('SELECT s.*, l.title FROM external_sales s JOIN listings l ON l.id = s.listing_id WHERE s.seller_id = ? ORDER BY s.sold_on DESC, s.id DESC LIMIT 200', user.id);
 const eventsFor = async (user, id) => { await mine(user, id); return await q.all('SELECT e.*, u.display_name FROM sale_events e JOIN users u ON u.id = e.actor_id WHERE e.sale_id = ? ORDER BY e.id', Number(id)); };
-/** Sold listings with neither a PairPlug order nor an active sale record (e.g. marked Sold by hand earlier, or after a void). Never converted automatically. */
+/** Sold listings with neither a Grailedside order nor an active sale record (e.g. marked Sold by hand earlier, or after a void). Never converted automatically. */
 const unrecordedSold = async (user) => await q.all(`SELECT l.id, l.title, l.price_cents, l.updated_at FROM listings l WHERE l.seller_id = ? AND l.status = 'sold'
   AND NOT EXISTS (SELECT 1 FROM external_sales s WHERE s.listing_id = l.id AND s.voided_at IS NULL)
   AND NOT EXISTS (SELECT 1 FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.listing_id = l.id AND o.status <> 'cancelled') ORDER BY l.updated_at DESC, l.id DESC`, user.id);
@@ -113,13 +113,13 @@ async function correct(user, id, body = {}) {
     return { ok: true };
   });
 }
-/** The seller says they received the payment. This is an attestation and is labelled as such; PairPlug does not verify it. Idempotent. */
+/** The seller says they received the payment. This is an attestation and is labelled as such; Grailedside does not verify it. Idempotent. */
 async function confirmPayment(user, id) {
   return await tx(async () => {
     const s = await mine(user, id); if (s.voided_at) throw new HttpError(409, 'This record was voided.');
     if (s.payment_status === 'confirmed_by_seller') return { ok: true, alreadyConfirmed: true };
     await q.run("UPDATE external_sales SET payment_status = 'confirmed_by_seller', payment_confirmed_at = ?, updated_at = ? WHERE id = ?", now(), now(), s.id);
-    await log(s.id, user.id, 'payment_confirmed_by_seller', 'Seller attests they received the payment (not verified by PairPlug)'); await audit(user, 'sale_payment_attested', { type: 'sale', id: s.id });
+    await log(s.id, user.id, 'payment_confirmed_by_seller', 'Seller attests they received the payment (not verified by Grailedside)'); await audit(user, 'sale_payment_attested', { type: 'sale', id: s.id });
     return { ok: true };
   });
 }
@@ -147,7 +147,7 @@ async function ship(user, id, body = {}) {
     try { await q.run("UPDATE external_sales SET carrier = ?, tracking_number = ?, ship_note = ?, shipment_status = 'shipped', shipped_at = ?, updated_at = ? WHERE id = ?", carrier, tracking, note, now(), now(), s.id); }
     catch (e) { if (isUnique(e)) throw new HttpError(409, 'That tracking number is already used on another sale.'); throw e; }
     await log(s.id, user.id, 'shipped', { carrier, tracking }); await audit(user, 'sale_shipped', { type: 'sale', id: s.id });
-    return { ok: true, buyerNotified: false };            // recorded sales have no PairPlug buyer account: nobody is notified
+    return { ok: true, buyerNotified: false };            // recorded sales have no Grailedside buyer account: nobody is notified
   });
 }
 async function correctTracking(user, id, body = {}) {

@@ -35,13 +35,13 @@ const SA = require('../sellerApplications');
 const { FREE_LISTING } = require('../pricing');
 r.get('/sell', async (req, res, next) => {
   if (req.user && req.user.is_seller) return res.redirect('/dashboard');
-  const intro = `<h1>Sell on PairPlug</h1><p class="lead">${esc(FREE_LISTING)}</p>
-    <p class="small muted">Any PairPlug account can start selling right away. There is no fee, no approval and no limit on the number of sellers.</p>`;
+  const intro = `<h1>Sell on Grailedside</h1><p class="lead">${esc(FREE_LISTING)}</p>
+    <p class="small muted">Any Grailedside account can start selling right away. There is no fee, no approval and no limit on the number of sellers.</p>`;
   if (!req.user && config.signups !== 'open') return await page(req, res, { title: 'Selling — Coming Soon', path: '/sell', body: soon('sell') });   // accounts cannot be created yet (pre-release): the old Coming Soon page
-  if (!req.user) return await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
+  if (!req.user) return await page(req, res, { title: 'Sell on Grailedside', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
     <p>You need an account first: create a free account (or log in), then come back here to open your store. No fees, no subscription, no payment.</p>
     <p><a class="btn" href="/register?next=/sell">Create an account</a> <a class="btn ghost" href="/login?next=/sell">Log in</a></p></div>` });
-  if (req.user.handle && req.user.store_name) return await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
+  if (req.user.handle && req.user.store_name) return await page(req, res, { title: 'Sell on Grailedside', path: '/sell', body: `<div class="narrow panel" style="max-width:560px">${intro}
     <h2>Your storefront is closed</h2><p><strong>${esc(req.user.store_name)}</strong> (@${esc(req.user.handle)}) is not public and cannot be used to sell. You can reopen it any time; your listings stay archived until you republish them.</p>
     <p><button class="btn" data-post="/api/sell/reopen" data-redirect="/dashboard">Reopen my storefront</button></p></div>` });
   let body;
@@ -50,7 +50,7 @@ r.get('/sell', async (req, res, next) => {
     ${storeFields}<label for="sb">About your store <span class="opt">(optional)</span></label><textarea id="sb" name="bio" maxlength="500"></textarea>
     <label style="font-weight:400;display:flex;gap:8px;margin-top:10px"><input type="checkbox" name="agree"> <span>I agree to the <a href="/terms">Terms</a> and <a href="/rules">Seller rules</a>, and that I handle payments, shipping and refunds through my own Stripe Payment Link.</span></label>
     <button class="btn" type="submit" style="margin-top:12px">Start selling</button></form></div>`;
-  await page(req, res, { title: 'Sell on PairPlug', path: '/sell', body });
+  await page(req, res, { title: 'Sell on Grailedside', path: '/sell', body });
 });
 r.post('/api/sell/apply', auth.requireUser, async (req, res) => res.json({ ok: true, ...(await SA.apply(req.user, req.body || {})) }));   // alias kept for older pages
 r.post('/api/sell/close', auth.requireUser, async (req, res) => {
@@ -68,17 +68,17 @@ r.get('/invite/:token', async (req, res) => {
   noStore(res);
   await auth.rateLimit(ipKey(req, 'invite-view'), 60, 3600);
   const i = await inv.lookup(req.params.token);
-  if (!i) return await page(req, res, { title: 'Invitation', body: V.empty('This invitation is invalid, expired or already used', 'Ask the PairPlug team for a new one.', ['/', 'Home']) });
+  if (!i) return await page(req, res, { title: 'Invitation', body: V.empty('This invitation is invalid, expired or already used', 'Ask the Grailedside team for a new one.', ['/', 'Home']) });
   const existing = await q.get('SELECT id FROM users WHERE email = ?', i.email);
   const seller = i.kind === 'seller';
   const termsBox = !existing || !LEGAL.accepted(await q.get('SELECT terms_version, terms_accepted_at FROM users WHERE id = ?', existing.id)) ? `<label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="terms" required> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and have read the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/payments" target="_blank" rel="noopener">how payments and refunds work</a>.</span></label>` : '';
   const needLogin = existing && !(req.user && req.user.id === existing.id);
-  if (needLogin) return await page(req, res, { title: 'Invitation', body: `<div class="narrow panel"><h1>You're invited</h1><p>This invitation is for an existing PairPlug account (<strong>${esc(i.email)}</strong>). Log in with that account, then open this link again.</p><a class="btn" href="/login?next=${encodeURIComponent('/invite/' + req.params.token)}">Log in</a></div>` });
-  const body = `<div class="narrow panel form-wide" style="max-width:560px"><h1>${seller ? 'Open your PairPlug store' : 'Join PairPlug'}</h1>
-    <p class="muted small">Invitation for <strong>${esc(i.email)}</strong> · expires ${date(i.expires_at)}. ${seller ? 'Listing on PairPlug is free and PairPlug takes 0% commission: buyers pay you directly through your own Stripe checkout (Stripe charges its own processing fees), and you are expected to reply to buyer messages within 48 hours.' : ''}</p>
+  if (needLogin) return await page(req, res, { title: 'Invitation', body: `<div class="narrow panel"><h1>You're invited</h1><p>This invitation is for an existing Grailedside account (<strong>${esc(i.email)}</strong>). Log in with that account, then open this link again.</p><a class="btn" href="/login?next=${encodeURIComponent('/invite/' + req.params.token)}">Log in</a></div>` });
+  const body = `<div class="narrow panel form-wide" style="max-width:560px"><h1>${seller ? 'Open your Grailedside store' : 'Join Grailedside'}</h1>
+    <p class="muted small">Invitation for <strong>${esc(i.email)}</strong> · expires ${date(i.expires_at)}. ${seller ? 'Listing on Grailedside is free and Grailedside takes 0% commission: buyers pay you directly through your own Stripe checkout (Stripe charges its own processing fees), and you are expected to reply to buyer messages within 48 hours.' : ''}</p>
     <form data-api="/api/invitations/accept" data-redirect="/account"><input type="hidden" name="token" value="${esc(req.params.token)}">
       ${existing ? '' : `<label for="n">Your name</label><input id="n" name="display_name" autocomplete="name" value="${esc(i.suggested_name || '')}" required><label for="p">Password <span class="opt">(8+ characters)</span></label><input id="p" name="password" type="password" autocomplete="new-password" minlength="8" required>`}
-      ${seller ? `<label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" required><label for="sh">Store URL <span class="opt">(pairplug.com/s/…)</span></label><input id="sh" name="handle" pattern="[a-zA-Z0-9_-]{3,30}" required>${storeFields}
+      ${seller ? `<label for="sn">Store name</label><input id="sn" name="store_name" maxlength="60" required><label for="sh">Store URL <span class="opt">(your store address ends in /s/your-handle)</span></label><input id="sh" name="handle" pattern="[a-zA-Z0-9_-]{3,30}" required>${storeFields}
         <label for="sb">About <span class="opt">(optional)</span></label><textarea id="sb" name="bio" maxlength="500"></textarea>
         <label style="font-weight:400;display:flex;gap:8px;margin-top:12px"><input type="checkbox" name="agree" required> <span>I only list items I own, will ship what I sell, and will reply to buyers within 48 hours, and I have read the <a href="/rules" target="_blank" rel="noopener">Prohibited Items &amp; Seller Rules</a>.</span></label>` : ''}
       ${termsBox}
@@ -98,11 +98,11 @@ r.post('/api/invitations/accept', async (req, res) => {
 
 // ---------- Email verification ----------
 const devPreview = !config.isProd && !email.isConfigured();      // local development only: there is no switch that enables this in production
-const deliveryNote = () => (email.isConfigured() ? 'We sent you an email.' : devPreview ? 'Development mode: no email was sent. Open the recorded message at /dev/emails and use its link.' : 'Email delivery is not configured on this server yet, so no email could be sent. Contact the PairPlug team to finish verification.');
+const deliveryNote = () => (email.isConfigured() ? 'We sent you an email.' : devPreview ? 'Development mode: no email was sent. Open the recorded message at /dev/emails and use its link.' : 'Email delivery is not configured on this server yet, so no email could be sent. Contact the Grailedside team to finish verification.');
 r.get('/verify-email', async (req, res) => {
   noStore(res);
   const t = String(req.query.token || '');
-  await page(req, res, { title: 'Verify email', body: `<div class="narrow panel"><h1>Confirm your email</h1><p>Press the button to confirm this email address for your PairPlug account.</p>
+  await page(req, res, { title: 'Verify email', body: `<div class="narrow panel"><h1>Confirm your email</h1><p>Press the button to confirm this email address for your Grailedside account.</p>
     <button class="btn block" id="vbtn" data-post="/api/email/verify" data-body='${esc(JSON.stringify({ token: t }))}' data-redirect="/account">Confirm email</button></div>` });
 });
 r.post('/api/email/verify', async (req, res) => {
@@ -143,9 +143,9 @@ r.get('/account', auth.requireUser, async (req, res) => {
       <form data-api="/api/account/email" data-method="POST" style="margin-top:12px"><label for="ne">Change email</label><input id="ne" name="email" type="email" required><label for="cp">Current password</label><input id="cp" name="password" type="password" autocomplete="current-password" required><button class="btn ghost small" type="submit" style="margin-top:10px">Change email</button></form></div>
     <form class="panel" data-api="/api/account/password" data-method="POST"><h3>Password</h3><label for="p0">Current password</label><input id="p0" name="current" type="password" autocomplete="current-password" required>
       <label for="p1">New password <span class="opt">(8+ characters)</span></label><input id="p1" name="next" type="password" autocomplete="new-password" minlength="8" required><button class="btn" type="submit" style="margin-top:12px">Change password</button><p class="small muted">Changing your password signs you out everywhere else.</p></form></section>
-    <div class="panel" id="policies"><h3>Terms &amp; privacy</h3>${LEGAL.accepted(u) ? `<p style="margin:0">You accepted version <strong>${esc(LEGAL.VERSION)}</strong> on ${date(u.terms_accepted_at)}.</p>` : `<p style="margin:0 0 8px">${u.terms_version ? `You accepted an earlier version (${esc(u.terms_version)}).` : 'You haven\'t recorded acceptance of the Terms of Service yet.'} You can keep using PairPlug; nothing is blocked.</p><button class="btn small" data-post="/api/account/terms" data-reload>Review below, then accept version ${esc(LEGAL.VERSION)}</button>`}
+    <div class="panel" id="policies"><h3>Terms &amp; privacy</h3>${LEGAL.accepted(u) ? `<p style="margin:0">You accepted version <strong>${esc(LEGAL.VERSION)}</strong> on ${date(u.terms_accepted_at)}.</p>` : `<p style="margin:0 0 8px">${u.terms_version ? `You accepted an earlier version (${esc(u.terms_version)}).` : 'You haven\'t recorded acceptance of the Terms of Service yet.'} You can keep using Grailedside; nothing is blocked.</p><button class="btn small" data-post="/api/account/terms" data-reload>Review below, then accept version ${esc(LEGAL.VERSION)}</button>`}
       <p class="small" style="margin:10px 0 0">${LEGAL.links()}</p></div>
-    <aside class="panel">${u.is_seller ? `<p><a href="/dashboard">Seller dashboard →</a></p><p><a href="/dashboard/storefront">Customize storefront →</a></p><p><a href="/s/${esc(u.handle)}">View my storefront →</a></p>` : '<p class="muted small">PairPlug sellers are invited during the private beta.</p>'}<p><a href="/messages">Messages →</a></p><p><a href="/support">Contact PairPlug support →</a></p></aside></div>`;
+    <aside class="panel">${u.is_seller ? `<p><a href="/dashboard">Seller dashboard →</a></p><p><a href="/dashboard/storefront">Customize storefront →</a></p><p><a href="/s/${esc(u.handle)}">View my storefront →</a></p>` : '<p class="muted small">Grailedside sellers are invited during the private beta.</p>'}<p><a href="/messages">Messages →</a></p><p><a href="/support">Contact Grailedside support →</a></p></aside></div>`;
   await page(req, res, { title: 'Account', body });
 });
 // Explicit, user-initiated acceptance of the current policy set (existing users are never marked automatically).
@@ -174,10 +174,10 @@ r.post('/api/account/password', auth.requireUser, async (req, res) => {
 r.get('/forgot-password', async (req, res) => {
   await page(req, res, { title: 'Reset password', body: email.isConfigured()
     ? `<div class="narrow panel"><h1>Reset your password</h1><form data-api="/api/password/forgot" data-reload><label for="fe">Email</label><input id="fe" name="email" type="email" required><button class="btn block" style="margin-top:12px" type="submit">Send reset link</button></form></div>`
-    : `<div class="narrow panel"><h1>Reset your password</h1><p>Automatic password reset isn't available yet because email delivery isn't set up. Please <a href="/support">contact PairPlug support</a> and we'll help you get back in.</p></div>` });
+    : `<div class="narrow panel"><h1>Reset your password</h1><p>Automatic password reset isn't available yet because email delivery isn't set up. Please <a href="/support">contact Grailedside support</a> and we'll help you get back in.</p></div>` });
 });
 r.post('/api/password/forgot', async (req, res) => {
-  if (!email.isConfigured()) throw new HttpError(503, 'Password reset by email is not available yet. Contact PairPlug support.');
+  if (!email.isConfigured()) throw new HttpError(503, 'Password reset by email is not available yet. Contact Grailedside support.');
   await auth.rateLimit(ipKey(req, 'forgot'), 10, 3600);
   const addr = cleanLine(req.body.email, 200).toLowerCase();
   if (addr) await auth.rateLimit(`forgot-mail:${addr}`, 3, 3600);

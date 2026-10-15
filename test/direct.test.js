@@ -1,5 +1,5 @@
 'use strict';
-// Direct (seller-owned) checkout: PairPlug never holds money; only the seller can confirm payment.
+// Direct (seller-owned) checkout: Grailedside never holds money; only the seller can confirm payment.
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -109,7 +109,7 @@ test('listing page shows shipping terms and total, never escrow/cart language; c
   assert.doesNotMatch(page, /escrow|Add to cart/i);
   const free = await listing(seller, { shipping_payer: 'seller', shipping: '0' });
   assert.match((await new H.Client().get(`/listing/${free}`)).text, /Free shipping/);
-  // the PairPlug-held checkout surfaces are disabled, API and pages
+  // the Grailedside-held checkout surfaces are disabled, API and pages
   for (const [m, u, b] of [['post', '/api/cart', { listingId: id }], ['post', '/api/checkout', {}], ['post', `/api/sandbox/pay/1`, {}]]) assert.equal((await buyer[m](u, b)).status, 404, u);
   assert.match((await buyer.get('/cart')).text, /no cart in the private beta/);
   assert.equal((await buyer.get('/checkout')).status, 200);
@@ -130,7 +130,7 @@ test('purchase: creates a PENDING order + reservation; nothing is paid, no money
   const o = await row(r.json.orderId);
   assert.equal(o.status, 'pending_payment'); assert.equal(o.payment_mode, 'external'); assert.equal(o.paid_at, null);
   assert.equal(o.total_cents, 4600); assert.equal(o.subtotal_cents, 4000); assert.equal(o.shipping_cents, 600); assert.equal(o.shipping_payer, 'buyer');
-  assert.equal(o.platform_fee_cents + o.processing_fee_cents + o.seller_payout_cents + o.tax_cents, 0, 'PairPlug takes no fee and computes no payout');
+  assert.equal(o.platform_fee_cents + o.processing_fee_cents + o.seller_payout_cents + o.tax_cents, 0, 'Grailedside takes no fee and computes no payout');
   assert.equal((await listingRow(id)).status, 'reserved');
   // snapshot records what was offered
   const snap = JSON.parse(o.snapshot_json);
@@ -223,7 +223,7 @@ test('seller confirmation: authorization, state, inventory, no wallet movement; 
   assert.equal(await count('SELECT COUNT(*) n FROM notifications WHERE dedupe_key = ?', `order:${o}:confirmed`), 1);
   // fulfilment: bad carrier / tracking rejected, label providers are plain external links, no label is bought for them
   const page = (await seller.get(`/dashboard/orders/${o}`)).text;
-  assert.match(page, /PairPlug does not buy labels or pay postage/); assert.match(page, /rel="noopener noreferrer"/);
+  assert.match(page, /Grailedside does not buy labels or pay postage/); assert.match(page, /rel="noopener noreferrer"/);
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'Sketchy Courier', tracking: '9400111899223344' })).status, 422);
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: 'x<script>' })).status, 422);
   assert.equal((await seller.post(`/api/seller/orders/${o}/ship`, { carrier: 'USPS', tracking: '9400111899223344' })).status, 200);
@@ -241,7 +241,7 @@ test('seller confirmation: authorization, state, inventory, no wallet movement; 
   assert.equal(await escrow.autoReleaseDue(), 0);
   // seller dashboard: direct section only, no fees/escrow/payout claims for these sales
   const dash = (await seller.get('/dashboard')).text;
-  assert.match(dash, /Direct checkout/); assert.match(dash, /PairPlug does not process these payments/);
+  assert.match(dash, /Direct checkout/); assert.match(dash, /Grailedside does not process these payments/);
   const ov = await require('../src/stats').overview((await q.get('SELECT id FROM users WHERE handle = ?', seller.handle)).id);
   assert.equal(ov.direct.confirmed, 1); assert.equal(ov.direct.gross, 4000); assert.equal(ov.net, 0); assert.equal(ov.balance.escrowCents, 0); assert.equal(ov.balance.availableCents, 0);
   assert.equal(ov.direct.margin.margin, 2500, 'price 40 - cost 15');
@@ -295,7 +295,7 @@ test('concurrency: 12 buyers race for one unique item → exactly one reservatio
 test('seller-reported refund does NOT refund the order; only the buyer\'s confirmation does; no provider call', async () => {
   const { seller, buyer, id } = await scene();
   const o = (await purchase(buyer, id)).json.orderId; await seller.post(`/api/seller/orders/${o}/confirm-payment`);
-  assert.equal((await seller.post(`/api/seller/orders/${o}/cancel`)).status, 409, 'PairPlug-refund route cannot touch a direct order');
+  assert.equal((await seller.post(`/api/seller/orders/${o}/cancel`)).status, 409, 'Grailedside-refund route cannot touch a direct order');
   assert.equal((await row(o)).status, 'paid');
   assert.equal((await seller.post(`/api/seller/orders/${o}/refunded`, {})).status, 422, 'must attest the refund');
   assert.equal((await buyer.post(`/api/seller/orders/${o}/refunded`, { confirm_refunded: true })).status, 403);
@@ -306,7 +306,7 @@ test('seller-reported refund does NOT refund the order; only the buyer\'s confir
   assert.equal((await row(o)).status, 'paid');
   assert.equal((await buyer.post(`/api/orders/${o}/refund-confirm`, { received: true })).status, 200);
   assert.equal((await row(o)).status, 'refunded'); assert.equal((await row(o)).refunded_cents, (await row(o)).total_cents);
-  assert.equal(await count('SELECT COUNT(*) n FROM refunds WHERE order_id = ?', o), 0, 'no refund object: PairPlug did not refund anything');
+  assert.equal(await count('SELECT COUNT(*) n FROM refunds WHERE order_id = ?', o), 0, 'no refund object: Grailedside did not refund anything');
 });
 
 test('privacy: other users cannot see a direct order or its address; sellers cannot see addresses of other sellers\' orders', async () => {

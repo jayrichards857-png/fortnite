@@ -12,7 +12,7 @@ const crypto = require('node:crypto');
 
 // The fee engine stays generic (historic orders, arithmetic): these tests give it explicit non-zero rates. The shipped defaults are 0% (see the next test).
 const S = { ...config.defaults, fee_bps_standard: 1000, fee_bps_pro: 600 };
-test('PairPlug commission defaults to 0% for standard and pro sellers, and the engine then takes nothing', () => {
+test('Grailedside commission defaults to 0% for standard and pro sellers, and the engine then takes nothing', () => {
   assert.equal(config.defaults.fee_bps_standard, 0); assert.equal(config.defaults.fee_bps_pro, 0);
   const e = new PricingEngine({ ...config.defaults }, 0), o = e.priceOrder({ subtotalCents: 10000, shippingCents: 800, sellerPlan: 'standard' });
   assert.equal(o.platformFeeCents, 0); assert.equal(e.priceOrder({ subtotalCents: 10000, shippingCents: 800, sellerPlan: 'pro' }).platformFeeCents, 0);

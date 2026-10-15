@@ -46,7 +46,7 @@ async function seed(H, { mode = 'external' } = {}) {
   for (const [i, t] of titles2.entries()) L2.push(await mk(s2, i + 8, t));
   await s1.post(`/api/seller/listings/${L1[7]}/pause`, {});
 
-  // ---- platform (cart) checkout mode: PairPlug-hosted checkout paid through the payments sandbox. The external-link order states
+  // ---- platform (cart) checkout mode: Grailedside-hosted checkout paid through the payments sandbox. The external-link order states
   // below do not exist in this mode, so it gets its own small fixture: one paid order and a filled cart for the audited buyer.
   if (mode === 'platform') {
     const cart = async (b, id) => { const r = await b.post('/api/cart', { listingId: id }); if (r.status !== 200) throw new Error('cart failed ' + r.text); };

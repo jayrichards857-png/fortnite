@@ -36,7 +36,7 @@ r.get('/', async (req, res) => {
   const disc = await D.withPreviews((await D.discoverSellers({ per: 8 })).items), fol = await D.followedSet(req.user);
   const sellerStrip = disc.length ? `<section class="discover" aria-labelledby="disc-h"><div class="sechead"><h2 id="disc-h">Discover Sellers</h2><a href="/sellers" class="small">View all sellers →</a></div><p class="muted small" style="margin:-6px 0 10px">Real stores, most recently listed first.</p>
     <div class="scroller" role="list">${(await Promise.all(disc.map(async (s) => `<div role="listitem" class="scroller-item">${await D.sellerCard(s, { following: fol, user: req.user })}</div>`))).join('')}</div></section>` : '';
-  const body = `<section class="hero"><p class="hero-kicker">PairPlug</p><h1>The Clothing Marketplace.</h1><p class="hero-sub">Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.</p>
+  const body = `<section class="hero"><p class="hero-kicker">Grailedside</p><h1>The Clothing Marketplace.</h1><p class="hero-sub">Discover independent sellers, find your next favorite piece, and follow the stores bringing fresh drops.</p>
     <form action="/shop" role="search"><label class="sr" for="hq2">Search listings</label><input id="hq2" name="q" type="search" placeholder="Search brand, item or size"><button class="btn">Search</button></form></section>
     <div class="chips" aria-label="Categories">${config.categories.map(([s, n]) => `<a class="chip" href="/shop?category=${s}">${esc(n)}${cats[s] ? ` <span class="muted">${cats[s]}</span>` : ''}</a>`).join('')}</div>
     ${sellerStrip}
@@ -95,7 +95,7 @@ r.get('/shop', async (req, res) => {
   await page(req, res, { title: f.q ? `“${f.q}”` : 'Shop', body });
 });
 
-// Direct-checkout buy box: shows exactly what the buyer will pay and who they pay BEFORE they leave PairPlug.
+// Direct-checkout buy box: shows exactly what the buyer will pay and who they pay BEFORE they leave Grailedside.
 async function directBuyBox(l, user) {
   const t = X.terms(l);
   const rows = `<div class="summary-row"><span>Item</span><span>${money(t.itemCents)}</span></div>
@@ -140,7 +140,7 @@ r.get('/listing/:id(\\d+)', async (req, res) => {
     <div class="panel" style="margin-top:18px"><a href="/s/${esc(l.seller_handle)}" style="text-decoration:none"><strong>${esc(l.seller_name || l.seller_handle)}</strong></a>
       <div class="small muted">${await RV.line(l.seller_id) || 'No reviews yet'} · Member since ${date(l.seller_since).slice(0, 4)}</div>
       ${l.seller_bio ? `<p class="small">${esc(l.seller_bio)}</p>` : ''}
-      <p class="small muted" style="margin:6px 0 0">${ext ? `${DISC.SHORT} Message the seller about any payment problem.` : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">PairPlug sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
+      <p class="small muted" style="margin:6px 0 0">${ext ? `${DISC.SHORT} Message the seller about any payment problem.` : 'Payment is held in escrow until you confirm delivery.'}</p><p class="small muted" style="margin:4px 0 0">Grailedside sellers aim to reply within 48 hours (an expectation, not a guarantee).</p></div></div></div>`;
   await page(req, res, { title: l.title, body: body + await RV.listingSection(l.id, req.user), description: l.description.slice(0, 150) });
 });
 
@@ -164,7 +164,7 @@ r.get('/s/:handle', async (req, res) => {
 const authForm = (kind, next) => {
   const reg = kind === 'register';
   return `<div class="narrow panel"><h1>${reg ? 'Create your account' : 'Log in'}</h1>
-  <p class="muted small" style="margin-top:-6px">${reg ? 'Join PairPlug — The Clothing Marketplace. A free buyer account lets you follow independent sellers, message them, save favorites and order. Want to sell? <a href="/sell">Start selling</a> (free, no approval needed).' : 'Welcome back to PairPlug — The Clothing Marketplace. Approved beta sellers and staff sign in here too.'}</p>
+  <p class="muted small" style="margin-top:-6px">${reg ? 'Join Grailedside — The Clothing Marketplace. A free buyer account lets you follow independent sellers, message them, save favorites and order. Want to sell? <a href="/sell">Start selling</a> (free, no approval needed).' : 'Welcome back to Grailedside — The Clothing Marketplace. Approved beta sellers and staff sign in here too.'}</p>
   <form data-api="/api/${kind}" data-redirect="${esc(next)}" novalidate>
     ${reg ? '<label for="n">Name</label><input id="n" name="display_name" autocomplete="name" required>' : ''}
     <label for="e">Email</label><input id="e" name="email" type="email" autocomplete="email" required>

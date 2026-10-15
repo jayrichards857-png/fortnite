@@ -1,7 +1,7 @@
 'use strict';
 // Support cases (order issues, seller reports, reported messages) and refund requests. Founder-managed, deliberately simple.
 //   * case_events are append-only (DB triggers). Internal notes (internal=1) can only be written by admins and are never shown to users.
-//   * A refund request records who SAID what. PairPlug moves no money and cannot verify a Stripe refund:
+//   * A refund request records who SAID what. Grailedside moves no money and cannot verify a Stripe refund:
 //       requested -> seller_reported_refunded -> buyer_confirmed_refund   (the buyer independently confirms receipt)
 //                                              -> buyer_disputes_refund    (escalates to an admin case)
 //       requested -> seller_declined | admin_closed | admin_verified_refund
@@ -145,7 +145,7 @@ async function adminMessage(admin, id, body) {
   return await tx(async () => {
     const c = await q.get('SELECT * FROM cases WHERE id = ?', Number(id)); if (!c) throw new HttpError(404, 'Case not found');
     await addEvent(c.id, admin, 'admin', 'response', t); await touch(c.id);
-    for (const u of [c.reporter_id, c.kind === 'order_issue' ? c.subject_user_id : null]) if (u) await notify(u, `case:${c.id}:admin:${now()}`, 'PairPlug replied to your case', `Case #${c.id} has a reply from PairPlug.`, `/cases/${c.id}`);
+    for (const u of [c.reporter_id, c.kind === 'order_issue' ? c.subject_user_id : null]) if (u) await notify(u, `case:${c.id}:admin:${now()}`, 'Grailedside replied to your case', `Case #${c.id} has a reply from Grailedside.`, `/cases/${c.id}`);
     await audit(admin, 'case_replied', { type: 'case', id: c.id });
   });
 }
@@ -213,7 +213,7 @@ async function requestRefund(user, orderId, { kind = 'refund', reason }) {
     if (kind === 'cancellation' && o.status !== 'paid') throw new HttpError(409, 'Cancellation is only possible before the order ships. Request a refund instead.');
     if (await openRequest(o.id)) throw new HttpError(409, 'There is already an open refund request for this order.');
     const r = await q.insert("INSERT INTO refund_requests(order_id, kind, requested_by, reason, status, requested_at, updated_at) VALUES(?,?,?,?, 'requested', ?, ?)", o.id, kind, user.id, why, now(), now());
-    await notify(o.seller_id, `refund:${r}:requested`, kind === 'cancellation' ? 'Cancellation requested' : 'Refund requested', `Order #${o.id}: respond in your order page. PairPlug does not move money; you refund through your own payment provider.`, `/dashboard/orders/${o.id}`);
+    await notify(o.seller_id, `refund:${r}:requested`, kind === 'cancellation' ? 'Cancellation requested' : 'Refund requested', `Order #${o.id}: respond in your order page. Grailedside does not move money; you refund through your own payment provider.`, `/dashboard/orders/${o.id}`);
     await audit(user, 'refund_requested', { type: 'order', id: o.id, detail: { kind } });
     return r;
   });
@@ -230,12 +230,12 @@ async function sellerRespond(user, orderId, { action, reference, note }) {
       if (req && req.status === 'seller_reported_refunded') throw new HttpError(409, 'You already reported this refund; waiting for the buyer to confirm.');
       if (!req) { const r = await q.insert("INSERT INTO refund_requests(order_id, kind, requested_by, reason, status, requested_at, updated_at) VALUES(?, 'refund', ?, 'Seller-initiated refund', 'requested', ?, ?)", o.id, user.id, now(), now()); req = await q.get('SELECT * FROM refund_requests WHERE id = ?', r); }
       await q.run("UPDATE refund_requests SET status = 'seller_reported_refunded', refund_reference = ?, seller_note = ?, seller_responded_at = ?, updated_at = ? WHERE id = ?", ref, clean(note, 1000) || null, now(), now(), req.id);
-      await notify(o.buyer_id, `refund:${req.id}:reported`, 'The seller says your refund was sent', `Order #${o.id}: please check your payment account and confirm whether you received it. PairPlug cannot verify seller refunds.`, `/orders/${o.id}`);
+      await notify(o.buyer_id, `refund:${req.id}:reported`, 'The seller says your refund was sent', `Order #${o.id}: please check your payment account and confirm whether you received it. Grailedside cannot verify seller refunds.`, `/orders/${o.id}`);
     } else if (action === 'decline') {
       if (!req || req.status !== 'requested') throw new HttpError(409, 'There is no pending request to decline.');
       const n = text(note, 10, 1000, 'note');
       await q.run("UPDATE refund_requests SET status = 'seller_declined', seller_note = ?, seller_responded_at = ?, resolved_at = ?, updated_at = ? WHERE id = ?", n, now(), now(), now(), req.id);
-      await notify(o.buyer_id, `refund:${req.id}:declined`, 'Your refund request was declined', `Order #${o.id}: the seller declined. You can report the issue to PairPlug support.`, `/orders/${o.id}`);
+      await notify(o.buyer_id, `refund:${req.id}:declined`, 'Your refund request was declined', `Order #${o.id}: the seller declined. You can report the issue to Grailedside support.`, `/orders/${o.id}`);
     } else throw new HttpError(422, 'Unknown action');
     await audit(user, `refund_${action}`, { type: 'order', id: o.id });
     return true;
@@ -265,7 +265,7 @@ async function buyerConfirm(user, orderId, { received, note }) {
         caseId = c; await q.run('UPDATE refund_requests SET case_id = ? WHERE id = ?', caseId, req.id);
         await addEvent(caseId, user, 'buyer', 'report', `Refund not received: ${n}`);
       }
-      await notify(o.seller_id, `refund:${req.id}:disputed`, 'The buyer says the refund has not arrived', `Order #${o.id}: PairPlug support was notified (case #${caseId}).`, `/cases/${caseId}`);
+      await notify(o.seller_id, `refund:${req.id}:disputed`, 'The buyer says the refund has not arrived', `Order #${o.id}: Grailedside support was notified (case #${caseId}).`, `/cases/${caseId}`);
       await audit(user, 'refund_disputed', { type: 'order', id: o.id, detail: { case: caseId } });
     }
     return true;

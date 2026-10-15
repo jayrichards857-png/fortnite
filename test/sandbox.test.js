@@ -28,7 +28,7 @@ test('pre-flight guards: production, live keys, missing/invalid keys and the rea
   assert.doesNotThrow(() => sb.assertSafeEnvironment(ok));
   assert.doesNotThrow(() => sb.assertSafeEnvironment({ ...ok, shippoKey: '', fake: true }));
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, nodeEnv: 'production' }), /development-only/);
-  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: ok.realDatabaseUrl }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: ok.realDatabaseUrl }), /real Grailedside database/);
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: 'postgres://u@other.host:5432/pairplug_copy', realDatabaseUrl: null }), /named pp_sandbox/, 'only pp_sandbox* databases are ever used');
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, shippoKey: '' }), /SHIPPO_API_KEY/);
   for (const bad of ['shippo_live_SECRETVALUE123', 'sk_live_abc', 'whatever']) {
@@ -126,7 +126,7 @@ test('--manual-only guards: needs no Shippo credential, cannot combine with --fa
   assert.doesNotThrow(() => sb.assertSafeEnvironment(ok));
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, fake: true }), /either --fake-shippo or --manual-only/);
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, nodeEnv: 'production' }), /development-only/);
-  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: ok.realDatabaseUrl }), /real PairPlug database/);
+  assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: ok.realDatabaseUrl }), /real Grailedside database/);
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, databaseUrl: 'postgres://u@other.host:5432/pairplug_copy', realDatabaseUrl: null }), /named pp_sandbox/, 'only pp_sandbox* databases are ever used');
   assert.throws(() => sb.assertSafeEnvironment({ ...ok, manual: false }), /SHIPPO_API_KEY|--fake-shippo/, 'without the flag a key is still required');
 });
@@ -145,7 +145,7 @@ test('--manual-only process: isolated test data, the exact beta order page (no l
     const lg = await fetch(base + '/api/login', { method: 'POST', headers: h, body: JSON.stringify({ email: 'seller@sandbox.invalid', password: pw }) }); assert.equal(lg.status, 200);
     const cookie = lg.headers.get('set-cookie').split(';')[0], get = (u, o = {}) => fetch(base + u, { ...o, headers: { cookie, ...(o.headers || {}) } });
     const page = await (await get('/dashboard/orders/1')).text();
-    assert.match(page, /SHIPPING SANDBOX — TEST DATA ONLY/); assert.match(page, /Ship this order/); assert.match(page, /PairPlug does not buy labels or pay postage/); assert.match(page, /name="tracking"/); assert.match(page, /Mark shipped/);
+    assert.match(page, /SHIPPING SANDBOX — TEST DATA ONLY/); assert.match(page, /Ship this order/); assert.match(page, /Grailedside does not buy labels or pay postage/); assert.match(page, /name="tracking"/); assert.match(page, /Mark shipped/);
     assert.doesNotMatch(page, /Shipping label \(sandbox|Buy shipping label|Get shipping rates|id="ship-panel"|shipping\.js/, 'identical to the live beta: no label UI');
     const st = await (await get('/api/seller/orders/1/shipping')).json(); assert.equal(st.enabled, false);
     assert.equal((await get('/api/seller/orders/1/shipping/rates', { method: 'POST', headers: h, body: '{}' })).status, 503);

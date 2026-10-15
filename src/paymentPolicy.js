@@ -1,6 +1,6 @@
 'use strict';
 // The beta rules for payment links and the matching buyer warning, worded in ONE place (listing form, listing page, buy page, order page, help, policies).
-// Honest limits: PairPlug checks the link's ADDRESS (an approved Stripe host and a single Payment Link id). It cannot see or verify the amount Stripe will charge.
+// Honest limits: Grailedside checks the link's ADDRESS (an approved Stripe host and a single Payment Link id). It cannot see or verify the amount Stripe will charge.
 // The seller's confirmation is the seller's statement, not independent verification.
 const config = require('./config');
 const { esc, money } = require('./util');
@@ -9,13 +9,13 @@ const VERSION = '2026-10-13';
 const HOSTS_TEXT = 'buy.stripe.com';
 
 const SELLER_TITLE = 'Stripe checkout links only';
-const SELLER_NOTICE = 'For the PairPlug beta, listings must use an eligible Stripe-hosted checkout link. The amount charged must match the listing price plus the disclosed shipping cost. Incorrect, misleading, or unrelated payment links may result in listing removal, selling restrictions, or suspension for up to 5 days, depending on the circumstances.';
-const SELLER_ACK = 'I confirm that this Stripe link charges exactly the item price plus the shipping shown here. I understand this is my own statement: PairPlug does not verify the amount charged at Stripe.';
-const SELLER_ACK_FOOT = 'PairPlug checks that the address is an approved Stripe link, but it cannot see what Stripe will charge, and a Stripe-hosted link is not automatically correct or safe. Changing the price, shipping or link cancels this confirmation until you confirm again.';
+const SELLER_NOTICE = 'For the Grailedside beta, listings must use an eligible Stripe-hosted checkout link. The amount charged must match the listing price plus the disclosed shipping cost. Incorrect, misleading, or unrelated payment links may result in listing removal, selling restrictions, or suspension for up to 5 days, depending on the circumstances.';
+const SELLER_ACK = 'I confirm that this Stripe link charges exactly the item price plus the shipping shown here. I understand this is my own statement: Grailedside does not verify the amount charged at Stripe.';
+const SELLER_ACK_FOOT = 'Grailedside checks that the address is an approved Stripe link, but it cannot see what Stripe will charge, and a Stripe-hosted link is not automatically correct or safe. Changing the price, shipping or link cancels this confirmation until you confirm again.';
 
 const BUYER_TITLE = 'Before you pay';
-const BUYER_TEXT = 'Please check that the seller is charging the correct amount for this item, including shipping. The total shown on PairPlug should match the amount shown at Stripe checkout before you pay. If the amounts differ, do not complete the payment. Return to PairPlug and contact support.';
-const BUYER_FOOT = 'PairPlug has not verified the amount shown at Stripe checkout and cannot see it.';
+const BUYER_TEXT = 'Please check that the seller is charging the correct amount for this item, including shipping. The total shown on Grailedside should match the amount shown at Stripe checkout before you pay. If the amounts differ, do not complete the payment. Return to Grailedside and contact support.';
+const BUYER_FOOT = 'Grailedside has not verified the amount shown at Stripe checkout and cannot see it.';
 
 const maxSuspensionDays = () => config.enforcement.maxSuspensionDays;
 /** Seller-facing notice with the configured suspension ceiling spelled out (the default text says 5). */

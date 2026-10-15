@@ -30,7 +30,7 @@ async function overview(sellerId) {
 }
 
 /**
- * Direct-checkout sales. Money went straight to the seller's own payment account, so PairPlug knows only what the seller
+ * Direct-checkout sales. Money went straight to the seller's own payment account, so Grailedside knows only what the seller
  * confirmed: item price, shipping charged and the seller's recorded cost. No fees, payouts or "net" are claimed here
  * (the seller's payment provider bills its own processing fees).
  */

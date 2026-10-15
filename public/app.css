@@ -20,6 +20,7 @@ summary::-webkit-details-marker{display:none}.dd{position:relative}
 .dd-menu a:hover,.dd-menu button:hover{background:#f1efe9}.dd-title{font-size:12px;color:var(--muted);padding:6px 10px 2px;text-transform:uppercase;letter-spacing:.04em}
 .hsearch{flex:1;display:flex;max-width:420px;margin-left:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--bg)}
 .hsearch input{flex:1;border:0;background:none;padding:8px 10px;font:inherit;min-width:0;outline-offset:0}.hsearch button{border:0;background:none;padding:0 10px;cursor:pointer;color:var(--muted)}
+@media (min-width:861px) and (max-width:900px){.bar{gap:10px}}   /* the 11-letter wordmark needs a little room just above the compact-header breakpoint */
 .actions{display:flex;align-items:center;gap:4px}.iconlink{position:relative;display:inline-flex;padding:8px;border-radius:var(--r);color:inherit;cursor:pointer}.iconlink:hover{background:#f1efe9}
 .badge{position:absolute;top:2px;right:0;background:var(--accent);color:#fff;font-size:12px;line-height:1;min-width:18px;text-align:center;padding:3px 5px;border-radius:9px;font-weight:600}
 .mobile-only{display:none}

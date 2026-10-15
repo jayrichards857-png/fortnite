@@ -8,11 +8,11 @@ const { transition } = require('./orderMachine');
 const { notify } = require('./notify');
 const { getProviderByName } = require('./payments');
 
-/** PairPlug holds no money for direct-checkout orders, so none of the escrow functions may touch them. */
+/** Grailedside holds no money for direct-checkout orders, so none of the escrow functions may touch them. */
 async function assertPlatformOrder(orderId) {
   const o = await q.get('SELECT payment_mode FROM orders WHERE id = ?', orderId);
   if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
-  if (o.payment_mode !== 'platform') throw Object.assign(new Error('This order was paid directly to the seller; PairPlug holds no funds for it.'), { status: 409 });
+  if (o.payment_mode !== 'platform') throw Object.assign(new Error('This order was paid directly to the seller; Grailedside holds no funds for it.'), { status: 409 });
 }
 
 /** Move shipped -> delivered (carrier sync or buyer confirmation) and start the auto-release clock. */

@@ -55,7 +55,7 @@
     const b = $('button', 'btn', 'Buy shipping label'); b.type = 'button';
     b.addEventListener('click', () => {
       const r = sh.rates.find((x) => x.id === pick); if (!r) return;
-      if (!confirm(`${S.test ? 'Buy a TEST label' : 'Buy this label'}?\n\n${r.carrier} ${r.service}\nPrice: ${usd(r.amountCents, r.currency)}\n\nThis cannot be undone from PairPlug.`)) return;
+      if (!confirm(`${S.test ? 'Buy a TEST label' : 'Buy this label'}?\n\n${r.carrier} ${r.service}\nPrice: ${usd(r.amountCents, r.currency)}\n\nThis cannot be undone from Grailedside.`)) return;
       run(() => pp.api('POST', `${base}/buy`, { rateId: r.id, expectedAmountCents: r.amountCents, confirm: true }));
     });
     box.append(b); return box;
@@ -82,7 +82,7 @@
     }
     if (!S.eligible) { root.append($('p', 'muted', S.reason || 'Not available for this order.')); return; }
     if (sh && sh.status === 'failed') root.append($('p', 'form-err', `The last attempt failed: ${sh.error || 'unknown error'}. You were not charged. Get new rates to try again.`));
-    if (!S.shipFrom) { root.append($('p', 'small', 'PairPlug needs your ship-from address before it can get rates. It is only used for labels.'), shipFromForm()); return; }
+    if (!S.shipFrom) { root.append($('p', 'small', 'Grailedside needs your ship-from address before it can get rates. It is only used for labels.'), shipFromForm()); return; }
     const to = S.shipTo; const addr = $('p', 'small'); addr.textContent = to ? `To: ${to.name}, ${to.line1}${to.line2 ? ' ' + to.line2 : ''}, ${to.city}, ${to.region} ${to.postal} ${to.country}` : 'The delivery address is missing.'; root.append(addr);
     const from = S.shipFrom, fa = $('p', 'small muted'); fa.textContent = `From: ${from.name}, ${from.line1}, ${from.city}, ${from.region} ${from.postal} ${from.country} `; const ed = $('button', 'linklike', 'Edit'); ed.type = 'button'; ed.onclick = () => { S.shipFrom = null; S.shipFromPrefill = from; draw(); }; fa.append(ed); root.append(fa);
     root.append(parcelForm());

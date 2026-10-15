@@ -1,6 +1,6 @@
 # Beta payment-link policy and enforcement
 
-PairPlug is **not** integrating Stripe Connect yet. In the beta each seller's listing carries their own Stripe-hosted Payment Link; the buyer pays the seller there. This document says exactly what PairPlug checks, what it only warns about, and how enforcement works.
+Grailedside is **not** integrating Stripe Connect yet. In the beta each seller's listing carries their own Stripe-hosted Payment Link; the buyer pays the seller there. This document says exactly what Grailedside checks, what it only warns about, and how enforcement works.
 
 ## What is technically checked (server-side, `src/paymentLinks.js`)
 A link is accepted only if **all** of these hold, on every save (listing form, API, CSV import) and again immediately before a buyer is redirected:
@@ -8,17 +8,17 @@ A link is accepted only if **all** of these hold, on every save (listing form, A
 2. It starts with exactly `https://buy.stripe.com/` (HTTPS only; host compared exactly after parsing and again as raw text; port 443 only; no trailing-dot host, no `https:buy…`, no subdomain/lookalike hosts such as `buy.stripe.com.evil.com`, `buy-stripe.com`, `xbuy.stripe.com`, Unicode homographs).
 3. The path is a single Payment Link id (`[A-Za-z0-9_-]{6,100}`), not a homepage or deeper path.
 4. In **production**, Stripe test-mode links (`/test_…`) are rejected, and a test link already stored on an order is never followed.
-5. The query string and fragment are dropped; PairPlug appends only its own `client_reference_id=PP-<order>`.
+5. The query string and fragment are dropped; Grailedside appends only its own `client_reference_id=PP-<order>`.
 `PAYMENT_LINK_HOSTS` may only **narrow** the approved list (`APPROVED_HOSTS`); it cannot add another host or another payment provider. Other providers (PayPal, Cash App, etc.) are rejected.
 
 ## What is NOT verified (warnings and seller statements only)
-* PairPlug **cannot see or confirm the amount Stripe will charge**, whether the link is live, or whether it belongs to the seller. No integration with Stripe reads the link.
+* Grailedside **cannot see or confirm the amount Stripe will charge**, whether the link is live, or whether it belongs to the seller. No integration with Stripe reads the link.
 * The seller's tick-box ("this link charges exactly item price + shipping") is the **seller's own statement**. It is stored with a timestamp and the policy version the seller saw (`listings.payment_ack_at`, `payment_ack_policy`) and audited, but it is not independent verification.
 * A Stripe-hosted address is not proof the link is safe or correctly priced.
 * The buyer-facing "Before you pay" warning tells the buyer to compare the totals themselves.
 
 ## Checkout is gated server-side
-`externalCheckout.purchasable()` refuses to start a checkout unless the listing has its **own** valid link **and** `payment_total_ack_cents` equals the current item + buyer-paid shipping total. (The old seller-wide "default / any amount" link can no longer start a checkout.) The acknowledgement is cleared when price, shipping or payer, or the link changes (`saveListing`, CSV update, and the `listings_ack_follows_total` DB trigger), and re-confirming after a change requires proof of the exact total and link (`payment_ack_total_cents`, `payment_ack_url`). Orders are never marked paid because a buyer says so; only the seller can confirm payment, and PairPlug does not verify it.
+`externalCheckout.purchasable()` refuses to start a checkout unless the listing has its **own** valid link **and** `payment_total_ack_cents` equals the current item + buyer-paid shipping total. (The old seller-wide "default / any amount" link can no longer start a checkout.) The acknowledgement is cleared when price, shipping or payer, or the link changes (`saveListing`, CSV update, and the `listings_ack_follows_total` DB trigger), and re-confirming after a change requires proof of the exact total and link (`payment_ack_total_cents`, `payment_ack_url`). Orders are never marked paid because a buyer says so; only the seller can confirm payment, and Grailedside does not verify it.
 
 ## Audit trail
 `audit_log` entries (append-only): `listing_payment_link_changed` (from/to), `listing_payment_total_acknowledged` (total, link, policy version, "seller statement"), `listing_payment_ack_cleared` (reason), plus all moderation actions below.

@@ -34,7 +34,7 @@ const MIGRATION_LOCK = 727401;                    // pg advisory lock id: one in
 let pool = null;
 function getPool() {
   if (pool) return pool;
-  if (!config.db.url) throw new Error('DATABASE_URL is not set. PairPlug now runs on PostgreSQL: set DATABASE_URL=postgres://user:pass@host:5432/dbname (see docs/DEPLOYMENT.md).');
+  if (!config.db.url) throw new Error('DATABASE_URL is not set. Grailedside now runs on PostgreSQL: set DATABASE_URL=postgres://user:pass@host:5432/dbname (see docs/DEPLOYMENT.md).');
   pool = new Pool({
     connectionString: config.db.url,
     max: config.db.poolMax,
@@ -177,7 +177,7 @@ async function close() { if (pool) { const p = pool; pool = null; readyPromise =
 async function getSettings() {
   const out = { ...config.defaults };
   for (const r of await q.all('SELECT key, value FROM settings')) if (r.key in out) out[r.key] = Number(r.value);
-  out.fee_bps_standard = 0; out.fee_bps_pro = 0;                 // PairPlug commission is 0% for every seller, whatever an old settings row says
+  out.fee_bps_standard = 0; out.fee_bps_pro = 0;                 // Grailedside commission is 0% for every seller, whatever an old settings row says
   return out;
 }
 async function setSetting(key, value) {

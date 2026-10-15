@@ -1,23 +1,23 @@
-# PairPlug
+# Grailedside
 
-PairPlug — The Clothing Marketplace: clothing, streetwear, sneakers and accessories (new and pre-owned) from independent sellers in North America (US, Canada, Mexico). Node 22 + Express + PostgreSQL (`pg` driver, connection pool, no ORM),
+Grailedside — The Clothing Marketplace: clothing, streetwear, sneakers and accessories (new and pre-owned) from independent sellers in North America (US, Canada, Mexico). Node 22 + Express + PostgreSQL (`pg` driver, connection pool, no ORM),
 server-rendered pages with a little vanilla JS. Runtime dependencies: `express`, `ws`.
 
 ## Private-beta payment model (read first)
 
-**PairPlug does not collect, hold, escrow, split or refund buyer money.** For the beta, each seller is paid *directly* through their **own Stripe Payment Link**:
+**Grailedside does not collect, hold, escrow, split or refund buyer money.** For the beta, each seller is paid *directly* through their **own Stripe Payment Link**:
 
-1. Buyer opens a listing and sees item price, shipping terms and the **total they will pay the seller** before leaving PairPlug.
+1. Buyer opens a listing and sees item price, shipping terms and the **total they will pay the seller** before leaving Grailedside.
 2. Buyer enters a shipping address and reserves the item, then is sent to the seller's own checkout link (`buy.stripe.com`, allowlisted, validated server-side; the destination always comes from the database, never from a request parameter).
 3. The order shows **“Awaiting payment confirmation.”** Clicking through, returning, or pressing “I've completed payment” **never** marks it paid. **Only the seller can confirm** (after checking their own Stripe dashboard).
-4. The seller buys a label themselves (PairPlug does not), enters carrier + tracking; the buyer gets a safe tracking link.
+4. The seller buys a label themselves (Grailedside does not), enters carrier + tracking; the buyer gets a safe tracking link.
 
 | Question | Answer |
 |---|---|
 | Who processes payments? | The seller's payment provider (Stripe). |
-| Who handles refunds, chargebacks, payment disputes, sales tax? | The seller and their provider — **not PairPlug**. Stated on the listing, purchase and order pages. |
+| Who handles refunds, chargebacks, payment disputes, sales tax? | The seller and their provider — **not Grailedside**. Stated on the listing, purchase and order pages. |
 | Is there escrow / buyer protection? | **No.** The earlier escrow/wallet/fee/dispute code is kept (history is preserved) but is disabled for new orders. |
-| PairPlug fees? | None in the beta. |
+| Grailedside fees? | None in the beta. |
 | Is the Stripe link flow verified live? | **No.** The server side (validation, redirect, `client_reference_id=PP-<order>` parameter, seller confirmation) is tested; **no real Stripe payment has been made.** Do a real test purchase first. |
 
 **Access model (private beta).** Anyone can browse and **sign up as a buyer** (buyer accounts never grant seller or admin rights and do not count toward the seller limit). **Selling is invitation-only**: the public **Sell** link opens a “Coming Soon!” page for everyone except approved sellers, and the onboarding API refuses everyone else on the server. Sellers join only through single-use, expiring, hashed invitations issued by the admin, and at most **3 seller accounts** can exist (enforced in SQLite triggers, race-tested). Set `SIGNUPS=closed` to pause buyer sign-up too. `PUBLIC_RELEASE_DATE` is a **placeholder in the deployment example — confirm the real date** (leave it unset to show “Selling opens very soon”).
@@ -71,12 +71,12 @@ For the real beta use `NODE_ENV=production` with the settings in `deploy/pairplu
 | Area | Status |
 |---|---|
 | Seller payment links | Server-side tested. **Not tested against live Stripe.** Payment Links have a fixed product/price: the seller must create one per listing (item + shipping) — a default link is used only if the seller says it accepts any amount. |
-| Payment verification | **Manual**, by the seller. PairPlug cannot verify Stripe payments (no webhook/API integration in beta). |
+| Payment verification | **Manual**, by the seller. Grailedside cannot verify Stripe payments (no webhook/API integration in beta). |
 | Escrow, wallet, fees, withdrawals, Stripe adapter, sandbox | Legacy, **disabled for new orders** (`CHECKOUT_MODE=external`). Sandbox is refused in production. |
-| Shipping labels | **Beta: manual.** Sellers buy postage themselves and enter carrier + tracking (PairPlug never buys labels or pays postage). Shippo integration: **TEST MODE, isolated sandbox only** (`SHIPPO_API_KEY=shippo_test_…`): rates, a confirmed test-label purchase, stored label/tracking, duplicate-safe. Tested only against a fake Shippo transport; **never against Shippo's live or sandbox servers**. **Real label purchasing is disabled** (who pays postage is unresolved; see [docs/SHIPPING.md](docs/SHIPPING.md)). Sellers can still buy a label elsewhere and enter carrier + tracking. |
+| Shipping labels | **Beta: manual.** Sellers buy postage themselves and enter carrier + tracking (Grailedside never buys labels or pays postage). Shippo integration: **TEST MODE, isolated sandbox only** (`SHIPPO_API_KEY=shippo_test_…`): rates, a confirmed test-label purchase, stored label/tracking, duplicate-safe. Tested only against a fake Shippo transport; **never against Shippo's live or sandbox servers**. **Real label purchasing is disabled** (who pays postage is unresolved; see [docs/SHIPPING.md](docs/SHIPPING.md)). Sellers can still buy a label elsewhere and enter carrier + tracking. |
 | Tax | Not handled. The seller's Stripe configuration is responsible. |
 | Email | Every message is recorded in `email_outbox`. With no provider configured nothing is sent and the UI says so (admin can hand a verification link over manually). The `resend` adapter exists but has **never sent a real email**. SMS/push: not implemented. |
-| Refunds | PairPlug moves no money. The seller *reports* a refund; the order becomes `refunded` only when the **buyer confirms** or an **admin independently verifies**. |
+| Refunds | Grailedside moves no money. The seller *reports* a refund; the order becomes `refunded` only when the **buyer confirms** or an **admin independently verifies**. |
 | Hosting | **Not deployed.** Google Cloud plan documented in DEPLOYMENT.md (nothing provisioned; no cloud resources were created). |
 | Backups | Local snapshots (owner-only) + a tested restore script. Off-site copy is **recommended but not configured**. |
 | Scale | One process on a PostgreSQL connection pool; chat live-push is in-memory (single process). Fine for a private beta. |

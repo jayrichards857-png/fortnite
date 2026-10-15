@@ -31,15 +31,15 @@ test('the policies say what is true: direct payments, no custody, seller-handled
   const anon = new H.Client(), all = {}; for (const p of PAGES) all[p] = text(await get(anon, p)); const joined = Object.values(all).join(' ');
   assert.match(all['/payments'], /you pay the seller through their external checkout/i); assert.match(all['/payments'], /does not currently hold, process or directly control the payment/i); assert.match(all['/payments'], /not proof of payment/i);
   assert.match(all['/payments'], /seller decides and issues refunds/i); assert.match(all['/payments'], /chargebacks/i); assert.match(all['/payments'], /force a seller to refund/i);
-  assert.match(all['/payments'], /seller's statement, not a check by PairPlug/i);
+  assert.match(all['/payments'], /seller's statement, not a check by Grailedside/i);
   assert.match(all['/terms'], /not the seller of the items/i); assert.match(all['/terms'], /rights you have under consumer-protection law/i);
   assert.match(all['/rules'], /counterfeit/i); assert.match(all['/rules'], /stolen/i); assert.match(all['/rules'], /does not authenticate/i);
   assert.match(all['/privacy'], /no self-service download or delete/i); assert.match(all['/privacy'], /do not strip|do not use advertising|not strip/i); assert.match(all['/privacy'], /pp_session/);
   assert.match(all['/privacy'], /Search terms/); assert.match(all['/privacy'], /at least 3 searches/); assert.match(all['/privacy'], /30 days/);
-  // nothing fabricated: no address/entity unless configured, no regulatory or certification claims, no "guarantee/escrow/protection" promises PairPlug doesn't make
+  // nothing fabricated: no address/entity unless configured, no regulatory or certification claims, no "guarantee/escrow/protection" promises Grailedside doesn't make
   assert.match(all['/terms'], /registered business name and mailing address have not been published yet/i); assert.match(all['/terms'], /pairplugservice@gmail\.com/);
   assert.doesNotMatch(joined, /\b(GDPR|CCPA|PIPEDA|SOC ?2|PCI|ISO ?27001|HIPAA)\b[^.]{0,40}(compliant|certified|compliance)/i); assert.doesNotMatch(joined, /we are (fully )?compliant|certified|bank-level|military-grade|100% secure/i);
-  assert.doesNotMatch(joined, /buyer protection (program|guarantee)|money-back guarantee|PairPlug (will refund|holds your)/i);
+  assert.doesNotMatch(joined, /buyer protection (program|guarantee)|money-back guarantee|Grailedside (will refund|holds your)/i);
   assert.doesNotMatch(joined.replaceAll('pairplugservice@gmail.com', ''), /@[a-z0-9-]+\.(com|net|org|io)\b/i, 'no email address other than the official one appears'); assert.doesNotMatch(joined, /\b\d{2,5} [A-Z][a-z]+ (Street|St|Ave|Avenue|Road|Rd)\b/);
 });
 

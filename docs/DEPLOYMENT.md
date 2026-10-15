@@ -1,4 +1,4 @@
-# PairPlug private beta — deployment & operations
+# Grailedside private beta — deployment & operations
 
 **Status: NOT deployed.** I (the assistant) have no cloud account, credentials or domain, so nothing is live and nothing here was run on a real server.
 What *was* verified in this repo (against a local PostgreSQL 16): the app starts in production mode and refuses unsafe settings, `/healthz`, backup → restore → verify, the SQLite → PostgreSQL import, concurrency on orders/stock, and the whole
@@ -19,7 +19,7 @@ buyer/seller journey in a real browser. The systemd/Caddy files below are writte
 | Single instance | Run **one** app process: the chat live-push hub, rate limiter and search caches are in-memory (the database itself now tolerates several writers, and background jobs are safe to overlap). |
 
 ## 2. Hosting options checked (searched 2026-10-10; third-party sources noted — confirm on the provider's own pages before signing up)
-**With PostgreSQL the database no longer needs the app's disk, but the product photos still do** (they remain files in `PAIRPLUG_UPLOADS`), so a host with an ephemeral filesystem still cannot run PairPlug without losing photos on every restart/redeploy. Moving photos to object storage is the remaining step to a fully "stateless" app server. Hosted PostgreSQL free tiers were **not** assumed permanent: e.g. [Render's free Postgres expires 30 days after creation and has no backups](https://render.com/docs/free) (per Render's docs as of 2026-10-12). Whatever you choose, check the provider's own current limits and backup terms before storing real data there.
+**With PostgreSQL the database no longer needs the app's disk, but the product photos still do** (they remain files in `PAIRPLUG_UPLOADS`), so a host with an ephemeral filesystem still cannot run Grailedside without losing photos on every restart/redeploy. Moving photos to object storage is the remaining step to a fully "stateless" app server. Hosted PostgreSQL free tiers were **not** assumed permanent: e.g. [Render's free Postgres expires 30 days after creation and has no backups](https://render.com/docs/free) (per Render's docs as of 2026-10-12). Whatever you choose, check the provider's own current limits and backup terms before storing real data there.
 | Option | Persistent disk? | Truly $0? | Verdict |
 |---|---|---|---|
 | **Render free web service** | **No.** [Free services have an ephemeral filesystem and spin down after 15 min idle; persistent disks are paid-only](https://render.com/docs/free) ([disks docs](https://docs.render.com/disks)) | $0 but would lose the photos (and a free Postgres expires after 30 days, no backups) | ❌ Unsuitable |

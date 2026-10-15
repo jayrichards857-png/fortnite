@@ -18,7 +18,7 @@ function assertSafeEnvironment({ nodeEnv = '', shippoKey = '', fake = false, man
   if (fake && manual) throw new Error('Choose either --fake-shippo or --manual-only, not both.');
   if (/^production\b/.test(String(nodeEnv).trim())) throw new Error('The shipping sandbox is development-only and refuses to run with NODE_ENV=production.');
   const ident = (u) => { const x = new URL(u); return `${x.hostname}:${x.port || 5432}/${decodeURIComponent(x.pathname.slice(1))}`; };
-  if (realDatabaseUrl && ident(databaseUrl) === ident(realDatabaseUrl)) throw new Error('Refusing to use the real PairPlug database. The sandbox has its own database.');
+  if (realDatabaseUrl && ident(databaseUrl) === ident(realDatabaseUrl)) throw new Error('Refusing to use the real Grailedside database. The sandbox has its own database.');
   if (!/^pp_sandbox/.test(decodeURIComponent(new URL(databaseUrl).pathname.slice(1)))) throw new Error('The sandbox database must be named pp_sandbox* (it is created and dropped by the sandbox only).');
   if (!fake && !manual) {          // --manual-only never uses Shippo (any key in the environment is ignored and removed), so there is nothing to validate
     if (!shippoKey) throw new Error('Set SHIPPO_API_KEY to a Shippo TEST token (starts with shippo_test_) in this terminal, or run with --fake-shippo to try the UI without Shippo.');

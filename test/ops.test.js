@@ -37,7 +37,7 @@ test('migration 3 upgrades a populated v2 database without losing or rewriting h
   `);
   await old.close();
   assert.equal(out.v, MIGRATIONS.length);
-  assert.deepEqual(out.order, { status: 'released', mode: 'platform', total: 4700, fee: 400, payout: 4134, snap: null }, 'historical order is untouched and marked as a PairPlug-processed (platform) order');
+  assert.deepEqual(out.order, { status: 'released', mode: 'platform', total: 4700, fee: 400, payout: 4134, snap: null }, 'historical order is untouched and marked as a Grailedside-processed (platform) order');
   assert.deepEqual(out.ledger, [{ a: 4134 }]); assert.deepEqual(out.wd, [{ s: 'requested' }]); assert.equal(out.ck, 'platform');
   assert.deepEqual(out.ship, [{ id: 1, p: 'seller' }, { id: 2, p: 'buyer' }, { id: 3, p: 'buyer' }], 'existing free listings become seller-pays; the rest stay buyer-pays');
   assert.match(out.del, /cannot be deleted/, 'history is protected from deletion after migration');

@@ -1,6 +1,6 @@
 'use strict';
 // Admin-only account management: create buyer / seller / admin accounts directly, and reset a user's password.
-// PairPlug sellers are curated: ONLY an authenticated administrator can reach these functions (routes use requireAdmin; the check is repeated here).
+// Grailedside sellers are curated: ONLY an authenticated administrator can reach these functions (routes use requireAdmin; the check is repeated here).
 //   * No account is ever created from a public form with a role; public sign-up creates buyers only (src/routes/buyer.js).
 //   * Credentials are random temporary passwords (~120 bits), shown ONCE to the acting admin in the response, stored only as a scrypt hash, never
 //     logged or audited. The account must replace it at first login (must_change_password); changing it signs the user out everywhere else.

@@ -16,7 +16,7 @@ const mode = () => config.shippo.mode;
 // In the live beta (production, or any normal run) it is unavailable: sellers buy postage from their own shipping account and enter the tracking number.
 // A real customer address is therefore never sent to Shippo outside the sandbox's TEST data.
 const enabled = () => mode() === 'test' && !config.isProd && config.sandbox === true;
-const disabledReason = () => 'PairPlug does not buy shipping labels or pay postage in the beta. Buy postage from your own shipping account (for example Shippo, Pirate Ship or USPS) and enter the tracking number on the order.';
+const disabledReason = () => 'Grailedside does not buy shipping labels or pay postage in the beta. Buy postage from your own shipping account (for example Shippo, Pirate Ship or USPS) and enter the tracking number on the order.';
 
 async function realTransport({ method, path, body }) {
   const res = await fetch(BASE + path, {
@@ -32,7 +32,7 @@ async function call(method, path, body) {
   let out;
   try { out = await (transport || realTransport)({ method, path, body }); }
   catch { throw new ShippoError('unknown', 'Could not reach the shipping provider. Nothing was confirmed.', 502); }
-  if (out.status === 401 || out.status === 403) throw new ShippoError('rejected', 'The shipping provider refused our credentials. Contact PairPlug support.', 502);
+  if (out.status === 401 || out.status === 403) throw new ShippoError('rejected', 'The shipping provider refused our credentials. Contact Grailedside support.', 502);
   if (out.status >= 500) throw new ShippoError('unknown', 'The shipping provider had a problem. Nothing was confirmed.', 502);
   if (out.status >= 400) throw new ShippoError('rejected', providerMessage(out.json) || 'The shipping provider rejected the request.', 422);
   if (out.json && out.json.test === false) throw new ShippoError('disabled', 'Refusing a non-test response: live label purchasing is disabled.', 503);   // defence in depth

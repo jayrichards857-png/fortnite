@@ -103,7 +103,7 @@ async function saveListing(user, id, body) {
   const v = validateListing(body, { publish });
   const files = await ownedUploads(user.id, v.images);
   // Verified email is required to publish (and to stay eligible for new orders; see externalCheckout.purchasable).
-  if (publish && (await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) throw new HttpError(403, 'Selling is paused on your account while PairPlug reviews a report. You can still reply to PairPlug and handle existing orders.');
+  if (publish && (await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) throw new HttpError(403, 'Selling is paused on your account while Grailedside reviews a report. You can still reply to Grailedside and handle existing orders.');
   // Hybrid checkout: a listing needs no payment link to be published. Without one it is contact-only (no Buy now button).
   let prev = null;
   const saved = await tx(async () => {
@@ -161,7 +161,7 @@ async function auditPaymentLink(user, saved, prev) {
   if (!prev) return;
   const { cur, total, ack, linkSame, totalSame } = prev, was = cur ? cur.payment_url : null;
   if ((saved.payment_url || null) !== (was || null)) await audit(user, 'listing_payment_link_changed', { type: 'listing', id: saved.id, detail: { from: was, to: saved.payment_url || null } });
-  if (ack && !(linkSame && totalSame)) await audit(user, 'listing_payment_total_acknowledged', { type: 'listing', id: saved.id, detail: { total_cents: total, link: saved.payment_url, policy: PP.VERSION, note: 'seller statement; not verified by PairPlug' } });
+  if (ack && !(linkSame && totalSame)) await audit(user, 'listing_payment_total_acknowledged', { type: 'listing', id: saved.id, detail: { total_cents: total, link: saved.payment_url, policy: PP.VERSION, note: 'seller statement; not verified by Grailedside' } });
   if (!ack && cur && cur.payment_total_ack_cents != null) await audit(user, 'listing_payment_ack_cleared', { type: 'listing', id: saved.id, detail: { reason: !linkSame ? 'payment link changed' : total !== cur.payment_total_ack_cents ? 'price or shipping changed' : 'box unticked' } });
 }
 
@@ -280,7 +280,7 @@ async function importCsv(user, text) {
 
 /** Can this listing go live right now? Returns a human-readable reason it can't, or null. One rule set for publish, resume and bulk. */
 async function publishBlocker(user, l) {
-  if ((await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) return 'Selling is paused on your account while PairPlug reviews a report.';
+  if ((await q.get('SELECT selling_restricted_at r FROM users WHERE id = ?', user.id)).r) return 'Selling is paused on your account while Grailedside reviews a report.';
   if (!await q.get('SELECT 1 x FROM listing_images WHERE listing_id = ?', l.id)) return 'Add at least one photo.';
   if (!l.condition) return 'Choose a condition.';
   if (!(l.weight_oz > 0)) return 'Add a shipping weight.';

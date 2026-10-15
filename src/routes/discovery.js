@@ -11,7 +11,7 @@ const page = async (req, res, o) => res.send(await V.layout({ user: req.user, ..
 
 r.get('/sellers', async (req, res) => {
   const result = await D.discoverSellers({ page: req.query.page, per: 12 }), cards = await D.withPreviews(result.items), fol = await D.followedSet(req.user);
-  await page(req, res, { title: 'Sellers', path: '/sellers', body: `<h1>Discover sellers</h1><p class="muted small" style="margin-top:-4px">Independent stores on PairPlug — The Clothing Marketplace.</p><p class="muted small">Public seller profiles — stores with items available now come first, then newer stores that haven't listed anything yet. ${result.total} seller${result.total === 1 ? '' : 's'}.</p>
+  await page(req, res, { title: 'Sellers', path: '/sellers', body: `<h1>Discover sellers</h1><p class="muted small" style="margin-top:-4px">Independent stores on Grailedside — The Clothing Marketplace.</p><p class="muted small">Public seller profiles — stores with items available now come first, then newer stores that haven't listed anything yet. ${result.total} seller${result.total === 1 ? '' : 's'}.</p>
     ${cards.length ? `<div class="sgrid">${(await Promise.all(cards.map(async (s) => await D.sellerCard(s, { following: fol, user: req.user })))).join('')}</div>${V.pager(result.page, result.pages, {})}` : V.empty('No sellers to show yet', 'Approved sellers appear here as soon as their store is open.', ['/shop', 'Browse the shop'])}` });
 });
 r.get('/following', auth.requireUser, async (req, res) => {

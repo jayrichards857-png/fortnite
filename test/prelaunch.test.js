@@ -207,7 +207,7 @@ test('the payment destination is frozen at order time (editing the listing\'s li
 });
 
 // ------------------------------------------------------------------ re-assert the launch-critical money invariants end to end
-test('invariants: nothing becomes paid/sold without the seller; no PairPlug money records; stranger cannot read order or address', async () => {
+test('invariants: nothing becomes paid/sold without the seller; no Grailedside money records; stranger cannot read order or address', async () => {
   const { seller, buyer, id } = await scene(), stranger = await H.newUser('Nosy'), other = await H.newSeller('Other');
   const o = (await buy(buyer, id)).json.orderId;
   // every buyer-side and anonymous action leaves the order unpaid and the item unsold

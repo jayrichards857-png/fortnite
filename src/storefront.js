@@ -40,8 +40,8 @@ function themeCss() {
 }
 
 const LIMITS = { headline: 80, announcement: 240, about: 1200, featured: 6, links: 4 };
-// A storefront must not imitate PairPlug itself or promise protections PairPlug doesn't provide.
-const FORBIDDEN = /\b(escrow|pairplug\s+(guarantee|guaranteed|verified|certified|official|protection|protected|admin|staff|team|support)|(guaranteed|verified|certified|protected|endorsed)\s+by\s+pairplug|official\s+pairplug|buyer\s+protection|money[- ]back\s+guarantee)\b/i;
+// A storefront must not imitate Grailedside itself or promise protections Grailedside doesn't provide.
+const FORBIDDEN = /\b(escrow|(?:pairplug|grailedside)\s+(guarantee|guaranteed|verified|certified|official|protection|protected|admin|staff|team|support)|(guaranteed|verified|certified|protected|endorsed)\s+by\s+(?:pairplug|grailedside)|official\s+(?:pairplug|grailedside)|buyer\s+protection|money[- ]back\s+guarantee)\b/i;
 
 const defaults = () => ({ theme: 'light', accent: 'forest', layout: 'grid', sort: 'newest', headline: '', announcement: '', about: '', avatar: null, logo: null, banner: null, featured: [], links: [], showLocation: true });
 const pick = (map, v, field, errors) => { if (v == null || v === '') return Object.keys(map)[0]; if (!Object.hasOwn(map, v)) { errors[field] = 'Choose one of the available options.'; return Object.keys(map)[0]; } return v; };
@@ -54,7 +54,7 @@ async function validate(user, input = {}) {
   for (const [k, max, one] of [['headline', LIMITS.headline, true], ['announcement', LIMITS.announcement, true], ['about', LIMITS.about, false]]) {
     const text = one ? cleanLine(input[k], max + 1) : clean(input[k], max + 1);
     if (text.length > max) e[k] = `Keep this under ${max} characters.`;
-    else if (FORBIDDEN.test(text)) e[k] = 'Storefronts can’t claim PairPlug guarantees, protection, escrow or staff status.';
+    else if (FORBIDDEN.test(text)) e[k] = 'Storefronts can’t claim Grailedside guarantees, protection, escrow or staff status.';
     else out[k] = text;
   }
   out.showLocation = input.showLocation !== false && input.showLocation !== 'false';

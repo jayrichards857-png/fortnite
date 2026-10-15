@@ -37,7 +37,7 @@ test('with no durable storage configured, saving an upload is refused with a cle
 
 const GOOD = { VERCEL: '1', VERCEL_ENV: 'preview', NODE_ENV: 'production', PUBLIC_URL: 'https://pairplug.example', CHECKOUT_MODE: 'external', SELLER_ONBOARDING: 'invite', SIGNUPS: 'open',
   TRUST_PROXY: '1', PAIRPLUG_DB_LABEL: 'preview', CRON_SECRET: 'c'.repeat(40), S3_ENDPOINT: 'http://127.0.0.1:9', S3_BUCKET: 'b', S3_ACCESS_KEY_ID: 'a', S3_SECRET_ACCESS_KEY: 's',
-  EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'k', EMAIL_FROM: 'PairPlug <hello@pairplug.example>' };
+  EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'k', EMAIL_FROM: 'Grailedside <hello@pairplug.example>' };
 /** Drive the Vercel entry (api/index.js) over real HTTP with a chosen Host header; returns one JSON line per request. */
 const drive = (env, paths) => run(`const app = require('./api/index.js'); if (typeof app !== 'function') { console.log('NOT_A_HANDLER'); process.exit(2); }
   const http = require('node:http'), srv = http.createServer(app).listen(0, async () => { const out = [];

@@ -1,7 +1,7 @@
 {
   "name": "pairplug",
   "version": "1.0.0",
-  "description": "PairPlug - clothing marketplace (private beta) on Node.js + PostgreSQL",
+  "description": "Grailedside - clothing marketplace (private beta) on Node.js + PostgreSQL",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

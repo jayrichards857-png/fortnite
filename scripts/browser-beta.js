@@ -25,7 +25,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
   const errors = [], external = [];
   const mk = async (viewport = { width: 1280, height: 800 }, extra = {}) => {
     const ctx = await browser.newContext({ viewport, ...extra });
-    // Capture exactly where PairPlug redirects the buyer (the Location header), then serve a stub instead of following it.
+    // Capture exactly where Grailedside redirects the buyer (the Location header), then serve a stub instead of following it.
     await ctx.route('**/orders/*/pay', async (r) => { const resp = await r.fetch({ maxRedirects: 0 }); external.push(resp.headers().location || ''); await r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Stub of the seller checkout (external site not contacted)</h1>' }); });
     const pg = await ctx.newPage(); pg.on('pageerror', (e) => errors.push(e.message)); return { ctx, pg };
   };
@@ -54,7 +54,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await Promise.all([s.pg.waitForURL(/\/listing\/\d+$/), s.pg.click('[data-save=active]')]); step('listing published: ' + s.pg.url());
     const listingUrl = s.pg.url(), listingId = listingUrl.split('/').pop();
 
-    // ---- buyer: sees terms before leaving PairPlug
+    // ---- buyer: sees terms before leaving Grailedside
     await b.pg.goto(listingUrl);
     const lp = await b.pg.textContent('main');
     assert.match(lp, /\$55\.00/); assert.match(lp, /\$7\.00 flat fee, paid by the buyer/); assert.match(lp, /Buy now/); assert.doesNotMatch(lp, /escrow|Add to cart/i);
@@ -70,7 +70,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await b.pg.click('a:has-text("Buy now")'); await b.pg.waitForURL(/\/login/);
     await b.pg.goto(B + '/register?next=/buy/' + listingId); await b.pg.fill('#n', 'Jordan Buyer'); await b.pg.fill('#e', 'jordan@example.test'); await b.pg.fill('#p', 'a-long-password-2'); await b.pg.check('input[name=terms]');
     await b.pg.click('button[type=submit]'); await b.pg.waitForURL((u) => u.pathname.startsWith('/buy/')); step('anonymous buyer is sent to sign up, then back to the purchase page');
-    assert.match(await b.pg.textContent('main'), /does not currently hold or directly control those funds/); assert.match(await b.pg.textContent('main'), /If an issue arises, contact PairPlug/);
+    assert.match(await b.pg.textContent('main'), /does not currently hold or directly control those funds/); assert.match(await b.pg.textContent('main'), /If an issue arises, contact Grailedside/);
     await b.pg.fill('#a_name', 'Jordan Buyer'); await b.pg.fill('#a_line1', '1 Test Way'); await b.pg.fill('#a_city', 'Seattle'); await b.pg.fill('#a_region', 'WA'); await b.pg.fill('#a_postal', '98101');
     await b.pg.click('button:has-text("Reserve item")'); await b.pg.locator('.err, .form-err').first().waitFor(); step('purchase blocked until the payment-model acknowledgement is ticked');
     await shot(b.pg, 'beta-03-buy.png');
@@ -93,7 +93,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await s.pg.goto(B + '/dashboard/orders'); assert.match(await s.pg.textContent('tbody'), /Unconfirmed/);
     await s.pg.click('a:has-text("Confirm payment")'); await s.pg.waitForSelector('text=Confirm the payment');
     assert.doesNotMatch(await s.pg.textContent('main'), /1 Test Way/); step('seller order page: payment unconfirmed, shipping address hidden'); await shot(s.pg, 'beta-05-seller-order-confirm.png');
-    await s.pg.fill('#pr', 'ch_test_123'); await s.pg.click('button:has-text("Payment received")'); await s.pg.waitForSelector('text=Ship this order'); assert.match(await s.pg.textContent('main'), /PairPlug does not buy labels or pay postage/); assert.doesNotMatch(await s.pg.textContent('main'), /Buy shipping label|Get shipping rates/);
+    await s.pg.fill('#pr', 'ch_test_123'); await s.pg.click('button:has-text("Payment received")'); await s.pg.waitForSelector('text=Ship this order'); assert.match(await s.pg.textContent('main'), /Grailedside does not buy labels or pay postage/); assert.doesNotMatch(await s.pg.textContent('main'), /Buy shipping label|Get shipping rates/);
     assert.match(await s.pg.textContent('main'), /1 Test Way/); step('after the SELLER confirmed, status is paid and the address is revealed');
     assert.match(await s.pg.textContent('main'), /does not<\/?[a-z]*>? buy labels|does not buy labels|does\s+not\s+buy/i);
     await s.pg.fill('#tn', '9400111899223344'); await s.pg.click('button:has-text("Mark shipped")'); await s.pg.waitForSelector('text=Shipped'); step('seller recorded carrier + tracking'); await shot(s.pg, 'beta-06-seller-order-shipped.png');
@@ -104,7 +104,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await b.pg.click('button:has-text("Mark as received")'); await b.pg.waitForSelector('h1:has-text("Delivered")');
     await b.pg.click('button:has-text("Message the seller")'); await b.pg.waitForURL(/\/messages\/\d+/); await b.pg.locator('.conn span', { hasText: /Live · / }).first().waitFor({ timeout: 15000 }); step('"Message the seller" opens chat: "' + await b.pg.locator('#conn span').textContent() + '"');
     await b.pg.goto(orderUrl); await shot(b.pg, 'beta-07-buyer-order-delivered.png');
-    await s.pg.goto(B + '/dashboard'); const dash = await s.pg.textContent('main'); assert.match(dash, /Direct checkout/); assert.match(dash, /PairPlug does not process these payments/); await shot(s.pg, 'beta-08-seller-dashboard.png');
+    await s.pg.goto(B + '/dashboard'); const dash = await s.pg.textContent('main'); assert.match(dash, /Direct checkout/); assert.match(dash, /Grailedside does not process these payments/); await shot(s.pg, 'beta-08-seller-dashboard.png');
 
     // ---- mobile viewport
     const m = await mk({ width: 390, height: 844 }, { deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -115,7 +115,7 @@ const LINK = 'https://buy.stripe.com/test_beta_journey_123';
     await m.ctx.addCookies([{ name: 'pp_session', value: login.headers.get('set-cookie').split(';')[0].split('=')[1], url: B }]);
     await m.pg.goto(orderUrl); assert.ok((await overflow(m.pg)) <= 1, 'order page has no horizontal scroll on mobile'); await shot(m.pg, 'beta-10-mobile-order.png');
     step('mobile viewport: no horizontal overflow');
-    assert.ok(external.length >= 1 && external.every((u) => new URL(u).hostname === 'buy.stripe.com'), 'PairPlug only ever redirected to the seller\'s allowlisted checkout host');
+    assert.ok(external.length >= 1 && external.every((u) => new URL(u).hostname === 'buy.stripe.com'), 'Grailedside only ever redirected to the seller\'s allowlisted checkout host');
     assert.deepEqual(errors, [], 'no uncaught browser errors');
     console.log('\nBROWSER BETA JOURNEY PASSED');
   } finally { await browser.close(); server.kill(); dropFresh(); }

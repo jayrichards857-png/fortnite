@@ -28,13 +28,13 @@ test('checkout amounts: the listing, buy page, order and snapshot agree on item 
   const made = await seller.post('/api/seller/listings', await body(seller, { payment_amount_ack: true, quantity: 3 })); assert.equal(made.status, 200); const id = made.json.id;
   assert.equal((await q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id)).a, 10785);
   const listing = await get(buyer, `/listing/${id}`); assert.match(listing, /\$100\.00/); assert.match(listing, /\$7\.85 flat/); assert.match(listing, /\$107\.85/);
-  const buyPage = await get(buyer, `/buy/${id}`); assert.match(buyPage, /\$107\.85/); assert.match(text0(buyPage), /The total shown on PairPlug should match the amount shown at Stripe checkout before you pay/);
+  const buyPage = await get(buyer, `/buy/${id}`); assert.match(buyPage, /\$107\.85/); assert.match(text0(buyPage), /The total shown on Grailedside should match the amount shown at Stripe checkout before you pay/);
   const r = await buyer.post('/api/purchases', { listingId: id, acknowledged: true, address: H.address }); assert.equal(r.status, 200); const o = oid(r);
   const row = await q.get('SELECT * FROM orders WHERE id = ?', o); assert.deepEqual([row.subtotal_cents, row.shipping_cents, row.total_cents], [10000, 785, 10785]);
   const snap = JSON.parse(row.snapshot_json); assert.equal(snap.terms.totalCents, 10785); assert.equal(snap.terms.currency, 'USD');
-  const page = await get(buyer, `/orders/${o}`); assert.match(page, /\$107\.85/); assert.match(page, /Before you pay/); assert.match(text0(page), /If the amounts differ, do not complete the payment\. Return to PairPlug and contact support/);
+  const page = await get(buyer, `/orders/${o}`); assert.match(page, /\$107\.85/); assert.match(page, /Before you pay/); assert.match(text0(page), /If the amounts differ, do not complete the payment\. Return to Grailedside and contact support/);
   const pay = await buyer.get(`/orders/${o}/pay`); assert.equal(pay.status, 302); const u = new URL(pay.headers.get('location')); assert.equal(u.hostname, 'buy.stripe.com'); assert.equal(u.searchParams.get('client_reference_id'), `PP-${o}`);
-  assert.doesNotMatch(u.search, /amount|price|prefilled/i, 'PairPlug cannot set the amount on the provider page, and does not pretend to');
+  assert.doesNotMatch(u.search, /amount|price|prefilled/i, 'Grailedside cannot set the amount on the provider page, and does not pretend to');
   // changing the price (the link now charges the OLD total) un-confirms it: checkout is paused until the seller confirms again
   const cheaper = await seller.put(`/api/seller/listings/${id}`, await body(seller, { price: '14.15', payment_amount_ack: false, quantity: 3 })); assert.equal(cheaper.status, 200);
   assert.equal((await q.get('SELECT payment_total_ack_cents a FROM listings WHERE id = ?', id)).a, null);

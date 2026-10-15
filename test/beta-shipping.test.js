@@ -1,5 +1,5 @@
 'use strict';
-// Live-beta shipping: sellers buy postage themselves and record carrier + tracking. PairPlug never buys labels or pays postage, and Shippo
+// Live-beta shipping: sellers buy postage themselves and record carrier + tracking. Grailedside never buys labels or pays postage, and Shippo
 // label purchasing is unavailable outside the isolated sandbox (even with a test token, a live token, or a mistaken configuration).
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
@@ -24,12 +24,12 @@ async function order({ confirm = true, payer = 'buyer' } = {}) {
 }
 const NO_LABEL_UI = /Buy shipping label|Get shipping rates|Shipping label \(sandbox|TEST MODE|id="ship-panel"|shipping\.js/;
 
-test('the live seller order page explains the manual workflow in plain steps and offers no PairPlug label purchase', async () => {
+test('the live seller order page explains the manual workflow in plain steps and offers no Grailedside label purchase', async () => {
   const { seller, o } = await order(); const page = (await seller.get(`/dashboard/orders/${o}`)).text;
-  assert.match(page, /Ship this order/); assert.match(page, /Buy postage yourself/); assert.match(page, /PairPlug does not buy labels or pay postage/);
+  assert.match(page, /Ship this order/); assert.match(page, /Buy postage yourself/); assert.match(page, /Grailedside does not buy labels or pay postage/);
   assert.match(page, /Recipient/); assert.match(page, /Enter the carrier and tracking number/); assert.match(page, /Mark shipped/);
   assert.match(page, /it is <em>not<\/em> a prepaid label/); assert.match(page, /you still buy and pay for postage yourself/);
-  assert.match(page, /records<\/strong> it in PairPlug/); assert.match(page, /does not buy postage and does not guarantee delivery/);
+  assert.match(page, /records<\/strong> it in Grailedside/); assert.match(page, /does not buy postage and does not guarantee delivery/);
   for (const c of config.carriers) assert.ok(page.includes(`<option>${c}</option>`), `carrier ${c}`);
   assert.match(page, /name="tracking"/); assert.match(page, /name="note"/);
   assert.doesNotMatch(page, NO_LABEL_UI, 'no label-purchase UI in the beta');

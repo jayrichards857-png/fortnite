@@ -1,5 +1,5 @@
 'use strict';
-// Order creation, persistence, visibility and manual payment confirmation (direct-to-seller model: PairPlug never handles money).
+// Order creation, persistence, visibility and manual payment confirmation (direct-to-seller model: Grailedside never handles money).
 process.env.CHECKOUT_MODE = 'external';
 const test = require('node:test');
 const assert = require('node:assert/strict');

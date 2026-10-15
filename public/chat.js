@@ -1,4 +1,4 @@
-// PairPlug chat client.
+// Grailedside chat client.
 //   UI + state  ←→  Transport (interface)  ←→  server
 // A transport implements: start(), stop(), rpc(cmd) -> Promise<data>, and reports via handlers
 //   { state(name), event(ev), cursor() }.
@@ -252,9 +252,9 @@
   }
 
   async function reportMessage(c, m) {
-    const reason = window.prompt('Why are you reporting this message? PairPlug support will be able to read this conversation. (10+ characters)');
+    const reason = window.prompt('Why are you reporting this message? Grailedside support will be able to read this conversation. (10+ characters)');
     if (!reason) return;
-    try { const r = await fetch('/api/chat/report', { method: 'POST', headers: HDRS, body: JSON.stringify({ conversationId: c.id, messageId: m.id, reason }), credentials: 'same-origin' }); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Could not send the report'); window.alert('Thanks. PairPlug support will review it (case #' + d.id + ').'); }
+    try { const r = await fetch('/api/chat/report', { method: 'POST', headers: HDRS, body: JSON.stringify({ conversationId: c.id, messageId: m.id, reason }), credentials: 'same-origin' }); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Could not send the report'); window.alert('Thanks. Grailedside support will review it (case #' + d.id + ').'); }
     catch (e) { window.alert(e.message); }
   }
   const waitingHours = (c) => (c.role === 'seller' && c.lastSender && c.lastSender !== me.id && c.lastMessageAt ? Math.floor((Date.now() / 1000 - c.lastMessageAt) / 3600) : -1);

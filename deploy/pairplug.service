@@ -1,6 +1,6 @@
 # /etc/systemd/system/pairplug.service   (UNTESTED on a real VM — review before use; see docs/DEPLOYMENT.md)
 [Unit]
-Description=PairPlug (private beta)
+Description=Grailedside (private beta)
 After=network-online.target
 Wants=network-online.target
 

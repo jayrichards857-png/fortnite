@@ -23,7 +23,7 @@ const page = async (req, res, opts) => res.send(await V.layout({ user: req.user,
 const notFound = async (req, res, what = 'Not found') => res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty(what, 'It may not exist, or it belongs to someone else.', ['/shop', 'Browse the shop']) }));
 const reqNo = (o) => `PP-${o.id}`;
 
-// ---------- Switch the PairPlug-held cart/escrow checkout off in direct-checkout mode ----------
+// ---------- Switch the Grailedside-held cart/escrow checkout off in direct-checkout mode ----------
 r.all(['/cart', '/checkout', '/api/cart', '/api/cart/:id', '/api/checkout', '/pay/:id', '/api/sandbox/pay/:id'], async (req, res, next) => {
   if (!X.isExternal()) return next();
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'The cart is not used in the private beta. Each item is purchased directly from its seller.' });
@@ -31,9 +31,9 @@ r.all(['/cart', '/checkout', '/api/cart', '/api/cart/:id', '/api/checkout', '/pa
 });
 
 const HOW_IT_WORKS = `<div class="panel notice"><h3>How payment works</h3><ul class="plain">
-  <li><strong>You pay the seller through their external checkout</strong> (for example Stripe). PairPlug does not currently hold or directly control those funds.</li>
-  <li>The seller confirms your payment on PairPlug, then ships. Until they confirm, the order shows as <em>awaiting payment confirmation</em>. That confirmation is the seller's statement; PairPlug does not independently verify it.</li>
-  <li><strong>If an issue arises, contact PairPlug.</strong> We may review the order, contact the seller, and report the problem to the payment processor with the evidence we have. We cannot promise a refund or recovery.</li></ul>${DISC.canCannot({ compact: true })}<p class="small" style="margin:8px 0 0">Details: <a href="/payments">Payments, Refunds &amp; Disputes</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></p></div>`;
+  <li><strong>You pay the seller through their external checkout</strong> (for example Stripe). Grailedside does not currently hold or directly control those funds.</li>
+  <li>The seller confirms your payment on Grailedside, then ships. Until they confirm, the order shows as <em>awaiting payment confirmation</em>. That confirmation is the seller's statement; Grailedside does not independently verify it.</li>
+  <li><strong>If an issue arises, contact Grailedside.</strong> We may review the order, contact the seller, and report the problem to the payment processor with the evidence we have. We cannot promise a refund or recovery.</li></ul>${DISC.canCannot({ compact: true })}<p class="small" style="margin:8px 0 0">Details: <a href="/payments">Payments, Refunds &amp; Disputes</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></p></div>`;
 
 // ---------- Buyer: review terms + address, then reserve ----------
 r.get('/buy/:id(\\d+)', auth.requireUser, async (req, res) => {
@@ -54,7 +54,7 @@ r.get('/buy/:id(\\d+)', auth.requireUser, async (req, res) => {
       <label for="a_country">Country</label><select id="a_country" name="country"><option value="US">United States</option><option value="CA">Canada</option><option value="MX">Mexico</option></select>
       <label style="font-weight:400;display:flex;gap:8px;margin-top:14px"><input type="checkbox" id="ack" name="acknowledged"> ${esc(DISC.ACK)}</label>
       <button class="btn block" style="margin-top:14px" type="submit">Reserve item &amp; continue</button>
-      <p class="small muted" style="margin-bottom:0">The item is held for you for ${(await getSettings()).external_hold_minutes} minutes while you pay. Nothing is charged by PairPlug.</p></form></section>
+      <p class="small muted" style="margin-bottom:0">The item is held for you for ${(await getSettings()).external_hold_minutes} minutes while you pay. Nothing is charged by Grailedside.</p></form></section>
     <aside class="panel sticky"><h3>Order summary</h3><div class="line" style="grid-template-columns:56px 1fr"><a href="/listing/${l.id}">${V.img(l.images[0], 'thumb', l.title)}</a><div><strong>${esc(l.title)}</strong><div class="muted small">${esc([l.size && 'Size ' + l.size, l.condition && config.conditions[l.condition]].filter(Boolean).join(' · '))}</div></div></div>
       <div class="summary-row"><span>Item</span><span>${money(t.itemCents)}</span></div>
       <div class="summary-row"><span>Shipping${t.shippingPayer === 'seller' ? ' (seller pays)' : ' (flat fee)'}</span><span>${t.shippingCents ? money(t.shippingCents) : 'Free'}</span></div>
@@ -84,7 +84,7 @@ r.get('/orders/:id(\\d+)', auth.requireUser, async (req, res, next) => {
   const review = await q.get('SELECT * FROM reviews WHERE order_id = ?', o.id), track = trackingUrl(o.carrier, o.tracking_number), buyerLbl = await SHP.realLabel(o.id);
   const pending = o.status === 'pending_payment', until = ck.expires_at;
   const action = pending ? `<div class="panel notice strong"><h3>Step 2: pay the seller</h3>
-      <p>Your item is reserved until <strong>${new Date(until * 1000).toLocaleString()}</strong>. Pay <strong>${money(o.total_cents)}</strong> on the seller's own checkout page (opens in the seller's payment provider, not PairPlug).</p>
+      <p>Your item is reserved until <strong>${new Date(until * 1000).toLocaleString()}</strong>. Pay <strong>${money(o.total_cents)}</strong> on the seller's own checkout page (opens in the seller's payment provider, not Grailedside).</p>
       ${PP.buyerWarning({ itemCents: o.subtotal_cents, shippingCents: o.shipping_cents, totalCents: o.total_cents }, { id: 'byp-order', reportHref: `/support?order=${o.id}#payment-mismatch` })}
       <p><a class="btn" href="/orders/${o.id}/pay" target="_blank" rel="noopener noreferrer">Go to seller checkout ↗</a></p>
       ${o.buyer_claimed_paid_at ? '<p class="small"><strong>You told us you paid.</strong> The seller has been notified and will confirm once they see the payment. Your reservation is extended while they check.</p>'
@@ -102,12 +102,12 @@ r.get('/orders/:id(\\d+)', auth.requireUser, async (req, res, next) => {
       ${o.tracking_number ? `<p style="margin:0">Carrier: <strong>${esc(o.carrier)}</strong> · Tracking: <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track package ↗</a>` : ''}</p>${o.ship_note ? `<p class="small" style="margin:6px 0 0"><strong>Seller note:</strong> ${esc(o.ship_note)}</p>` : ''}${buyerLbl && buyerLbl.tracking_status ? `<p class="small" style="margin:6px 0 0">Carrier status: <strong>${esc(buyerLbl.tracking_status)}</strong></p>` : ''}<p class="small muted" style="margin:6px 0 0">Tracking shows what the carrier reports. It is not proof of delivery.</p>` : '<p class="muted" style="margin:0">No tracking yet. The seller buys the label and adds it here after confirming payment.</p>'}</div>
     ${o.status === 'shipped' ? `<div class="panel"><h3>Received it?</h3><button class="btn" data-post="/api/orders/${o.id}/received">Mark as received</button></div>` : ''}
     ${await RV.panel(o)}
-    <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. If it is not resolved, report it to PairPlug below. ${esc(DISC.SHORT)}</p>${DISC.canCannot({ compact: true })}</div>
+    <div class="panel"><h3>Problem with your order?</h3><p style="margin:0 0 8px"><button class="btn ghost small" data-chat-start="${item.listing_id}">Message the seller</button></p><p class="small muted" style="margin:0">Message the seller first; they are expected to reply within 48 hours (an expectation, not a guarantee). Refunds are issued by the seller in their own payment provider. If it is not resolved, report it to Grailedside below. ${esc(DISC.SHORT)}</p>${DISC.canCannot({ compact: true })}</div>
     ${await SP.buyerPanels(o)}
   </section><aside class="panel sticky"><h3>Amount</h3>
     <div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div>
     <div class="summary-row total"><span>Total</span><span>${money(o.total_cents)}</span></div>
-    <p class="small muted">Paid to the seller, outside PairPlug. ${o.payment_confirmed_at ? 'Seller confirmed payment on ' + date(o.payment_confirmed_at) + '.' : 'Not yet confirmed by the seller.'}</p>
+    <p class="small muted">Paid to the seller, outside Grailedside. ${o.payment_confirmed_at ? 'Seller confirmed payment on ' + date(o.payment_confirmed_at) + '.' : 'Not yet confirmed by the seller.'}</p>
     <h3 style="margin-top:16px">Progress</h3><ul class="timeline">${events.map((e) => `<li><strong>${esc(e.to_status.replace('_', ' '))}</strong> <span class="muted">${new Date(e.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')}</span>${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</li>`).join('')}</ul></aside></div>`;
   res.send(await V.layout({ user: req.user, path: '/orders', title: `Order #${o.id}`, body }));
 });
@@ -132,8 +132,8 @@ r.get('/dashboard/settings', S, async (req, res) => {
       <div><label for="sr">State / province</label><input id="sr" name="region" value="${esc(u.region)}" required></div><div><label for="sy">City</label><input id="sy" name="city" value="${esc(u.city)}" required></div></div>
     <label for="sb">About <span class="opt">(optional)</span></label><textarea id="sb" name="bio" maxlength="500">${esc(u.bio)}</textarea>
     <h3 style="margin-top:22px">Your checkout (how you get paid)</h3>
-    <div class="panel notice"><ul class="plain"><li>Buyers pay <strong>you</strong>, directly, through your own Stripe Payment Link. <strong>PairPlug never holds or touches the money</strong> and takes no fee in the beta.</li>
-      <li>You are responsible for confirming payment, refunds, chargebacks and taxes.</li><li>A Payment Link has a <strong>fixed product and price</strong>. The safest setup is a link <em>per listing</em> (set it in the listing editor). Make sure it charges the item price plus the shipping fee you show on PairPlug.</li></ul></div>
+    <div class="panel notice"><ul class="plain"><li>Buyers pay <strong>you</strong>, directly, through your own Stripe Payment Link. <strong>Grailedside never holds or touches the money</strong> and takes no fee in the beta.</li>
+      <li>You are responsible for confirming payment, refunds, chargebacks and taxes.</li><li>A Payment Link has a <strong>fixed product and price</strong>. The safest setup is a link <em>per listing</em> (set it in the listing editor). Make sure it charges the item price plus the shipping fee you show on Grailedside.</li></ul></div>
     <label for="cu">Default payment link <span class="opt">(optional)</span></label><input id="cu" name="checkout_url" inputmode="url" placeholder="https://buy.stripe.com/…" value="${esc(u.checkout_url || '')}" autocomplete="off">
     <div class="hint">Accepted: HTTPS Stripe Payment Links on ${esc(hosts)}. <strong>A default link can no longer start a checkout in the beta</strong>: add a Stripe link to each listing and confirm it charges that listing's item price plus shipping.</div>
     <label style="font-weight:400;display:flex;gap:8px;margin-top:10px"><input type="checkbox" name="checkout_url_any_amount"${u.checkout_url_any_amount ? ' checked' : ''}> <span>This default link lets the buyer <strong>enter any amount</strong> (a “customer chooses price” link), so it can be used for any of my listings. Leave unticked if it is a fixed-price link — it will then <em>not</em> be used for listings without their own link.</span></label>
@@ -170,7 +170,7 @@ r.get('/dashboard/orders/:id(\\d+)', S, async (req, res, next) => {
   const panels = [];
   if (o.status === 'pending_payment') panels.push(`<div class="panel notice strong"><h3>Confirm the payment</h3>
     <p>Open your Stripe dashboard and look for a payment of <strong>${money(o.total_cents)}</strong> with client reference <strong>${reqNo(o)}</strong>. ${o.buyer_claimed_paid_at ? '<strong>The buyer says they have paid.</strong>' : 'The buyer has not said they paid yet.'}</p>
-    <p class="small"><strong>Only confirm once the money is in your own account.</strong> PairPlug cannot verify this for you. Confirming marks the item sold and shows you the shipping address.</p>
+    <p class="small"><strong>Only confirm once the money is in your own account.</strong> Grailedside cannot verify this for you. Confirming marks the item sold and shows you the shipping address.</p>
     <form data-api="/api/seller/orders/${o.id}/confirm-payment" data-reload><label for="pr">Payment reference <span class="opt">(optional note, e.g. last 6 characters of the Stripe payment id)</span></label><input id="pr" name="reference" maxlength="80">
       <p style="margin-top:12px"><button class="btn" type="submit">Payment received — confirm order</button> <button class="btn ghost" type="button" data-post="/api/seller/orders/${o.id}/reject-payment" data-confirm="Release the item? The buyer will be told no payment was received.">No payment received — release item</button></p></form>
     <p class="small muted">Reserved until ${new Date(ck.expires_at * 1000).toLocaleString()}; after that the item is released automatically.</p></div>`);
@@ -178,17 +178,17 @@ r.get('/dashboard/orders/:id(\\d+)', S, async (req, res, next) => {
   if (SHIPPO.enabled() && ['paid', 'shipped', 'delivered'].includes(o.status)) panels.push(`<div class="panel" id="ship-panel" data-order="${o.id}"><h3>Shipping label (sandbox test)</h3><noscript><p>Enable JavaScript to use the sandbox label panel, or enter the tracking number below.</p></noscript></div>`);
   const miss = X.addressMissing(ck);
   const recipient = (heading = 'Recipient') => miss
-    ? `<div class="form-err" role="alert"><strong>The buyer's delivery address is missing.</strong> This order predates address collection or the address is incomplete; PairPlug never invents one. ${['pending_payment', 'paid'].includes(o.status) ? `<p style="margin:8px 0 0"><button class="btn small" data-post="/api/seller/orders/${o.id}/request-address">Ask the buyer to add it</button> <span class="small">(in-app notification only; no email is sent)</span></p>` : ''}</div>`
+    ? `<div class="form-err" role="alert"><strong>The buyer's delivery address is missing.</strong> This order predates address collection or the address is incomplete; Grailedside never invents one. ${['pending_payment', 'paid'].includes(o.status) ? `<p style="margin:8px 0 0"><button class="btn small" data-post="/api/seller/orders/${o.id}/request-address">Ask the buyer to add it</button> <span class="small">(in-app notification only; no email is sent)</span></p>` : ''}</div>`
     : `<h4 style="margin:12px 0 4px">${heading}</h4><p style="margin:0 0 12px">${esc(ck.ship_name)}<br>${esc(ck.ship_line1)}${ck.ship_line2 ? '<br>' + esc(ck.ship_line2) : ''}<br>${esc(ck.ship_city)}, ${esc(ck.ship_region)} ${esc(ck.ship_postal)}<br>${esc(ck.ship_country)}</p>`;
   const carrierSel = (cur) => config.carriers.map((c) => `<option${cur === c ? ' selected' : ''}>${esc(c)}</option>`).join('');
   if (o.status === 'paid') panels.push(`<div class="panel" id="ship-this-order"><h3>Ship this order</h3>
-    <ol class="plain"><li><strong>Buy postage yourself</strong>, in your own account: Shippo, Pirate Ship, USPS, Canada Post or any carrier. <strong>PairPlug does not buy labels or pay postage.</strong> ${LABEL_PROVIDERS.map((p) => `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.name)} ↗</a>`).join(' · ')}</li>
+    <ol class="plain"><li><strong>Buy postage yourself</strong>, in your own account: Shippo, Pirate Ship, USPS, Canada Post or any carrier. <strong>Grailedside does not buy labels or pay postage.</strong> ${LABEL_PROVIDERS.map((p) => `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.name)} ↗</a>`).join(' · ')}</li>
       <li><strong>Pack it and ship it to the recipient below</strong> (visible because you confirmed payment).</li>
       <li><strong>Enter the carrier and tracking number</strong>, add an optional message for the buyer, and press <em>Mark shipped</em>. The buyer gets an in-app notification.</li></ol>
     <p class="small" style="margin:0 0 6px">${o.shipping_payer === 'seller' ? '<strong>Free shipping:</strong> you offered free shipping, so you pay the postage yourself.' : `<strong>Buyer-paid shipping:</strong> the buyer already paid you ${money(o.shipping_cents)} for shipping as part of the total. That money went directly to you; it is <em>not</em> a prepaid label, and you still buy and pay for postage yourself.`}</p>
     ${recipient()}
     ${miss ? '' : `<form data-api="/api/seller/orders/${o.id}/ship" data-reload class="row" style="align-items:end"><div><label for="ca">Carrier</label><select id="ca" name="carrier">${carrierSel(realLbl ? carrierName(realLbl.carrier) : '')}</select></div><div><label for="tn">Tracking number</label><input id="tn" name="tracking" required maxlength="40" value="${esc(realLbl ? realLbl.tracking_number : '')}"></div><div><label for="sn2">Message to the buyer <span class="opt">(optional)</span></label><input id="sn2" name="note" maxlength="200"></div><div><button class="btn" type="submit">Mark shipped</button></div></form>`}
-    <p class="small muted" style="margin:8px 0 0">Entering tracking <strong>records</strong> it in PairPlug and shows it to the buyer. It does not buy postage and does not guarantee delivery; tracking is not proof of delivery or contents, so keep your receipt and photos of the package.</p></div>`);
+    <p class="small muted" style="margin:8px 0 0">Entering tracking <strong>records</strong> it in Grailedside and shows it to the buyer. It does not buy postage and does not guarantee delivery; tracking is not proof of delivery or contents, so keep your receipt and photos of the package.</p></div>`);
   if (['shipped', 'delivered', 'released'].includes(o.status)) panels.push(`<div class="panel"><h3>${o.status === 'shipped' ? 'Shipped' : 'Delivered'}</h3>
     <p style="margin:0 0 6px">Carrier <strong>${esc(o.carrier)}</strong> · Tracking <strong>${esc(o.tracking_number)}</strong>${track ? ` · <a href="${esc(track)}" target="_blank" rel="noopener noreferrer">Track ↗</a>` : ''}</p>
     ${o.ship_note ? `<p class="small" style="margin:0 0 6px"><strong>Your message to the buyer:</strong> ${esc(o.ship_note)}</p>` : ''}<p class="small muted" style="margin:0 0 6px">${o.shipped_at ? 'Marked shipped ' + date(o.shipped_at) + '. ' : ''}${o.status === 'shipped' ? 'The order becomes <em>Delivered</em> only when the buyer confirms receipt (or a verified carrier report says so). Your own entry can\'t mark it delivered.' : 'Delivery was confirmed' + (o.delivered_at ? ' on ' + date(o.delivered_at) : '') + '.'}</p>
@@ -201,14 +201,14 @@ r.get('/dashboard/orders/:id(\\d+)', S, async (req, res, next) => {
       <p class="small muted" style="margin:0">Shipping terms offered: ${snap.terms.shippingPayer === 'seller' ? 'free (seller covers the label)' : `buyer pays ${money(snap.terms.shippingCents)} flat`}. Checkout link: ${esc(snap.paymentLink.source === 'listing' ? 'this listing\'s link' : 'your default link')} (${esc(snap.paymentLink.host)}).</p></div>
     ${showAddress ? '' : '<div class="panel"><h3>Recipient</h3><p class="muted" style="margin:0">The recipient\'s delivery address is shown here after you confirm the payment.</p></div>'}
   </section><aside class="panel sticky"><h3>Amount</h3><div class="summary-row"><span>Item</span><span>${money(o.subtotal_cents)}</span></div><div class="summary-row"><span>Shipping</span><span>${o.shipping_cents ? money(o.shipping_cents) : 'Free'}</span></div><div class="summary-row total"><span>Buyer pays you</span><span>${money(o.total_cents)}</span></div>
-    <p class="small muted">Paid directly to you. PairPlug takes no fee and holds no funds.${o.payment_reference ? ` Your note: ${esc(o.payment_reference)}.` : ''}</p>
+    <p class="small muted">Paid directly to you. Grailedside takes no fee and holds no funds.${o.payment_reference ? ` Your note: ${esc(o.payment_reference)}.` : ''}</p>
     <h3 style="margin-top:16px">History</h3><ul class="timeline">${events.map((e) => `<li><strong>${esc(e.to_status.replace('_', ' '))}</strong> <span class="muted">${new Date(e.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')}</span>${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</li>`).join('')}</ul></aside></div>`;
   await dash(req, res, { title: `Order #${o.id}`, path: '/dashboard/orders', body, scripts: SHIPPO.enabled() ? '<script src="/shipping.js" defer></script>' : '' });
 });
 r.post('/api/seller/orders/:id(\\d+)/confirm-payment', S, async (req, res) => res.json(await X.sellerConfirmPayment(req.user, req.params.id, { reference: req.body.reference })));
 r.post('/api/seller/orders/:id(\\d+)/reject-payment', S, async (req, res) => res.json(await X.sellerRejectPayment(req.user, req.params.id)));
 r.post('/api/seller/orders/:id(\\d+)/received', S, async (req, res) => res.json(await X.markReceived(req.user, req.params.id, 'seller')));   // refused for sellers: only the buyer can confirm delivery
-// Shipping for direct orders (carrier + tracking entered by the seller; PairPlug buys no postage). Other order types fall through to the legacy handler.
+// Shipping for direct orders (carrier + tracking entered by the seller; Grailedside buys no postage). Other order types fall through to the legacy handler.
 const direct = async (req) => { const o = await q.get('SELECT payment_mode FROM orders WHERE id = ? AND seller_id = ?', Number(req.params.id), req.user.id); return Boolean(o && o.payment_mode === 'external'); };
 r.post('/api/seller/orders/:id(\\d+)/ship', S, async (req, res, next) => (await direct(req) ? res.json(await X.sellerShip(req.user, req.params.id, req.body)) : next()));
 r.put('/api/seller/orders/:id(\\d+)/tracking', S, async (req, res) => res.json(await X.sellerCorrectTracking(req.user, req.params.id, req.body)));

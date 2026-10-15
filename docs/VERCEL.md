@@ -1,6 +1,6 @@
-# Running PairPlug on Vercel
+# Running Grailedside on Vercel
 
-PairPlug is an Express app. On Vercel it runs as **one serverless function** (`api/index.js` exports the app; `vercel.json` routes every request to it and ships `src/migrations/**`). A serverless function lives only for a request, so everything that used to depend on a long-running process or the local disk has an explicit replacement. **The app refuses to serve (HTTP 503, details in the deployment logs) until every one of them is configured.**
+Grailedside is an Express app. On Vercel it runs as **one serverless function** (`api/index.js` exports the app; `vercel.json` routes every request to it and ships `src/migrations/**`). A serverless function lives only for a request, so everything that used to depend on a long-running process or the local disk has an explicit replacement. **The app refuses to serve (HTTP 503, details in the deployment logs) until every one of them is configured.**
 
 | Was | On Vercel | You need |
 |---|---|---|

@@ -1,7 +1,7 @@
 'use strict';
 // Shipping labels for direct orders: sender/parcel/recipient validation, rate quotes, a confirmed purchase, and safe handling of
 // pending / failed / duplicate purchases. TEST MODE ONLY in this release (see src/shippo.js and docs/SHIPPING.md): no real postage is bought and
-// PairPlug never pays for postage. Every function takes the acting user and scopes by seller_id, so another seller's order/address/label is a 404.
+// Grailedside never pays for postage. Every function takes the acting user and scopes by seller_id, so another seller's order/address/label is a 404.
 const crypto = require('node:crypto');
 const config = require('./config');
 const { q, tx, now, isUnique } = require('./db');

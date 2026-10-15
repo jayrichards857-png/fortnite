@@ -20,13 +20,13 @@ const cssEtag = require('node:crypto').createHash('sha1').update(SF.themeCss()).
 // Generated from the curated palette only (no user input), so it is safe to cache.
 r.get('/storefront.css', (req, res) => res.type('text/css').set('Cache-Control', 'public, max-age=3600').send(SF.themeCss()));
 
-const EXPECT = 'PairPlug sellers aim to reply to messages within 48 hours. This is an expectation, not a guarantee.';
+const EXPECT = 'Grailedside sellers aim to reply to messages within 48 hours. This is an expectation, not a guarantee.';
 
 r.get('/s/:handle', async (req, res) => {
   const s = await q.get('SELECT * FROM users WHERE handle = ? AND is_seller = 1 AND banned = 0', req.params.handle);
   const missing = async () => res.status(404).send(await V.layout({ user: req.user, title: 'Not found', body: V.empty('Seller not found', 'This storefront does not exist or is not available.', ['/shop', 'Browse the shop']) }));
   if (!s) return await missing();
-  if (s.selling_restricted_at && !(req.user && req.user.id === s.id)) return res.status(200).send(await V.layout({ user: req.user, title: 'Store unavailable', body: V.empty('This store is temporarily unavailable', 'PairPlug is reviewing this store. Please check back later, or browse other sellers.', ['/sellers', 'Discover sellers']) }));
+  if (s.selling_restricted_at && !(req.user && req.user.id === s.id)) return res.status(200).send(await V.layout({ user: req.user, title: 'Store unavailable', body: V.empty('This store is temporarily unavailable', 'Grailedside is reviewing this store. Please check back later, or browse other sellers.', ['/sellers', 'Discover sellers']) }));
   const owner = req.user && req.user.id === s.id, wantPreview = req.query.preview === '1' && owner;   // previews are visible to the owner only
   const { settings: st, isDraft } = await SF.effective(s.id, { preview: wantPreview });
   const featuredIds = st.featured || [];
@@ -82,7 +82,7 @@ r.get('/dashboard/storefront', S, async (req, res) => {
     <label for="headline">Headline <span class="opt">(${SF.LIMITS.headline} max)</span></label><input id="headline" name="headline" maxlength="${SF.LIMITS.headline}" value="${esc(w.headline)}">
     <label for="announcement">Announcement / welcome message <span class="opt">(${SF.LIMITS.announcement} max)</span></label><textarea id="announcement" name="announcement" maxlength="${SF.LIMITS.announcement}" style="min-height:70px">${esc(w.announcement)}</textarea>
     <label for="about">About your store <span class="opt">(${SF.LIMITS.about} max, plain text)</span></label><textarea id="about" name="about" maxlength="${SF.LIMITS.about}">${esc(w.about)}</textarea>
-    <p class="hint">Plain text only: HTML, scripts and styling are never executed. You can't claim PairPlug guarantees, escrow or staff status.</p>
+    <p class="hint">Plain text only: HTML, scripts and styling are never executed. You can't claim Grailedside guarantees, escrow or staff status.</p>
     <h3 style="margin-top:20px">Featured items <span class="opt">(up to ${SF.LIMITS.featured}, shown first)</span></h3>
     ${mine.length ? `<div class="picks col">${mine.map((l) => `<label class="opt-pick"><input type="checkbox" name="featured" value="${l.id}"${(w.featured || []).includes(l.id) ? ' checked' : ''}> <span>${esc(l.title)}</span></label>`).join('')}</div>` : '<p class="muted small">You have no items for sale yet. Publish a listing first.</p>'}
     <h3 style="margin-top:20px">Links <span class="opt">(optional, up to ${SF.LIMITS.links})</span></h3>

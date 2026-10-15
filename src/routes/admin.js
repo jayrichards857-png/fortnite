@@ -31,7 +31,7 @@ r.get('/admin', A, async (req, res) => {
   const failedRefunds = (await q.get("SELECT COUNT(*) n FROM refunds WHERE status <> 'succeeded'")).n;
   const sl = await invitations.slots(), pendingApps = Number((await q.get("SELECT COUNT(*) n FROM seller_applications WHERE status = 'pending'")).n), openCases = (await q.get("SELECT COUNT(*) n FROM cases WHERE status IN ('open','awaiting_seller','under_review')")).n;
   await page(req, res, { title: 'Admin', body: `<h1>Marketplace</h1><div class="stats">${stat('Sellers', sl.used, `${sl.liveInvites} pending invitation(s), ${pendingApps} request(s) waiting`)}${stat('Open support cases', openCases)}${stat('Users', c.users, `${c.sellers} sellers`)}${stat('Active listings', c.active)}${stat('Orders', o.orders)}${stat('Gross merchandise value', money(o.gmv), 'buyer totals incl. shipping & tax')}
-    ${stat('PairPlug commission', money(o.fees), '0%')}${stat('Processing fees (est.)', money(o.proc), 'paid to the processor')}${stat('Refunded', money(o.refunds))}${stat('Held in escrow', money(o.escrow), 'seller payouts pending')}
+    ${stat('Grailedside commission', money(o.fees), '0%')}${stat('Processing fees (est.)', money(o.proc), 'paid to the processor')}${stat('Refunded', money(o.refunds))}${stat('Held in escrow', money(o.escrow), 'seller payouts pending')}
     ${stat('Open disputes', c.disputes)}${stat('Pending withdrawals', c.wd)}${stat('Refunds needing attention', failedRefunds)}</div>` });
 });
 
@@ -124,7 +124,7 @@ r.post('/api/admin/users/:id(\\d+)/ban', A, async (req, res) => {
   const out = req.body.banned ? await M.ban(req.user, req.params.id, req.body.reason, req.body.caseId) : await M.unban(req.user, req.params.id, req.body.reason, req.body.caseId);
   res.json({ ok: true, ...(out || {}) });
 });
-// Seller plans are gone: listing is free and PairPlug takes 0% commission, so there is nothing to upgrade to (users.plan is kept only for old data).
+// Seller plans are gone: listing is free and Grailedside takes 0% commission, so there is nothing to upgrade to (users.plan is kept only for old data).
 
 r.get('/admin/listings', A, async (req, res) => {
   const ls = await q.all(`SELECT l.id, l.title, l.status, l.price_cents, l.created_at, u.store_name, u.handle FROM listings l JOIN users u ON u.id = l.seller_id WHERE l.status <> 'draft' ORDER BY l.created_at DESC LIMIT 100`);
@@ -157,7 +157,7 @@ r.post('/api/admin/withdrawals/:id(\\d+)', A, async (req, res) => {
 const FEE_FIELDS = [['processing_bps', 'Processing fee estimate (basis points)'], ['processing_fixed_cents', 'Processing fixed fee (cents)'], ['shipping_margin_bps', 'Shipping label margin (basis points)'], ['auto_release_days', 'Escrow auto-release (days after delivery)'], ['reservation_minutes', 'Checkout hold (minutes)']];
 r.get('/admin/settings', A, async (req, res) => {
   const s = await getSettings();
-  await page(req, res, { title: 'Settings', body: `<h1>Fees & settings</h1><div class="panel form-wide"><p class="small muted"><strong>PairPlug commission is fixed at 0%</strong> and listing is free; it cannot be changed here. The values below are estimates of the payment processor's own fees and apply to <strong>new</strong> orders only. 100 basis points = 1%.</p>
+  await page(req, res, { title: 'Settings', body: `<h1>Fees & settings</h1><div class="panel form-wide"><p class="small muted"><strong>Grailedside commission is fixed at 0%</strong> and listing is free; it cannot be changed here. The values below are estimates of the payment processor's own fees and apply to <strong>new</strong> orders only. 100 basis points = 1%.</p>
   <form data-api="/api/admin/settings" data-method="PUT">${FEE_FIELDS.map(([k, l]) => `<label for="${k}">${l}</label><input id="${k}" name="${k}" inputmode="numeric" value="${s[k]}">`).join('')}<button class="btn" style="margin-top:14px" type="submit">Save</button></form></div>` });
 });
 r.put('/api/admin/settings', A, async (req, res) => {

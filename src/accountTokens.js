@@ -35,8 +35,8 @@ const link = (path, token) => `${config.publicUrl.replace(/\/$/, '')}${path}?tok
 
 async function sendVerification(user) {
   const token = await issue(user.id, 'verify_email', user.email);
-  return await email.send({ to: user.email, kind: 'verify_email', subject: 'Verify your PairPlug email', dedupeKey: `verify:${sha(token).slice(0, 16)}`,
-    text: `Hi ${user.display_name},\n\nConfirm your email address for PairPlug:\n${link('/verify-email', token)}\n\nThis link works once and expires in 48 hours. If you didn't ask for this, ignore this email.\n` });
+  return await email.send({ to: user.email, kind: 'verify_email', subject: 'Verify your Grailedside email', dedupeKey: `verify:${sha(token).slice(0, 16)}`,
+    text: `Hi ${user.display_name},\n\nConfirm your email address for Grailedside:\n${link('/verify-email', token)}\n\nThis link works once and expires in 48 hours. If you didn't ask for this, ignore this email.\n` });
 }
 async function confirmVerification(raw) {
   return await tx(async () => {
@@ -51,8 +51,8 @@ async function confirmVerification(raw) {
 async function requestEmailChange(user, newEmail) {
   if (await q.get('SELECT 1 x FROM users WHERE email = ?', newEmail)) throw new HttpError(422, 'Please fix the highlighted fields.', { email: 'That email is already in use.' });
   const token = await issue(user.id, 'change_email', newEmail);
-  return await email.send({ to: newEmail, kind: 'change_email', subject: 'Confirm your new PairPlug email', dedupeKey: `change:${sha(token).slice(0, 16)}`,
-    text: `Confirm this as your new PairPlug email:\n${link('/confirm-email-change', token)}\n\nThis link works once and expires in 48 hours. Your current email stays active until you confirm.\n` });
+  return await email.send({ to: newEmail, kind: 'change_email', subject: 'Confirm your new Grailedside email', dedupeKey: `change:${sha(token).slice(0, 16)}`,
+    text: `Confirm this as your new Grailedside email:\n${link('/confirm-email-change', token)}\n\nThis link works once and expires in 48 hours. Your current email stays active until you confirm.\n` });
 }
 async function confirmEmailChange(raw) {
   return await tx(async () => {
@@ -65,8 +65,8 @@ async function confirmEmailChange(raw) {
 
 async function sendPasswordReset(user) {
   const token = await issue(user.id, 'reset_password', user.email);
-  return await email.send({ to: user.email, kind: 'reset_password', subject: 'Reset your PairPlug password', dedupeKey: `reset:${sha(token).slice(0, 16)}`,
-    text: `Reset your PairPlug password:\n${link('/reset-password', token)}\n\nThis link works once and expires in 1 hour. If you didn't ask for this, ignore this email.\n` });
+  return await email.send({ to: user.email, kind: 'reset_password', subject: 'Reset your Grailedside password', dedupeKey: `reset:${sha(token).slice(0, 16)}`,
+    text: `Reset your Grailedside password:\n${link('/reset-password', token)}\n\nThis link works once and expires in 1 hour. If you didn't ask for this, ignore this email.\n` });
 }
 
 module.exports = { issue, consume, sendVerification, confirmVerification, requestEmailChange, confirmEmailChange, sendPasswordReset, sha };
