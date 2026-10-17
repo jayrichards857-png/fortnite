@@ -11,7 +11,7 @@ const config = require('../src/config');
 test.before(async () => await H.start());
 test.after(() => H.stop());
 
-const EMAIL = 'pairplugservice@gmail.com';
+const EMAIL = 'grailedside@gmail.com';
 const get = async (c, u) => (await c.get(u)).text;
 const visible = (html) => html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '');
 const mkAdmin = async () => { const a = await H.newUser('Owner'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
@@ -49,9 +49,9 @@ test('the Contact page: email, Email us (mailto), Open Gmail (encoded compose UR
   assert.match(html, new RegExp(`<a href="mailto:${EMAIL}\\?subject=Grailedside%20Support">${EMAIL}</a>`), 'the address itself is a normal clickable link');
   const gmail = html.match(/href="(https:\/\/mail\.google\.com[^"]+)"[^>]*>Open Gmail/)[1].replaceAll('&amp;', '&'); const u = new URL(gmail);
   assert.equal(u.origin + u.pathname, 'https://mail.google.com/mail/'); assert.equal(u.searchParams.get('view'), 'cm'); assert.equal(u.searchParams.get('fs'), '1'); assert.equal(u.searchParams.get('to'), EMAIL); assert.equal(u.searchParams.get('su'), 'Grailedside Support');
-  assert.match(gmail, /to=pairplugservice%40gmail\.com/, 'the @ is URL-encoded'); assert.match(gmail, /su=Grailedside%20Support/);
+  assert.match(gmail, /to=grailedside%40gmail\.com/, 'the @ is URL-encoded'); assert.match(gmail, /su=Grailedside%20Support/);
   assert.match(html, /target="_blank" rel="noopener noreferrer"[^>]*>Open Gmail|rel="noopener noreferrer"[^>]*target="_blank"|target="_blank"[^>]*rel="noopener noreferrer"/);
-  assert.match(html, /Don't use either of those\? Copy the address/); assert.match(html, /class="email-copy">pairplugservice@gmail\.com</, 'works without a configured email app: the address is plain text too');
+  assert.match(html, /Don't use either of those\? Copy the address/); assert.match(html, /class="email-copy">grailedside@gmail\.com</, 'works without a configured email app: the address is plain text too');
   assert.match(html, /href="\/shop"[^>]*>← Back to shopping/); assert.match(html, /only open an email draft/); assert.match(html, /does not create a case or ticket automatically/); assert.doesNotMatch(html, /we (have )?sent|message sent|thank you for contacting/i);
   assert.match(html, /name="viewport"/); const css = await get(anon, '/app.css'); assert.match(css, /\.contact-actions\{[^}]*flex-wrap:wrap/); assert.match(css, /\.contact-email\{[^}]*word-break/);
 });

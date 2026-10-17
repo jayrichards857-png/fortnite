@@ -19,7 +19,7 @@ const onboardingRaw = val('SELLER_ONBOARDING').toLowerCase();
 if (onboardingRaw && !['open', 'invite'].includes(onboardingRaw)) envProblems.push('SELLER_ONBOARDING must be exactly "open" or "invite"');
 const signupsRaw = val('SIGNUPS').toLowerCase();
 if (signupsRaw && !['open', 'closed'].includes(signupsRaw)) envProblems.push('SIGNUPS must be exactly "open" or "closed"');
-const OFFICIAL_SUPPORT_EMAIL = 'pairplugservice@gmail.com';
+const OFFICIAL_SUPPORT_EMAIL = 'grailedside@gmail.com';
 const SUPPORT_EMAIL_OK = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(val('SUPPORT_EMAIL') || '');
 const releaseRaw = val('PUBLIC_RELEASE_DATE');
 if (releaseRaw && !(/^\d{4}-\d{2}-\d{2}$/.test(releaseRaw) && !Number.isNaN(Date.parse(releaseRaw + 'T00:00:00Z')))) envProblems.push('PUBLIC_RELEASE_DATE must be a valid YYYY-MM-DD date');

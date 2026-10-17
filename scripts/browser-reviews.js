@@ -75,8 +75,8 @@ const photoBuf = png(300, 380, (x, y) => [110 + (y >> 5), 100, 90 + (x >> 4)]);
 
     // ---- Contact page on a phone-sized screen
     const ph = await mk({ width: 375, height: 700 }); await ph.pg.goto(B + '/contact'); await noOverflow(ph.pg, '/contact');
-    assert.equal(await ph.pg.getAttribute('a.btn:has-text("Email us")', 'href'), 'mailto:pairplugservice@gmail.com?subject=Grailedside%20Support');
-    assert.match(await ph.pg.getAttribute('a:has-text("Open Gmail")', 'href'), /^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=pairplugservice%40gmail\.com&su=Grailedside%20Support$/);
+    assert.equal(await ph.pg.getAttribute('a.btn:has-text("Email us")', 'href'), 'mailto:grailedside@gmail.com?subject=Grailedside%20Support');
+    assert.match(await ph.pg.getAttribute('a:has-text("Open Gmail")', 'href'), /^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=grailedside%40gmail\.com&su=Grailedside%20Support$/);
     assert.equal(await ph.pg.getAttribute('a:has-text("Open Gmail")', 'target'), '_blank');
     await ph.pg.click('a:has-text("Back to shopping")'); await ph.pg.waitForURL(B + '/shop'); await ph.pg.goto(B + '/login'); await ph.pg.click('a:has-text("Contact us")'); await ph.pg.waitForURL(B + '/contact');
     for (const p of ['/', '/shop', '/sellers', '/login', '/terms', '/s/samstore']) { await ph.pg.goto(B + p); await noOverflow(ph.pg, p); }

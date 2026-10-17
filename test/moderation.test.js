@@ -15,7 +15,7 @@ const M = require('../src/moderation');
 test.before(async () => await H.start());
 test.after(() => H.stop());
 
-const OFFICIAL = 'pairplugservice@gmail.com', LINK = 'https://buy.stripe.com/test_mod1';
+const OFFICIAL = 'grailedside@gmail.com', LINK = 'https://buy.stripe.com/test_mod1';
 const get = async (c, u) => (await c.get(u)).text;
 const admin = async () => { const a = await H.newUser('Boss'); await q.run('UPDATE users SET is_admin = 1 WHERE email = ?', a.email); return a; };
 const tokenOf = (link) => link.split('/').pop();

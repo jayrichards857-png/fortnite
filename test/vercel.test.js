@@ -35,13 +35,13 @@ test('with no durable storage configured, saving an upload is refused with a cle
   const o = JSON.parse(r.stdout.trim().split('\n').pop()); assert.equal(o.status, 503); assert.match(o.msg, /no durable image storage/);
 });
 
-const GOOD = { VERCEL: '1', VERCEL_ENV: 'preview', NODE_ENV: 'production', PUBLIC_URL: 'https://pairplug.example', CHECKOUT_MODE: 'external', SELLER_ONBOARDING: 'invite', SIGNUPS: 'open',
+const GOOD = { VERCEL: '1', VERCEL_ENV: 'preview', NODE_ENV: 'production', PUBLIC_URL: 'https://grailedside.example', CHECKOUT_MODE: 'external', SELLER_ONBOARDING: 'invite', SIGNUPS: 'open',
   TRUST_PROXY: '1', PAIRPLUG_DB_LABEL: 'preview', CRON_SECRET: 'c'.repeat(40), S3_ENDPOINT: 'http://127.0.0.1:9', S3_BUCKET: 'b', S3_ACCESS_KEY_ID: 'a', S3_SECRET_ACCESS_KEY: 's',
-  EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'k', EMAIL_FROM: 'Grailedside <hello@pairplug.example>' };
+  EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'k', EMAIL_FROM: 'Grailedside <hello@grailedside.example>' };
 /** Drive the Vercel entry (api/index.js) over real HTTP with a chosen Host header; returns one JSON line per request. */
 const drive = (env, paths) => run(`const app = require('./api/index.js'); if (typeof app !== 'function') { console.log('NOT_A_HANDLER'); process.exit(2); }
   const http = require('node:http'), srv = http.createServer(app).listen(0, async () => { const out = [];
-    const hit = (p, headers = {}, method = 'GET') => new Promise((res) => { const r = http.request({ port: srv.address().port, path: p, method, headers: { Host: 'pairplug.example', ...headers } }, (m) => { let b = ''; m.on('data', (c) => b += c); m.on('end', () => res({ p, status: m.statusCode, body: b.slice(0, 200), h: m.headers })); }); r.end(); });
+    const hit = (p, headers = {}, method = 'GET') => new Promise((res) => { const r = http.request({ port: srv.address().port, path: p, method, headers: { Host: 'grailedside.example', ...headers } }, (m) => { let b = ''; m.on('data', (c) => b += c); m.on('end', () => res({ p, status: m.statusCode, body: b.slice(0, 200), h: m.headers })); }); r.end(); });
     for (const [p, h, m] of ${JSON.stringify(paths)}) out.push(await hit(p, h, m));
     console.log(JSON.stringify(out)); srv.close(); process.exit(0); });`, { ...GOOD, ...env });
 const parse = (r) => { assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(r.stdout.trim().split('\n').pop()); };

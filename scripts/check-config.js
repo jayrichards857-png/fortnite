@@ -19,7 +19,7 @@ if (config.db.urlDirect) console.log(`DATABASE_URL_UNPOOLED host: ${host(config.
 if (config.db.url && !/-pooler\b/i.test(host(config.db.url) || '')) notes.push('DATABASE_URL does not look like a Neon POOLED host (no "-pooler"): the app should use the pooled string.');
 if (config.db.urlDirect && /-pooler\b/i.test(host(config.db.urlDirect) || '')) notes.push('DATABASE_URL_UNPOOLED is a POOLED host: it must be the direct connection string.');
 if (config.db.url && config.db.urlDirect && host(config.db.url).replace('-pooler', '') !== host(config.db.urlDirect).replace('-pooler', '')) notes.push('DATABASE_URL and DATABASE_URL_UNPOOLED point at DIFFERENT Neon endpoints (different branches?). They must be the same branch.');
-if (as === 'production' && config.publicUrl !== 'https://pairplug.vercel.app') notes.push('PUBLIC_URL is not https://pairplug.vercel.app (fine only if you use another production domain).');
+if (as === 'production' && config.publicUrl !== 'https://grailedside.vercel.app') notes.push('PUBLIC_URL is not https://grailedside.vercel.app (fine only if you use another production domain).');
 const problems = assertProductionConfig();
 console.log(problems.length ? '\nThe app would REFUSE to serve (503) because:' : '\nThe app\'s own checks pass.');
 for (const p of problems) console.log(' - ' + p);
