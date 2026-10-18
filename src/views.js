@@ -18,6 +18,9 @@ const ICONS = {
 /** The official contact address as a mailto: link. One place, used by every page. */
 const contactLink = (text) => `<a href="mailto:${esc(config.supportEmail)}">${esc(text || config.supportEmail)}</a>`;
 const SUBJECT = 'Grailedside Support';
+// Vercel Web Analytics for server-rendered pages (no npm package or bundler needed): the script is served by Vercel itself at /_vercel/insights/script.js
+// once Web Analytics is enabled for the project. Same-origin, so the existing Content-Security-Policy already allows it.
+const ANALYTICS = '<script>window.va=window.va||function(){(window.va.q=window.va.q||[]).push(arguments)};</script><script defer src="/_vercel/insights/script.js"></script>';
 /** mailto: draft in the visitor's default email app, and Gmail's web composer for visitors who use Gmail in a browser. Both only OPEN a draft; nothing is sent until the visitor sends it. */
 const mailtoHref = (subject = SUBJECT) => `mailto:${config.supportEmail}?subject=${encodeURIComponent(subject)}`;
 const gmailHref = (subject = SUBJECT) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(config.supportEmail)}&su=${encodeURIComponent(subject)}`;
@@ -99,7 +102,7 @@ async function layout({ title, body, user, path = '/', description = '', wide = 
 <span><a href="/shop">Shop</a> · <a href="/sell">Sell</a> · <a href="/shop?sort=newest">New arrivals</a> · <a href="/support">Help</a> · ${contactPageLink('Contact')}</span>
 <nav class="legal-links" aria-label="Legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/payments">Payments &amp; refunds</a> · <a href="/rules">Seller rules</a></nav></div></footer>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<script src="/app.js" defer></script>${scripts}</body></html>`;
+<script src="/app.js" defer></script>${scripts}${config.webAnalytics ? ANALYTICS : ''}</body></html>`;
 }
 
 function card(l, { favs = new Set(), user = null } = {}) {

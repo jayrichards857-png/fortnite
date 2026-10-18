@@ -58,6 +58,8 @@ module.exports = {
   // there. They are disabled (see images.saveUpload) until durable object storage is wired in; this path is then only a never-created placeholder
   // so nothing tries to mkdir under /var/task. Customer review photos are unaffected: they live in PostgreSQL.
   onVercel,
+  // Vercel Web Analytics (cookie-less page-view counts). Only rendered on Vercel deployments; WEB_ANALYTICS=off is a kill switch.
+  webAnalytics: onVercel && String(env.WEB_ANALYTICS || '').trim().toLowerCase() !== 'off',
   // Chat transport. A serverless function cannot hold a WebSocket or an in-memory subscription, so on Vercel the client polls the database-backed
   // sync endpoint every pollMs (messages appear within a few seconds). Elsewhere: WebSocket with long-polling fallback, exactly as before.
   chat: { pollMs: Number(env.CHAT_POLL_MS || (onVercel ? 3000 : 0)) },

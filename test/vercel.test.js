@@ -94,7 +94,7 @@ test('serverless safety: a web request never migrates; `npm run migrate` is a dr
 
 test('vercel.json routes everything to the exported app and ships the migrations (read from disk at run time)', () => {
   const v = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
-  assert.deepEqual(v.rewrites, [{ source: '/(.*)', destination: '/api' }]);
+  assert.deepEqual(v.rewrites, [{ source: '/((?!_vercel/).*)', destination: '/api' }]);   // everything except Vercel's own /_vercel/* paths (Web Analytics script); see test/analytics.test.js
   assert.deepEqual(v.crons.map((c) => c.path), ['/api/cron/tick'], 'scheduled jobs are wired to the authenticated endpoint');
   assert.match(v.functions['api/index.js'].includeFiles, /src\/migrations\/\*\*/);
   assert.ok(fs.existsSync(path.join(root, 'api', 'index.js')));

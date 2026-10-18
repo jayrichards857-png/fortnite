@@ -85,7 +85,7 @@ ${operatorBlock()}
 <tr><td><strong>Search terms:</strong> only the words searched, with the time</td><td>When someone searches on /shop</td><td>Staff with database access. Not linked to your account or IP address (see section 3).</td></tr>
 <tr><td><strong>Sessions and security:</strong> a login cookie (random token, stored hashed), an audit log of important account/admin actions</td><td>When you log in or something sensitive happens</td><td>Staff.</td></tr>
 </tbody></table></div>
-<p><strong>Cookies.</strong> Grailedside sets one cookie, <code>pp_session</code>, to keep you logged in (up to 14 days of inactivity). It is needed for the service to work. We do not use advertising or analytics cookies and have no third-party trackers on our pages.</p>
+<p><strong>Cookies.</strong> Grailedside sets one cookie, <code>pp_session</code>, to keep you logged in (up to 14 days of inactivity). It is needed for the service to work. We do not use advertising cookies or third-party trackers. On the live site we use Vercel Web Analytics, a privacy-friendly service from our host that counts page views and visits; it sets no cookies, does not follow you across other sites, and receives only the page address, referrer and general browser, device and country information.</p>
 <h2>2. How we use it</h2>
 <p>To run accounts, show listings and storefronts, let buyers and sellers message and track orders, send in-app notifications, handle reports, keep the service safe (for example rate-limiting and banning abusive accounts), and fix problems. We do not sell your personal information and we do not use it for advertising.</p>
 <h2>3. Search activity</h2>
